@@ -1296,13 +1296,24 @@ function SettingsPage() {
       .catch(() => {});
   }, [token]);
 
-  // Load all OpenRouter models when user opens the picker
+  // Load all OpenRouter models directly (public endpoint, no auth needed)
   const loadModels = () => {
     if (allModels.length || modelsLoading) return;
     setModelsLoading(true);
-    fetch('/api/workspace/models', { headers: { Authorization: `Bearer ${token}` } })
+    fetch('https://openrouter.ai/api/v1/models')
       .then(r => r.json())
-      .then(d => setAllModels(d.models || []))
+      .then(d => {
+        const models = (d.data || [])
+          .filter(m => m.id && m.name)
+          .map(m => ({
+            id: m.id,
+            name: m.name,
+            context: m.context_length,
+            provider: m.id.split('/')[0],
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setAllModels(models);
+      })
       .catch(() => {})
       .finally(() => setModelsLoading(false));
   };
