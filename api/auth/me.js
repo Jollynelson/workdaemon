@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
   const { data: profile } = await adminClient()
     .from('profiles')
-    .select('*, workspaces(id, name, size, industry, invite_code)')
+    .select('*, workspaces(id, name, size, industry, invite_code, openrouter_model)')
     .eq('id', user.id)
     .single();
 
