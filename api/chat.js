@@ -1,3 +1,4 @@
+import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
 
 export default async function handler(req, res) {
@@ -30,56 +31,50 @@ export default async function handler(req, res) {
     orModel = ws?.openrouter_model || null;
   }
 
-  // ── OpenRouter ────────────────────────────────────────────────────────────
+  // ── OpenRouter via OpenAI SDK ─────────────────────────────────────────────
   if (orKey) {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${orKey}`,
-        'Content-Type': 'application/json',
+    const client = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: orKey,
+      defaultHeaders: {
         'HTTP-Referer': 'https://workdaemon.com',
         'X-Title': 'WorkDaemon',
       },
-      body: JSON.stringify({
+    });
+
+    try {
+      const completion = await client.chat.completions.create({
         model: orModel || 'anthropic/claude-sonnet-4-6',
         max_tokens: 1024,
         messages: [{ role: 'system', content: sys }, ...messages],
-      }),
-    });
-
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      return res.status(502).json({ error: err.error?.message || 'OpenRouter request failed' });
+      });
+      return res.status(200).json({ reply: completion.choices[0]?.message?.content ?? '' });
+    } catch (e) {
+      return res.status(502).json({ error: e.message || 'OpenRouter request failed' });
     }
-
-    const data = await response.json();
-    return res.status(200).json({ reply: data.choices[0]?.message?.content ?? '' });
   }
 
-  // ── Anthropic fallback ────────────────────────────────────────────────────
+  // ── Anthropic fallback (also via OpenAI-compat on OpenRouter if no key) ───
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI not configured — add an OpenRouter key in Settings' });
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+  const client = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey,
+    defaultHeaders: {
+      'HTTP-Referer': 'https://workdaemon.com',
+      'X-Title': 'WorkDaemon',
     },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: sys,
-      messages,
-    }),
   });
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    return res.status(502).json({ error: err.error?.message || 'AI request failed' });
+  try {
+    const completion = await client.chat.completions.create({
+      model: 'anthropic/claude-sonnet-4-6',
+      max_tokens: 1024,
+      messages: [{ role: 'system', content: sys }, ...messages],
+    });
+    return res.status(200).json({ reply: completion.choices[0]?.message?.content ?? '' });
+  } catch (e) {
+    return res.status(502).json({ error: e.message || 'AI request failed' });
   }
-
-  const data = await response.json();
-  return res.status(200).json({ reply: data.content[0]?.text ?? '' });
 }
