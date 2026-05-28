@@ -775,8 +775,8 @@ function DaemonPage({ onMenu, onChatChange }) {
   const [selectedRole, setSelectedRole]     = useState(profileRole);
   const [company, setCompany]               = useState(profileCompany);
 
-  // If user completed onboarding with role + industry, skip the picker
-  const hasProfile = !!(profile?.role && profile?.industry);
+  // Skip picker for onboarded users OR anyone already in a workspace (invited members)
+  const hasProfile = !!(profile?.onboarded || profile?.workspace_id);
   const [started, setStarted]               = useState(hasProfile);
 
   useEffect(() => { onChatChange?.(started); }, [started]);
