@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 const STEPS = [
   { id: 'profile',   title: 'Set up your profile.',   sub: "Choose how you'll appear in WorkDaemon." },
   { id: 'workspace', title: 'Name your workspace.',   sub: 'Your company name and team size.' },
-  { id: 'role',      title: "What's your role?",      sub: 'Your Daemon will be tuned to your position.' },
+  { id: 'role',      title: "What's your role?",      sub: 'Type your title — your Daemon adapts to you.' },
   { id: 'industry',  title: 'Pick your industry.',    sub: 'Context for your knowledge graph.' },
   { id: 'invite',    title: 'Invite your team.',      sub: 'WorkDaemon is better with your whole team.' },
   { id: 'github',    title: 'Connect GitHub.',        sub: 'Sync your code, PRs, and deployments.' },
@@ -258,15 +258,142 @@ function GridSelect({ options, value, onSelect, cols = 2, getLabel, getKey, getS
 }
 
 function StepRole({ data, setData }) {
+  const firstName = (data.name || '').split(' ')[0];
+  const [query, setQuery] = useState(() => {
+    const preset = ROLES.find(r => r.id === data.role);
+    return preset ? preset.label : (data.role || '');
+  });
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef(null);
+  const dropRef = useRef(null);
+
+  const matches = query.trim()
+    ? ROLES.filter(r => r.label.toLowerCase().includes(query.toLowerCase()))
+    : ROLES;
+
+  const isPresetMatch = ROLES.some(r => r.label.toLowerCase() === query.trim().toLowerCase());
+  const isCustom = query.trim().length > 1 && !isPresetMatch;
+
+  const commitValue = useCallback((label, id) => {
+    setQuery(label);
+    setData(d => ({ ...d, role: id || label }));
+    setOpen(false);
+  }, [setData]);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    setOpen(true);
+    setHighlighted(0);
+    const exact = ROLES.find(r => r.label.toLowerCase() === val.trim().toLowerCase());
+    setData(d => ({ ...d, role: exact ? exact.id : (val.trim() || '') }));
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open) { if (e.key === 'ArrowDown') setOpen(true); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (matches[highlighted]) commitValue(matches[highlighted].label, matches[highlighted].id); else if (query.trim()) setOpen(false); }
+    else if (e.key === 'Escape') setOpen(false);
+  };
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (!inputRef.current?.contains(e.target) && !dropRef.current?.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 80);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
-    <GridSelect
-      options={ROLES}
-      value={data.role}
-      onSelect={v => setData(d => ({ ...d, role: v }))}
-      getKey={r => r.id}
-      getLabel={r => r.label}
-      getSub={r => r.sub}
-    />
+    <div>
+      {firstName && (
+        <div style={{ marginBottom: 22, fontFamily: 'var(--dmsans)', fontSize: 14, color: 'rgba(232,232,232,0.46)', lineHeight: 1.5 }}>
+          Hi,{' '}
+          <span style={{ color: '#e8e8e8', fontWeight: 600 }}>{firstName}</span>
+          {' '}— what's your title at {data.company || 'the company'}?
+        </div>
+      )}
+      <label style={labelSt}>Your role</label>
+      <div style={{ position: 'relative' }}>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={handleChange}
+          onFocus={() => { setOpen(true); setHighlighted(0); }}
+          onKeyDown={handleKeyDown}
+          placeholder="e.g. CEO, Head of Design, Data Analyst…"
+          autoComplete="off"
+          style={{
+            width: '100%',
+            padding: '11px 16px',
+            background: open ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${open ? 'rgba(65,114,245,0.55)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: open && matches.length > 0 ? '8px 8px 0 0' : 8,
+            color: '#e8e8e8',
+            fontSize: 15,
+            fontFamily: 'var(--dmsans)',
+            outline: 'none',
+            transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+            boxShadow: open ? '0 0 0 2px rgba(65,114,245,0.18)' : 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+        {open && matches.length > 0 && (
+          <div ref={dropRef} style={{
+            position: 'absolute', top: '100%', left: 0, right: 0,
+            background: '#1e1e1e',
+            border: '1px solid rgba(65,114,245,0.35)',
+            borderTop: 'none',
+            borderRadius: '0 0 8px 8px',
+            overflow: 'hidden', zIndex: 50,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.55)',
+            maxHeight: 252, overflowY: 'auto',
+          }}>
+            {matches.map((r, i) => (
+              <button key={r.id} type="button"
+                onMouseEnter={() => setHighlighted(i)}
+                onMouseDown={e => { e.preventDefault(); commitValue(r.label, r.id); }}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '10px 16px',
+                  background: i === highlighted ? 'rgba(65,114,245,0.1)' : 'transparent',
+                  border: 'none', cursor: 'pointer',
+                  borderBottom: i < matches.length - 1 ? '1px solid rgba(255,255,255,0.045)' : 'none',
+                  transition: 'background 0.1s',
+                }}
+              >
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: i === highlighted ? '#a8c0ff' : 'rgba(232,232,232,0.78)' }}>{r.label}</div>
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: 'rgba(232,232,232,0.3)', marginTop: 2 }}>{r.sub}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {isCustom && (
+        <div style={{
+          marginTop: 8, padding: '8px 12px',
+          background: 'rgba(65,114,245,0.05)',
+          border: '1px solid rgba(65,114,245,0.16)',
+          borderRadius: 6,
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <span style={{ color: '#4172f5', fontSize: 13, marginTop: 1 }}>✦</span>
+          <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(232,232,232,0.46)', lineHeight: 1.5 }}>
+            Custom role — your Daemon will research{' '}
+            <span style={{ color: 'rgba(168,192,255,0.8)', fontWeight: 500 }}>{query}</span>
+            {' '}and adapt in the background.
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -491,7 +618,7 @@ export default function Onboarding() {
 
   const canAdvance = () => {
     if (step === 1) return !!data.company?.trim() && data.slugStatus === 'available';
-    if (step === 2) return !!data.role;
+    if (step === 2) return !!(data.role?.trim());
     if (step === 3) return !!data.industry;
     return true;
   };
