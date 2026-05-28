@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { name, title, company, size, role, industry } = req.body ?? {};
+  const { name, title, company, size, role, industry, slug } = req.body ?? {};
   if (!company) return res.status(400).json({ error: 'Company name required' });
 
   const db = adminClient();
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     // Create new workspace
     const { data: ws, error: wsError } = await db
       .from('workspaces')
-      .insert({ name: company, size, industry, owner_id: user.id })
+      .insert({ name: company, size, industry, owner_id: user.id, slug: slug || null })
       .select()
       .single();
 

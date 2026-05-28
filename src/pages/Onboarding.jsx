@@ -137,7 +137,41 @@ function StepProfile({ data, setData }) {
   );
 }
 
+function toSlug(name) {
+  return (name || '').toLowerCase().trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 function StepWorkspace({ data, setData }) {
+  const timerRef = useRef(null);
+  const slug = toSlug(data.company);
+  const slugStatus = data.slugStatus ?? null; // null | 'checking' | 'available' | 'taken'
+
+  useEffect(() => {
+    if (slug.length < 2) {
+      setData(d => ({ ...d, slug: '', slugStatus: null }));
+      return;
+    }
+    setData(d => ({ ...d, slug, slugStatus: 'checking' }));
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/workspace/check-slug?slug=${encodeURIComponent(slug)}`);
+        const { available } = await res.json();
+        setData(d => ({ ...d, slugStatus: available ? 'available' : 'taken' }));
+      } catch {
+        setData(d => ({ ...d, slugStatus: null }));
+      }
+    }, 480);
+    return () => clearTimeout(timerRef.current);
+  }, [slug]); // eslint-disable-line
+
+  const statusColor = slugStatus === 'available' ? '#10b981' : slugStatus === 'taken' ? '#ef4444' : 'rgba(255,255,255,0.28)';
+  const statusLabel = slugStatus === 'available' ? '✓ Available' : slugStatus === 'taken' ? '✗ Already taken' : 'checking…';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <div>
@@ -148,6 +182,31 @@ function StepWorkspace({ data, setData }) {
           onChange={e => setData(d => ({ ...d, company: e.target.value }))}
           autoFocus
         />
+
+        {slug.length >= 2 && (
+          <div style={{
+            marginTop: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '9px 13px',
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 8,
+          }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.01em' }}>
+              <span style={{ color: 'rgba(255,255,255,0.28)' }}>https://</span>
+              <span style={{ color: '#e8e8e8' }}>{slug}</span>
+              <span style={{ color: 'rgba(255,255,255,0.28)' }}>.workdaemon.com</span>
+            </span>
+            <span style={{
+              fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 500,
+              color: statusColor, transition: 'color 0.2s', whiteSpace: 'nowrap', marginLeft: 10,
+            }}>
+              {statusLabel}
+            </span>
+          </div>
+        )}
       </div>
       <div>
         <label style={labelSt}>Team size</label>
@@ -431,7 +490,7 @@ export default function Onboarding() {
   }, []);
 
   const canAdvance = () => {
-    if (step === 1) return !!data.company?.trim();
+    if (step === 1) return !!data.company?.trim() && data.slugStatus === 'available';
     if (step === 2) return !!data.role;
     if (step === 3) return !!data.industry;
     return true;
@@ -455,6 +514,7 @@ export default function Onboarding() {
           size:     data.size,
           role:     data.role,
           industry: data.industry,
+          slug:     data.slug,
         }),
       });
       if (!res.ok) {
