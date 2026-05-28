@@ -121,6 +121,11 @@ export function AuthProvider({ children }) {
       options: { redirectTo: `${window.location.origin}/app` },
     }), []);
 
+  const refreshProfile = useCallback(async () => {
+    const stored = sessionStorage.getItem('wd-token');
+    if (stored) await fetchProfile(stored);
+  }, [fetchProfile]);
+
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     clearSession();
@@ -131,6 +136,7 @@ export function AuthProvider({ children }) {
       user, profile, token, loading,
       login, signup, logout,
       loginWithGoogle, loginWithGitHub,
+      refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

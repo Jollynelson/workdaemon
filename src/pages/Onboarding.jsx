@@ -474,7 +474,7 @@ function PanelSlack() {
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { token, refreshProfile } = useAuth();
   const [step, setStep]       = useState(0);
   const [data, setData]       = useState({});
   const [visible, setVisible] = useState(false);
@@ -538,6 +538,7 @@ export default function Onboarding() {
     if (step === 3) {
       const ok = await submitSetup();
       if (!ok) return;
+      await refreshProfile();
     }
     // GitHub and Slack integrations — skip for now, connect later from dashboard
     if (step === 5 || step === 6) {
