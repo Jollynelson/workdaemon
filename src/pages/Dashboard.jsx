@@ -592,12 +592,14 @@ function ChatView({ context, onBack, onMenu }) {
               <span style={{ width: 11, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block', alignSelf: 'flex-start' }} />
             </button>
           )}
-          <div style={{ width: 1, height: 16, background: c.cardBorder, flexShrink: 0 }} />
+          {onBack && <div style={{ width: 1, height: 16, background: c.cardBorder, flexShrink: 0 }} />}
+          {onBack && (
           <button type="button" onClick={onBack} style={{ fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 13, color: c.text3, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: 0, letterSpacing: isMobile ? '0.08em' : 0, flexShrink: 0 }}
             onMouseEnter={e => { e.currentTarget.style.color = c.text2; }}
             onMouseLeave={e => { e.currentTarget.style.color = c.text3; }}>
             ← BACK
           </button>
+          )}
           <div style={{ width: 1, height: 16, background: c.cardBorder, flexShrink: 0 }} />
           <DaemonMark size={16} glow={c.d} />
           <div style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -758,10 +760,24 @@ function ChatView({ context, onBack, onMenu }) {
 function DaemonPage({ onMenu, onChatChange }) {
   const c = useC();
   const { isMobile } = useViewport();
-  const [selectedPreset, setSelectedPreset] = useState(CONTEXT_PRESETS[0]);
-  const [selectedRole, setSelectedRole]     = useState(CONTEXT_PRESETS[0].roles[0]);
-  const [company, setCompany]               = useState('');
-  const [started, setStarted]               = useState(false);
+  const { profile } = useAuth();
+
+  // Pre-populate from onboarding profile
+  const profilePreset = profile?.industry
+    ? CONTEXT_PRESETS.find(p => p.id === profile.industry) ?? CONTEXT_PRESETS[0]
+    : CONTEXT_PRESETS[0];
+  const profileRole = profile?.role
+    ? profilePreset.roles.find(r => r.id === profile.role) ?? profilePreset.roles[0]
+    : profilePreset.roles[0];
+  const profileCompany = profile?.workspaces?.name ?? '';
+
+  const [selectedPreset, setSelectedPreset] = useState(profilePreset);
+  const [selectedRole, setSelectedRole]     = useState(profileRole);
+  const [company, setCompany]               = useState(profileCompany);
+
+  // If user completed onboarding with role + industry, skip the picker
+  const hasProfile = !!(profile?.role && profile?.industry);
+  const [started, setStarted]               = useState(hasProfile);
 
   useEffect(() => { onChatChange?.(started); }, [started]);
 
@@ -770,7 +786,7 @@ function DaemonPage({ onMenu, onChatChange }) {
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ChatView
           context={{ roleLabel: selectedRole.label, company: company || undefined, role: selectedRole.id, industry: selectedPreset.id }}
-          onBack={() => setStarted(false)}
+          onBack={hasProfile ? null : () => setStarted(false)}
           onMenu={onMenu}
         />
       </div>
