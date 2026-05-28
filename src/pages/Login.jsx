@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useViewport } from '../context/ThemeContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 // ── Sub-components ────────────────────────────────────────────────────────
 function PulsingDot({ color = '#3b6ef7', size = 6 }) {
@@ -28,6 +29,7 @@ function Spinner() {
 // ── Login Page ─────────────────────────────────────────────────────────────
 export default function Login() {
   const navigate = useNavigate();
+  const { login, loginWithGoogle } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -40,23 +42,11 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (res.ok) {
-        navigate('/app');
-        return;
-      }
-
-      const body = await res.json().catch(() => ({}));
-      setError(body.error || 'Invalid credentials. Please try again.');
-    } catch {
-      setError('Unable to reach the server. Check your connection and try again.');
+      await login(email, password);
+      navigate('/app');
+    } catch (err) {
+      setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -278,7 +268,7 @@ export default function Login() {
           {/* Google SSO button */}
           <button
             type="button"
-            onClick={() => setError('SSO coming soon — use email/password for now.')}
+            onClick={loginWithGoogle}
             style={{
               width: '100%',
               height: 44,

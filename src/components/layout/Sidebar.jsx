@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import DaemonMark from '../brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../../context/ThemeContext.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 
@@ -97,14 +98,17 @@ function NavItem({ to, icon, label, badge, onClick }) {
 
 export default function Sidebar({
   isAdmin = true,
-  user = { name: 'Alex Chen', role: 'CEO', company: 'Meridian Labs' },
   isOpen = true,
   onClose,
 }) {
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
   const { isMobile } = useViewport();
+  const { user, profile, logout } = useAuth();
   const isLight = theme === 'light';
+
+  const displayName = profile?.name || user?.email?.split('@')[0] || '—';
+  const displayRole = [profile?.title, profile?.workspaces?.name].filter(Boolean).join(' · ') || 'Workspace member';
 
   // On mobile: hidden unless isOpen, shown as fixed overlay
   if (isMobile && !isOpen) return null;
@@ -242,18 +246,18 @@ export default function Sidebar({
               color: '#fff',
               flexShrink: 0,
             }}>
-              {user.name.charAt(0)}
+              {displayName.charAt(0).toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#e8e8e8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.name}</div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#e8e8e8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
                 <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
-                <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: isLight ? 'rgba(26,26,26,0.4)' : 'rgba(232,232,232,0.35)' }}>{user.role} · {user.company}</span>
+                <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: isLight ? 'rgba(26,26,26,0.4)' : 'rgba(232,232,232,0.35)' }}>{displayRole}</span>
               </div>
             </div>
             <button
               type="button"
-              onClick={() => navigate('/login')}
+              onClick={async () => { await logout(); navigate('/login'); }}
               title="Sign out"
               style={{
                 background: 'none', border: 'none',

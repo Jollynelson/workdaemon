@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useViewport } from '../context/ThemeContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 const STEPS = [
   { id: 'profile',   title: 'Set up your profile.',   sub: "Choose how you'll appear in WorkDaemon." },
@@ -414,6 +415,7 @@ function PanelSlack() {
 
 export default function Onboarding() {
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [step, setStep]       = useState(0);
   const [data, setData]       = useState({});
   const [visible, setVisible] = useState(false);
@@ -442,8 +444,10 @@ export default function Onboarding() {
     try {
       const res = await fetch('/api/user/setup', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           name:     data.name,
           title:    data.title,
@@ -475,9 +479,12 @@ export default function Onboarding() {
       const ok = await submitSetup();
       if (!ok) return;
     }
-    // OAuth redirects for integrations
-    if (step === 5) { window.location.href = '/api/auth/github?onboarding=1'; return; }
-    if (step === 6) { window.location.href = '/api/auth/slack?onboarding=1';  return; }
+    // GitHub and Slack integrations — skip for now, connect later from dashboard
+    if (step === 5 || step === 6) {
+      if (step < STEPS.length - 1) setStep(s => s + 1);
+      else navigate('/app');
+      return;
+    }
 
     if (step < STEPS.length - 1) setStep(s => s + 1);
     else navigate('/app');
@@ -489,8 +496,10 @@ export default function Onboarding() {
     if (emails.length > 0) {
       await fetch('/api/workspace/invite', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ emails }),
       }).catch(() => null);
     }

@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from '../components/layout/Sidebar.jsx';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../context/ThemeContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -100,7 +101,7 @@ const CONTEXT_PRESETS = [
 // DATA FETCHING
 // ─────────────────────────────────────────────────────────────────────────────
 
-function useFetch(url) {
+function useFetch(url, token) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -109,13 +110,15 @@ function useFetch(url) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(url, { credentials: 'include' })
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); })
       .then(d  => { if (!cancelled) setData(d); })
       .catch(e => { if (!cancelled) setError(e.message); })
       .finally(()=> { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [url]);
+  }, [url, token]);
 
   return { data, loading, error };
 }
@@ -465,7 +468,7 @@ Respond concisely and directly. You have access to data from connected integrati
 
 Keep responses focused and actionable. Use **bold** for emphasis on critical items.`;
 
-async function callDaemonAPI({ messages, context, apiKey }) {
+async function callDaemonAPI({ messages, context, apiKey, authToken }) {
   // Direct Anthropic API (user-provided key)
   if (apiKey) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -502,9 +505,16 @@ async function callDaemonAPI({ messages, context, apiKey }) {
   // Backend endpoint
   const res = await fetch('/api/chat', {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, context }),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+    body: JSON.stringify({
+      messages: messages
+        .filter(m => m.role === 'user' || (m.role === 'daemon' && m.text))
+        .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text || '' })),
+      systemPrompt: DAEMON_SYSTEM_PROMPT(context),
+    }),
   });
   if (!res.ok) throw new Error(`Server error ${res.status}`);
   return res.json();
@@ -517,6 +527,7 @@ async function callDaemonAPI({ messages, context, apiKey }) {
 function ChatView({ context, onBack, onMenu }) {
   const c = useC();
   const { isMobile } = useViewport();
+  const { token: authToken } = useAuth();
   const [msgs, setMsgs]             = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [input, setInput]           = useState('');
@@ -547,6 +558,7 @@ function ChatView({ context, onBack, onMenu }) {
         messages: history,
         context,
         apiKey,
+        authToken,
       });
       setMsgs(m => [...m, { role: 'daemon', blocks }]);
       setSuggestions(nextSugs || []);
@@ -830,7 +842,8 @@ function DaemonPage({ onMenu, onChatChange }) {
 function BrainPage() {
   const c = useC();
   const { isMobile } = useViewport();
-  const { data, loading, error } = useFetch('/api/brain');
+  const { token } = useAuth();
+  const { data, loading, error } = useFetch('/api/brain', token);
   const [activeTab, setActiveTab] = useState('overview');
   const tabs = ['OVERVIEW', 'INTEGRATIONS', 'KNOWLEDGE GRAPH', 'USERS', 'SECURITY'];
 
@@ -965,7 +978,8 @@ function KanbanColumn({ title, tasks }) {
 function TasksPage() {
   const c = useC();
   const { isMobile } = useViewport();
-  const { data, loading, error } = useFetch('/api/tasks');
+  const { token } = useAuth();
+  const { data, loading, error } = useFetch('/api/tasks', token);
 
   const columns = data?.columns || { todo: [], inProgress: [], review: [], done: [] };
   const total   = Object.values(columns).reduce((s, a) => s + a.length, 0);
@@ -1035,7 +1049,8 @@ function TasksPage() {
 function InboxPage() {
   const c = useC();
   const { isMobile } = useViewport();
-  const { data, loading, error } = useFetch('/api/inbox');
+  const { token } = useAuth();
+  const { data, loading, error } = useFetch('/api/inbox', token);
   const [filter, setFilter] = useState('all');
 
   const FILTERS = [
@@ -1119,7 +1134,8 @@ function InboxPage() {
 function OverviewPage() {
   const c = useC();
   const { isMobile } = useViewport();
-  const { data, loading, error } = useFetch('/api/overview');
+  const { token } = useAuth();
+  const { data, loading, error } = useFetch('/api/overview', token);
 
   const stats    = data?.stats    || [];
   const team     = data?.team     || [];
@@ -1254,10 +1270,13 @@ function MobileTopBar({ onOpen, isLight }) {
 export default function Dashboard() {
   const { isMobile } = useViewport();
   const { theme } = useTheme();
+  const { profile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inChat, setInChat] = useState(false);
   const isLight = theme === 'light';
-  const isAdmin = true; // replace with auth session role check
+  const isAdmin = profile?.workspaces?.id
+    ? true  // member of a workspace — role check done server-side per route
+    : false;
   const openMenu = () => setSidebarOpen(true);
 
   return (

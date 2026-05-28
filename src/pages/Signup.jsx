@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useViewport } from '../context/ThemeContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
 function pwStrength(pw) {
   if (!pw) return null;
@@ -33,10 +34,12 @@ const STEPS = ['Account', 'Profile', 'Workspace', 'Role', 'Industry', 'Invite Te
 
 export default function Signup() {
   const navigate = useNavigate();
+  const { signup, loginWithGoogle } = useAuth();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [emailErr, setEmailErr] = useState('');
   const [serverErr, setServerErr] = useState('');
+  const [confirmSent, setConfirmSent] = useState(false);
   const [loading, setLoading]   = useState(false);
   const [ready, setReady]       = useState(false);
 
@@ -55,23 +58,15 @@ export default function Signup() {
     if (!canSubmit) return;
     setServerErr('');
     setLoading(true);
-
     try {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (res.ok) {
-        navigate('/onboarding');
-        return;
+      await signup(email, password);
+      navigate('/onboarding');
+    } catch (err) {
+      if (err.message === '__confirm__') {
+        setConfirmSent(true);
+      } else {
+        setServerErr(err.message || 'Could not create account. Please try again.');
       }
-
-      const body = await res.json().catch(() => ({}));
-      setServerErr(body.error || 'Could not create account. Please try again.');
-    } catch {
-      setServerErr('Unable to reach the server. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -304,6 +299,17 @@ export default function Signup() {
               )}
             </div>
 
+            {/* Confirmation sent */}
+            {confirmSent && (
+              <div style={{
+                marginBottom: 20, padding: '11px 14px',
+                background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.22)',
+                borderRadius: 9, fontFamily: 'var(--dmsans)', fontSize: 13, color: '#10b981', lineHeight: 1.5,
+              }}>
+                Check your email — we sent you a confirmation link to activate your account.
+              </div>
+            )}
+
             {/* Server error */}
             {serverErr && (
               <div style={{
@@ -349,7 +355,7 @@ export default function Signup() {
           {/* Google SSO */}
           <button
             type="button"
-            onClick={() => { window.location.href = '/api/auth/google'; }}
+            onClick={loginWithGoogle}
             style={{
               width: '100%', height: 44,
               background: 'rgba(255,255,255,0.05)',
