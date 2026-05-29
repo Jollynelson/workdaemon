@@ -1024,7 +1024,7 @@ const BRAIN_FIELDS = [
     section: 'CURRENT FOCUS',
     fields: [
       { key: 'priorities', label: 'Top priorities this quarter', placeholder: 'What are the 2–3 things that must happen this quarter?', multiline: true, rows: 3 },
-      { key: 'projects',   label: 'Active projects', placeholder: 'What's being built or shipped right now?', multiline: true, rows: 3 },
+      { key: 'projects',   label: 'Active projects', placeholder: "What's being built or shipped right now?", multiline: true, rows: 3 },
     ],
   },
   {
