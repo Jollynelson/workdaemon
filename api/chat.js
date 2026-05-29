@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
 
 async function callProvider({ provider, api_key, endpoint, model }, sys, messages) {
+  console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {
 
     case 'openrouter': {
@@ -11,11 +12,13 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         defaultHeaders: { 'HTTP-Referer': 'https://workdaemon.com', 'X-Title': 'WorkDaemon' },
       });
       const r = await client.chat.completions.create({
-        model: model || 'anthropic/claude-sonnet-4-6',
+        model: model || 'anthropic/claude-sonnet-4-5',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
       });
-      return r.choices[0]?.message?.content ?? '';
+      const text = r.choices[0]?.message?.content ?? '';
+      console.log('[chat] openrouter text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
+      return text;
     }
 
     case 'anthropic': {
@@ -27,7 +30,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          model: model || 'claude-sonnet-4-6',
+          model: model || 'claude-sonnet-4-5',
           max_tokens: 4096,
           system: sys,
           messages,
@@ -35,7 +38,11 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Anthropic error');
-      return d.content?.[0]?.text ?? '';
+      // Find text block — skip thinking blocks if extended thinking is active
+      const types = (d.content || []).map(b => b.type).join(',');
+      const textBlock = d.content?.find(b => b.type === 'text');
+      console.log('[chat] anthropic stop=%s content_types=%s text_len=%d', d.stop_reason, types, textBlock?.text?.length ?? 0);
+      return textBlock?.text ?? '';
     }
 
     case 'openai': {
@@ -45,7 +52,9 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
       });
-      return r.choices[0]?.message?.content ?? '';
+      const text = r.choices[0]?.message?.content ?? '';
+      console.log('[chat] openai text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
+      return text;
     }
 
     case 'google': {
@@ -66,7 +75,11 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       );
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Google error');
-      return d.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      // Collect all text parts (skip thought parts from thinking models)
+      const parts = d.candidates?.[0]?.content?.parts || [];
+      const text = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
+      console.log('[chat] google parts=%d text_len=%d', parts.length, text.length);
+      return text;
     }
 
     case 'mistral': {
@@ -79,7 +92,9 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
       });
-      return r.choices[0]?.message?.content ?? '';
+      const text = r.choices[0]?.message?.content ?? '';
+      console.log('[chat] mistral text_len=%d', text.length);
+      return text;
     }
 
     case 'ollama': {
