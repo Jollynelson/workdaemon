@@ -722,6 +722,27 @@ function ChatView({ context, onBack, onMenu }) {
 
   const isLong = suggestions.some(s => s.length > 36);
 
+  const clearChat = useCallback(() => {
+    if (thinking) return;
+    startedRef.current = false;
+    setMsgs([]);
+    setSuggestions([]);
+    setError('');
+    setThinking(true);
+    callDaemonAPI({
+      messages: [{ role: 'user', text: '[SESSION_START]' }],
+      context, apiKey, authToken,
+    }).then(({ blocks, suggestions: sugs }) => {
+      setMsgs([{ role: 'daemon', blocks: blocks || [] }]);
+      setSuggestions(sugs || []);
+    }).catch(e => {
+      setError(e.message || 'Failed to load Daemon. Try refreshing.');
+    }).finally(() => {
+      startedRef.current = true;
+      setThinking(false);
+    });
+  }, [thinking, context, apiKey, authToken]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: c.bg, transition: 'background 0.2s' }}>
 
@@ -755,6 +776,23 @@ function ChatView({ context, onBack, onMenu }) {
             </>
           )}
         </div>
+        <button
+          type="button"
+          onClick={clearChat}
+          disabled={thinking}
+          title="Clear chat and start fresh"
+          style={{
+            background: 'none', border: `1px solid ${c.subtleBorder}`, borderRadius: 7,
+            padding: '5px 10px', cursor: thinking ? 'not-allowed' : 'pointer',
+            fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em',
+            color: thinking ? c.text4 : c.text3, flexShrink: 0,
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={e => { if (!thinking) { e.currentTarget.style.borderColor = c.text3; e.currentTarget.style.color = c.text2; } }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.color = ''; }}
+        >
+          NEW
+        </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
           <span className="wd-dot" style={{ width: 5, height: 5, background: '#10b981' }} />
           {!isMobile && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 500, color: 'rgba(232,232,232,0.7)', letterSpacing: '0.01em' }}>Online</span>}
