@@ -201,6 +201,31 @@ function Md({ text, c }) {
 // BLOCK RENDERERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+function BlockBoot({ block }) {
+  const c = useC();
+  const statusIcon  = { ok: '✓', pending: '⋯', fail: '✕' };
+  const statusColor = { ok: '#10b981', pending: '#f59e0b', fail: '#ef4444' };
+  return (
+    <div style={{ border: `1px solid ${c.cardBorder}`, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '8px 16px', background: c.d ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderBottom: `1px solid ${c.cardBorder}` }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', color: c.text3 }}>{block.title || 'DAEMON BOOT SEQUENCE'}</span>
+      </div>
+      <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {(block.lines || []).map((line, i) => {
+          const s = line.status || 'ok';
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: statusColor[s] || '#4172f5', width: 14, flexShrink: 0, marginTop: 1 }}>{statusIcon[s] || '·'}</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, width: 130, flexShrink: 0, letterSpacing: '0.05em', paddingTop: 1 }}>{line.label}</span>
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, flex: 1, lineHeight: 1.4 }}>{line.detail}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function BlockText({ block }) {
   const c = useC();
   if (block.md) return <Md text={block.md} c={c} />;
@@ -215,7 +240,7 @@ function BlockStatGrid({ block }) {
       {(block.stats || []).map((s, i) => (
         <div key={i} style={{ padding: '14px 16px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 10, boxShadow: c.statShadow }}>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em', marginBottom: 6 }}>{(s.label || '').toUpperCase()}</div>
-          <div style={{ fontFamily: 'var(--orbitron)', fontSize: 22, fontWeight: 700, color: s.accent ? ACCENT_COLORS[s.accent] : c.text, letterSpacing: '-0.01em', marginBottom: 4 }}>{s.value}</div>
+          <div style={{ fontFamily: 'var(--orbitron)', fontSize: 22, fontWeight: 700, color: (s.accent || s.status) ? ACCENT_COLORS[s.accent || s.status] : c.text, letterSpacing: '-0.01em', marginBottom: 4 }}>{s.value}</div>
           {s.unit   && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3 }}>{s.unit}</div>}
           {s.source && (
             <div style={{ marginTop: 8, display: 'inline-flex', padding: '2px 8px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 5 }}>
@@ -272,10 +297,11 @@ function BlockChartLine({ block }) {
 function BlockAlert({ block }) {
   const c = useC();
   const styles = {
-    info:    { bg: c.d ? 'rgba(255,255,255,0.04)'  : 'rgba(0,0,0,0.02)',      border: 'rgba(65,114,245,0.22)',  leftBorder: '#4172f5', title: '#4172f5', icon: 'ℹ' },
-    success: { bg: c.d ? 'rgba(16,185,129,0.08)'   : 'rgba(16,185,129,0.07)', border: 'rgba(16,185,129,0.22)',  leftBorder: '#10b981', title: '#10b981', icon: '✓' },
-    warning: { bg: c.d ? 'rgba(245,158,11,0.08)'   : 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.22)',  leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠' },
-    danger:  { bg: c.d ? 'rgba(239,68,68,0.08)'    : 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.22)',   leftBorder: '#ef4444', title: '#ef4444', icon: '×' },
+    info:     { bg: c.d ? 'rgba(255,255,255,0.04)'  : 'rgba(0,0,0,0.02)',      border: 'rgba(65,114,245,0.22)',  leftBorder: '#4172f5', title: '#4172f5', icon: 'ℹ' },
+    success:  { bg: c.d ? 'rgba(16,185,129,0.08)'   : 'rgba(16,185,129,0.07)', border: 'rgba(16,185,129,0.22)',  leftBorder: '#10b981', title: '#10b981', icon: '✓' },
+    warning:  { bg: c.d ? 'rgba(245,158,11,0.08)'   : 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.22)',  leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠' },
+    danger:   { bg: c.d ? 'rgba(239,68,68,0.08)'    : 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.22)',   leftBorder: '#ef4444', title: '#ef4444', icon: '×' },
+    critical: { bg: c.d ? 'rgba(239,68,68,0.08)'    : 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.22)',   leftBorder: '#ef4444', title: '#ef4444', icon: '×' },
   };
   const s = styles[block.level] || styles.info;
   return (
@@ -344,17 +370,24 @@ function BlockProgressBars({ block }) {
   const c = useC();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {(block.items || []).map((item, i) => (
-        <div key={i}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2 }}>{item.label}</span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text3 }}>{item.value}{item.unit || '%'}</span>
+      {(block.items || []).map((item, i) => {
+        const pct = item.value != null ? item.value
+          : item.target > 0 ? Math.round((item.current / item.target) * 100) : 0;
+        const barColor = item.color || (item.status === 'danger' ? '#ef4444' : item.status === 'warn' ? '#f59e0b' : '#4172f5');
+        return (
+          <div key={i}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2 }}>{item.label}</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text3 }}>
+                {item.current != null ? `${item.current}/${item.target}` : pct}{item.unit || '%'}
+              </span>
+            </div>
+            <div style={{ height: 5, background: c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: barColor, borderRadius: 3, animation: 'wd-progress 0.8s ease both' }} />
+            </div>
           </div>
-          <div style={{ height: 5, background: c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${Math.min(item.value, 100)}%`, background: item.color || '#4172f5', borderRadius: 3, animation: 'wd-progress 0.8s ease both' }} />
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -479,6 +512,7 @@ function renderBlock(block, i, { onConfirm, onCancel } = {}) {
     </div>
   );
   switch (block.type) {
+    case 'boot':           return wrap(<BlockBoot block={block} />);
     case 'text':           return wrap(<BlockText block={block} />);
     case 'stat_grid':      return wrap(<BlockStatGrid block={block} />);
     case 'chart_bar':      return wrap(<BlockChartBar block={block} />);
@@ -503,81 +537,38 @@ function buildDaemonPrompt({ name, title, company, industry, size, permissionLev
   const firstName = name ? name.split(' ')[0] : 'there';
   const permLabels = { 1: 'Copilot (read-only)', 2: 'Assistant (confirm before act)', 3: 'Autonomous (execute and report)' };
 
-  return `You are ${firstName}'s Daemon — a personal AI operating system agent${company ? ` at ${company}` : ''}.
-You are not a chatbot. You are a live, role-aware, action-capable agent embedded in ${firstName}'s working day.
+  return `OUTPUT CONTRACT — ABSOLUTE RULE:
+Your response is one JSON object. First character: {. Last character: }. Nothing else. No reasoning. No planning. No asterisks. No text before or after. Violating this breaks the interface.
+
+{"blocks":[...],"suggestions":["...","...","..."]}
 
 IDENTITY:
-- Owner: ${name || 'Unknown'}${title ? ` (${title})` : ''}
-- Company: ${company || 'Unknown'}${industry ? `, ${industry}` : ''}${size ? `, ${size}` : ''}
-- Permission Level: ${permissionLevel} — ${permLabels[permissionLevel] || permLabels[2]}
+Owner: ${name || 'Unknown'}${title ? ` (${title})` : ''}
+Company: ${company || 'Unknown'}${industry ? `, ${industry}` : ''}${size ? `, ${size}` : ''}
+Permission: ${permissionLevel} — ${permLabels[permissionLevel] || permLabels[2]}
 
-CRITICAL: You MUST respond ONLY with valid JSON. No markdown fences. No text before or after. Just the JSON object:
+BLOCK TYPES:
+{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${name || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${company || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"Connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permissionLevel}"},{"label":"Memory","status":"pending","detail":"Learning your patterns"}]}
+{"type":"text","md":"**bold** names/IDs/amounts/deadlines. No bullet dashes. Cite: (Jira BUG-119), (Slack #eng 15 May)."}
+{"type":"stat_grid","stats":[{"label":"Sprint Progress","value":"3","unit":"of 8","source":"Jira","status":"warn"}]}
+{"type":"kanban","columns":[{"title":"Blocked","items":[{"id":"BUG-119","title":"Login fix","assignee":"James","priority":"P0","blockers":"3 days stale"}]}]}
+{"type":"alert","level":"critical","title":"...","content":"...","tag":"..."}  level: critical|warning|info
+{"type":"action_confirm","id":"uid","title":"...","description":"...","steps":["..."],"consequence":"..."}
+{"type":"action_done","summary":"✓ done, where, when."}
+{"type":"people_list","people":[{"name":"James","role":"Lead Dev","initial":"J","status":"blocked","note":"..."}]}
+{"type":"timeline","events":[{"date":"15 May","title":"...","body":"...","source":"Jira","event_type":"decision"}]}
+{"type":"progress_bars","items":[{"label":"Q2 Revenue","current":87,"target":100,"unit":"%","status":"warn"}]}
+{"type":"chart_bar","title":"...","keys":["value"],"data":[{"name":"Sprint 22","value":12}]}
+{"type":"chart_line","title":"...","keys":["value"],"data":[{"name":"Jan","value":1.2}]}
+{"type":"invoice_table","columns":["Client","Amount"],"rows":[{"client":"Acme","amount":5000}],"showTotal":true}
 
-{
-  "blocks": [...],
-  "suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"]
-}
+BLOCK SELECTION: Session start→boot+text+stat_grid/alert | Metrics→stat_grid+chart | Tasks→kanban | Team→people_list | Urgent→alert | History→timeline | Goals→progress_bars+stat_grid | Action(L2)→action_confirm | Action(L3)→action_done | Financial→invoice_table+stat_grid | General→text+block. Open with text or boot. 2–5 blocks max.
 
-BLOCK TYPES (choose based on content — this is a requirement, not a suggestion):
+PERMISSION: L1=read only | L2=action_confirm, wait for confirm | L3=execute then action_done
 
-{ "type": "text", "md": "prose with **bold** for names/IDs/deadlines. No bullet dashes. Cite sources inline: (Jira BUG-119), (Slack #eng, 15 May). Open every response with this block." }
+SESSION START when "[SESSION_START]": boot block first, then text greeting ${firstName} with company-aware intro, then 1–2 relevant blocks. If no tools: acknowledge and offer 3 specific connection steps.
 
-{ "type": "stat_grid", "stats": [{ "label": "Sprint Progress", "value": "3", "unit": "of 8 tickets", "source": "Jira", "accent": "warn" }] }
-  accent options: "ok" (green), "warn" (amber), "danger" (red), "neutral" (default)
-
-{ "type": "kanban", "columns": [{ "title": "Blocked", "items": [{ "title": "Login dropout fix", "tag": "BUG-119", "assignee": "James", "priority": "P0", "note": "Stale 3 days" }] }] }
-  priority: P0=critical, P1=high, P2=normal, P3=low
-
-{ "type": "alert", "level": "danger|warning|info", "title": "BUG-119 stale 3 days", "content": "Assigned to James. Last update 13 May. Blocking investor demo.", "tag": "Jira BUG-119" }
-
-{ "type": "action_confirm", "id": "action-unique-id", "title": "Send Slack DM to James", "description": "Draft a status update request on BUG-119.", "steps": ["Open Slack DM with James", "Post: Hey James..."], "consequence": "James receives a DM from ${firstName}. No ticket changes until he responds." }
-
-{ "type": "action_done", "summary": "✓ Slack DM sent to James (09:14). Jira BUG-119 updated: status set to Awaiting Response." }
-
-{ "type": "people_list", "people": [{ "name": "James Kim", "role": "Lead Dev", "status": "blocked", "note": "BUG-119 stale 3 days" }] }
-  status: online, busy, blocked, away
-
-{ "type": "timeline", "events": [{ "title": "BUG-119 assigned to James", "time": "13 May", "accent": true }] }
-
-{ "type": "progress_bars", "items": [{ "label": "Q2 Revenue", "value": 87, "unit": "%", "color": "#f59e0b" }] }
-
-{ "type": "chart_bar", "title": "Sprint Velocity", "keys": ["value"], "data": [{ "name": "Sprint 22", "value": 12 }] }
-
-{ "type": "chart_line", "title": "ARR Growth", "keys": ["value"], "data": [{ "name": "Jan", "value": 1.2 }] }
-
-{ "type": "invoice_table", "columns": ["Client", "Amount", "Due"], "rows": [{ "client": "Acme", "amount": 5000, "due": "Overdue" }], "showTotal": true }
-
-BLOCK SELECTION RULES (required):
-- Metrics/KPIs → stat_grid + chart
-- Tasks/sprints/tickets → kanban
-- Team/capacity → people_list
-- Something urgent → alert (critical/warning)
-- History/decisions → timeline
-- Goals/OKRs → progress_bars + stat_grid
-- Action to take → action_confirm (Level 2) or execute then action_done (Level 3)
-- General answer → text + relevant structural blocks
-- Use 2–5 blocks per response. Never more than 5.
-
-PERMISSION LEVEL BEHAVIOR:
-- Level 1: Never execute. Draft and describe only. Say "I'm in Copilot mode — I can draft this for you."
-- Level 2: Present action_confirm block. Wait for user reply containing "CONFIRMED" before executing.
-- Level 3: Execute immediately, return action_done block.
-
-SESSION START:
-When user message is "[SESSION_START]", deliver a proactive briefing:
-- Greet by first name
-- Surface 2–3 time-sensitive items relevant to their role
-- Use text + stat_grid + alert (if anything is critical)
-- If Company Brain tools aren't connected yet, acknowledge it and suggest useful starting actions
-
-LANGUAGE RULES:
-- No filler. Never start with "Of course!", "Certainly!", "Great question!"
-- Bold (**) for: names, ticket IDs, deadlines, amounts, critical terms
-- No bullet dashes in text blocks. Prose only.
-- Cite sources inline. If no source, don't state the fact.
-- Direct, competent tone. You work for ${firstName}. Respect their time.
-- Never say "As an AI..." or "I don't have access to that."
-- Suggestions must be specific and actionable — never generic.`;
+LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. End with exactly 3 specific actionable suggestions. Never: visible reasoning, "As an AI", "I don't have access".`;
 }
 
 function serializeDaemonMsg(msg) {
@@ -590,15 +581,26 @@ function serializeDaemonMsg(msg) {
 
 function parseJsonResponse(text) {
   if (!text) return { blocks: [], suggestions: [] };
+  // Strip <thinking> tags (extended thinking models)
+  let t = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
   // 1. Direct parse
-  try { return JSON.parse(text.trim()); } catch {}
-  // 2. Extract from code fence
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) { try { return JSON.parse(fence[1].trim()); } catch {} }
-  // 3. Extract outermost {...}
-  const s = text.indexOf('{'), e = text.lastIndexOf('}');
-  if (s !== -1 && e > s) { try { return JSON.parse(text.slice(s, e + 1)); } catch {} }
-  // 4. Fallback: wrap as plain text
+  try { const p = JSON.parse(t); if (p.blocks) return p; } catch {}
+  // 2. Code fence
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) { try { const p = JSON.parse(fence[1].trim()); if (p.blocks) return p; } catch {} }
+  // 3. Balanced brace scan — first complete JSON object that has "blocks"
+  let depth = 0, start = -1;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === '{') { if (depth === 0) start = i; depth++; }
+    else if (t[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try { const p = JSON.parse(t.slice(start, i + 1)); if (p.blocks) return p; } catch {}
+        start = -1;
+      }
+    }
+  }
+  // 4. Fallback: show raw text
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
