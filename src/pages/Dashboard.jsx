@@ -641,7 +641,10 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
       messages: messages.map(serializeDaemonMsg),
     }),
   });
-  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Server error ${res.status}`);
+  }
   return res.json();
 }
 

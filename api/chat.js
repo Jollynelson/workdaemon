@@ -265,6 +265,7 @@ export default async function handler(req, res) {
     const parsed = parseJsonResponse(raw);
     return res.status(200).json(parsed);
   } catch (e) {
+    console.error('[chat] provider=%s error=%s', keyRow.provider, e.message, e.stack);
     return res.status(502).json({ error: e.message || 'AI request failed' });
   }
 }
