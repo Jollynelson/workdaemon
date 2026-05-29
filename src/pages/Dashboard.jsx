@@ -383,17 +383,55 @@ function BlockKanban({ block }) {
   );
 }
 
-function BlockActionConfirm({ block }) {
+function BlockActionConfirm({ block, onConfirm, onCancel }) {
   const c = useC();
-  const [done, setDone] = useState(false);
-  if (done) return <BlockAlert block={{ level: 'success', content: block.success || 'Action completed.' }} />;
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
   return (
-    <div style={{ padding: '14px 16px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 10 }}>
-      <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text2, marginBottom: 14, lineHeight: 1.5 }}>{block.prompt}</p>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button className="wd-btn"       style={{ flex: 1, height: 40, fontSize: 9 }} onClick={() => setDone(true)}>{block.confirmLabel || 'CONFIRM'}</button>
-        <button className="wd-btn-ghost" style={{ flex: 1, height: 40, justifyContent: 'center' }} onClick={() => setDone(true)}>{block.cancelLabel || 'Cancel'}</button>
+    <div style={{ border: `1px solid ${c.cardBorder}`, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '8px 16px', background: c.d ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderBottom: `1px solid ${c.cardBorder}` }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', color: c.text3 }}>ACTION PENDING CONFIRMATION</span>
       </div>
+      <div style={{ padding: '16px 18px' }}>
+        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 15, fontWeight: 600, color: c.text, marginBottom: 6 }}>{block.title}</div>
+        {block.description && (
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 14, lineHeight: 1.5 }}>{block.description}</div>
+        )}
+        {(block.steps || []).length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+            {block.steps.map((step, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ width: 22, height: 22, borderRadius: 6, background: c.subtle, border: `1px solid ${c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.5, paddingTop: 2 }}>{step}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {block.consequence && (
+          <div style={{ padding: '10px 14px', background: c.d ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', border: `1px solid ${c.subtleBorder}`, borderRadius: 8, fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, lineHeight: 1.5, marginBottom: 16 }}>
+            {block.consequence}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="wd-btn" style={{ flex: 1, height: 44, fontSize: 9, letterSpacing: '0.1em' }}
+            onClick={() => { onConfirm?.(block.id); setDismissed(true); }}>
+            CONFIRM — EXECUTE
+          </button>
+          <button className="wd-btn-ghost" style={{ height: 44, padding: '0 20px', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em' }}
+            onClick={() => { onCancel?.(); setDismissed(true); }}>
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BlockActionDone({ block }) {
+  const c = useC();
+  return (
+    <div style={{ padding: '12px 16px', background: c.d ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.22)', borderLeft: '3px solid #10b981', borderRadius: '0 10px 10px 0' }}>
+      <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: '#10b981', lineHeight: 1.6 }}>{block.summary}</div>
     </div>
   );
 }
@@ -433,26 +471,27 @@ function BlockInvoiceTable({ block }) {
   );
 }
 
-function renderBlock(block, i) {
-  const wrapCard = (content, noWrap = false) => (
-    <div key={i} style={noWrap ? {} : {}}>
+function renderBlock(block, i, { onConfirm, onCancel } = {}) {
+  const wrap = (content) => (
+    <div key={i}>
       {block.label && <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.1em', marginBottom: 10 }}>{block.label.toUpperCase()}</p>}
       {content}
     </div>
   );
   switch (block.type) {
-    case 'text':           return wrapCard(<BlockText block={block} />, true);
-    case 'stat_grid':      return wrapCard(<BlockStatGrid block={block} />, true);
-    case 'chart_bar':      return wrapCard(<BlockChartBar block={block} />);
-    case 'chart_line':     return wrapCard(<BlockChartLine block={block} />);
-    case 'alert':          return <div key={i}><BlockAlert block={block} /></div>;
-    case 'kanban':         return wrapCard(<BlockKanban block={block} />);
-    case 'people_list':    return wrapCard(<BlockPeopleList block={block} />, true);
-    case 'timeline':       return wrapCard(<BlockTimeline block={block} />);
-    case 'progress_bars':  return wrapCard(<BlockProgressBars block={block} />);
-    case 'action_confirm': return <div key={i}><BlockActionConfirm block={block} /></div>;
-    case 'invoice_table':  return wrapCard(<BlockInvoiceTable block={block} />, true);
-    default:               return wrapCard(<BlockText block={{ content: JSON.stringify(block) }} />, true);
+    case 'text':           return wrap(<BlockText block={block} />);
+    case 'stat_grid':      return wrap(<BlockStatGrid block={block} />);
+    case 'chart_bar':      return wrap(<BlockChartBar block={block} />);
+    case 'chart_line':     return wrap(<BlockChartLine block={block} />);
+    case 'alert':          return wrap(<BlockAlert block={block} />);
+    case 'kanban':         return wrap(<BlockKanban block={block} />);
+    case 'people_list':    return wrap(<BlockPeopleList block={block} />);
+    case 'timeline':       return wrap(<BlockTimeline block={block} />);
+    case 'progress_bars':  return wrap(<BlockProgressBars block={block} />);
+    case 'action_confirm': return wrap(<BlockActionConfirm block={block} onConfirm={onConfirm} onCancel={onCancel} />);
+    case 'action_done':    return wrap(<BlockActionDone block={block} />);
+    case 'invoice_table':  return wrap(<BlockInvoiceTable block={block} />);
+    default:               return wrap(<BlockText block={{ md: typeof block === 'string' ? block : JSON.stringify(block) }} />);
   }
 }
 
@@ -460,15 +499,108 @@ function renderBlock(block, i) {
 // CHAT API
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DAEMON_SYSTEM_PROMPT = (context) => `You are a Company Brain Daemon — an AI assistant with full context of ${context.company || 'this company'} across all their connected tools.
+function buildDaemonPrompt({ name, title, company, industry, size, permissionLevel = 2 }) {
+  const firstName = name ? name.split(' ')[0] : 'there';
+  const permLabels = { 1: 'Copilot (read-only)', 2: 'Assistant (confirm before act)', 3: 'Autonomous (execute and report)' };
 
-The user's role is: ${context.role || 'team member'}.
+  return `You are ${firstName}'s Daemon — a personal AI operating system agent${company ? ` at ${company}` : ''}.
+You are not a chatbot. You are a live, role-aware, action-capable agent embedded in ${firstName}'s working day.
 
-Respond concisely and directly. You have access to data from connected integrations (Notion, Slack, Jira, GitHub, Gmail, etc.). Surface specific names, numbers, and deadlines when relevant. Flag blockers and risks proactively.
+IDENTITY:
+- Owner: ${name || 'Unknown'}${title ? ` (${title})` : ''}
+- Company: ${company || 'Unknown'}${industry ? `, ${industry}` : ''}${size ? `, ${size}` : ''}
+- Permission Level: ${permissionLevel} — ${permLabels[permissionLevel] || permLabels[2]}
 
-Keep responses focused and actionable. Use **bold** for emphasis on critical items.`;
+CRITICAL: You MUST respond ONLY with valid JSON. No markdown fences. No text before or after. Just the JSON object:
+
+{
+  "blocks": [...],
+  "suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"]
+}
+
+BLOCK TYPES (choose based on content — this is a requirement, not a suggestion):
+
+{ "type": "text", "md": "prose with **bold** for names/IDs/deadlines. No bullet dashes. Cite sources inline: (Jira BUG-119), (Slack #eng, 15 May). Open every response with this block." }
+
+{ "type": "stat_grid", "stats": [{ "label": "Sprint Progress", "value": "3", "unit": "of 8 tickets", "source": "Jira", "accent": "warn" }] }
+  accent options: "ok" (green), "warn" (amber), "danger" (red), "neutral" (default)
+
+{ "type": "kanban", "columns": [{ "title": "Blocked", "items": [{ "title": "Login dropout fix", "tag": "BUG-119", "assignee": "James", "priority": "P0", "note": "Stale 3 days" }] }] }
+  priority: P0=critical, P1=high, P2=normal, P3=low
+
+{ "type": "alert", "level": "danger|warning|info", "title": "BUG-119 stale 3 days", "content": "Assigned to James. Last update 13 May. Blocking investor demo.", "tag": "Jira BUG-119" }
+
+{ "type": "action_confirm", "id": "action-unique-id", "title": "Send Slack DM to James", "description": "Draft a status update request on BUG-119.", "steps": ["Open Slack DM with James", "Post: Hey James..."], "consequence": "James receives a DM from ${firstName}. No ticket changes until he responds." }
+
+{ "type": "action_done", "summary": "✓ Slack DM sent to James (09:14). Jira BUG-119 updated: status set to Awaiting Response." }
+
+{ "type": "people_list", "people": [{ "name": "James Kim", "role": "Lead Dev", "status": "blocked", "note": "BUG-119 stale 3 days" }] }
+  status: online, busy, blocked, away
+
+{ "type": "timeline", "events": [{ "title": "BUG-119 assigned to James", "time": "13 May", "accent": true }] }
+
+{ "type": "progress_bars", "items": [{ "label": "Q2 Revenue", "value": 87, "unit": "%", "color": "#f59e0b" }] }
+
+{ "type": "chart_bar", "title": "Sprint Velocity", "keys": ["value"], "data": [{ "name": "Sprint 22", "value": 12 }] }
+
+{ "type": "chart_line", "title": "ARR Growth", "keys": ["value"], "data": [{ "name": "Jan", "value": 1.2 }] }
+
+{ "type": "invoice_table", "columns": ["Client", "Amount", "Due"], "rows": [{ "client": "Acme", "amount": 5000, "due": "Overdue" }], "showTotal": true }
+
+BLOCK SELECTION RULES (required):
+- Metrics/KPIs → stat_grid + chart
+- Tasks/sprints/tickets → kanban
+- Team/capacity → people_list
+- Something urgent → alert (critical/warning)
+- History/decisions → timeline
+- Goals/OKRs → progress_bars + stat_grid
+- Action to take → action_confirm (Level 2) or execute then action_done (Level 3)
+- General answer → text + relevant structural blocks
+- Use 2–5 blocks per response. Never more than 5.
+
+PERMISSION LEVEL BEHAVIOR:
+- Level 1: Never execute. Draft and describe only. Say "I'm in Copilot mode — I can draft this for you."
+- Level 2: Present action_confirm block. Wait for user reply containing "CONFIRMED" before executing.
+- Level 3: Execute immediately, return action_done block.
+
+SESSION START:
+When user message is "[SESSION_START]", deliver a proactive briefing:
+- Greet by first name
+- Surface 2–3 time-sensitive items relevant to their role
+- Use text + stat_grid + alert (if anything is critical)
+- If Company Brain tools aren't connected yet, acknowledge it and suggest useful starting actions
+
+LANGUAGE RULES:
+- No filler. Never start with "Of course!", "Certainly!", "Great question!"
+- Bold (**) for: names, ticket IDs, deadlines, amounts, critical terms
+- No bullet dashes in text blocks. Prose only.
+- Cite sources inline. If no source, don't state the fact.
+- Direct, competent tone. You work for ${firstName}. Respect their time.
+- Never say "As an AI..." or "I don't have access to that."
+- Suggestions must be specific and actionable — never generic.`;
+}
+
+function serializeDaemonMsg(msg) {
+  if (msg.role === 'user') return { role: 'user', content: msg.text || '' };
+  const content = msg.blocks
+    ? JSON.stringify({ blocks: msg.blocks })
+    : (msg.text || '');
+  return { role: 'assistant', content };
+}
+
+function parseJsonResponse(text) {
+  if (!text) return { blocks: [], suggestions: [] };
+  try {
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return { blocks: [{ type: 'text', md: text }], suggestions: [] };
+  }
+}
 
 async function callDaemonAPI({ messages, context, apiKey, authToken }) {
+  const sys = buildDaemonPrompt(context);
+
   // Direct Anthropic API (user-provided key)
   if (apiKey) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -481,14 +613,9 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        system: DAEMON_SYSTEM_PROMPT(context),
-        messages: messages
-          .filter(m => m.role === 'user' || (m.role === 'daemon' && m.text))
-          .map(m => ({
-            role: m.role === 'user' ? 'user' : 'assistant',
-            content: m.text || '',
-          })),
+        max_tokens: 4096,
+        system: sys,
+        messages: messages.map(serializeDaemonMsg),
       }),
     });
     if (!res.ok) {
@@ -496,10 +623,7 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
       throw new Error(err.error?.message || `API error ${res.status}`);
     }
     const data = await res.json();
-    return {
-      blocks: [{ type: 'text', md: data.content[0]?.text || '' }],
-      suggestions: [],
-    };
+    return parseJsonResponse(data.content[0]?.text || '');
   }
 
   // Backend endpoint
@@ -510,10 +634,7 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
     body: JSON.stringify({
-      messages: messages
-        .filter(m => m.role === 'user' || (m.role === 'daemon' && m.text))
-        .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text || '' })),
-      systemPrompt: DAEMON_SYSTEM_PROMPT(context),
+      messages: messages.map(serializeDaemonMsg),
     }),
   });
   if (!res.ok) throw new Error(`Server error ${res.status}`);
@@ -528,39 +649,41 @@ function ChatView({ context, onBack, onMenu }) {
   const c = useC();
   const { isMobile } = useViewport();
   const { token: authToken } = useAuth();
-  const [msgs, setMsgs]             = useState([]);
+  const [msgs, setMsgs]               = useState([]);
   const [suggestions, setSuggestions] = useState([]);
-  const [input, setInput]           = useState('');
-  const [thinking, setThinking]     = useState(false);
-  const [error, setError]           = useState('');
-  const [apiKey, setApiKey]         = useState(() => sessionStorage.getItem('wd_apiKey') || '');
-  const [showApiModal, setShowApiModal] = useState(false);
+  const [input, setInput]             = useState('');
+  const [thinking, setThinking]       = useState(false);
+  const [error, setError]             = useState('');
+  const [apiKey]                      = useState(() => sessionStorage.getItem('wd_apiKey') || '');
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
+  const startedRef = useRef(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
 
-  const send = useCallback(async (text) => {
+  const send = useCallback(async (text, opts = {}) => {
     const q = text.trim();
     if (!q || thinking) return;
     setError('');
     setSuggestions([]);
-    const userMsg = { role: 'user', text: q };
-    setMsgs(m => [...m, userMsg]);
+    const userMsg = opts.silent ? null : { role: 'user', text: q };
+    if (userMsg) setMsgs(m => [...m, userMsg]);
     setInput('');
     setThinking(true);
 
     try {
-      const history = [...msgs, userMsg];
+      const history = userMsg ? [...msgs, userMsg] : msgs;
       const { blocks, suggestions: nextSugs } = await callDaemonAPI({
-        messages: history,
+        messages: [...(opts.silent ? [] : history.filter((_, i) => i < history.length)), ...(opts.silent ? [{ role: 'user', text: q }] : [])].length
+          ? [...(opts.silent ? [{ role: 'user', text: q }] : history)]
+          : history,
         context,
         apiKey,
         authToken,
       });
-      setMsgs(m => [...m, { role: 'daemon', blocks }]);
+      setMsgs(m => [...(userMsg ? m : m), { role: 'daemon', blocks }]);
       setSuggestions(nextSugs || []);
     } catch (e) {
       setError(e.message || 'Something went wrong. Try again.');
@@ -568,14 +691,31 @@ function ChatView({ context, onBack, onMenu }) {
       setThinking(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [msgs, context, apiKey, thinking]);
+  }, [msgs, context, apiKey, authToken, thinking]);
 
-  const saveApiKey = (key) => {
-    setApiKey(key);
-    if (key) sessionStorage.setItem('wd_apiKey', key);
-    else sessionStorage.removeItem('wd_apiKey');
-    setShowApiModal(false);
-  };
+  // Session startup: proactive briefing on mount
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    setThinking(true);
+    callDaemonAPI({
+      messages: [{ role: 'user', text: '[SESSION_START]' }],
+      context,
+      apiKey,
+      authToken,
+    }).then(({ blocks, suggestions: sugs }) => {
+      setMsgs([{ role: 'daemon', blocks }]);
+      setSuggestions(sugs || []);
+    }).catch(() => {}).finally(() => setThinking(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onConfirmAction = useCallback((actionId) => {
+    send(`CONFIRMED — execute ${actionId}`);
+  }, [send]);
+
+  const onCancelAction = useCallback(() => {
+    setSuggestions([]);
+  }, []);
 
   const isLong = suggestions.some(s => s.length > 36);
 
@@ -612,40 +752,15 @@ function ChatView({ context, onBack, onMenu }) {
             </>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {!isMobile && (
-            <button className="wd-btn-ghost" onClick={() => setShowApiModal(true)} style={{ fontSize: 11, fontFamily: 'var(--dmsans)', letterSpacing: 0, padding: '6px 12px' }}>
-              {apiKey ? '🔑 API key set' : '+ API Key'}
-            </button>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <span className="wd-dot" style={{ width: 5, height: 5, background: apiKey ? '#10b981' : '#f59e0b' }} />
-            {!isMobile && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 500, color: 'rgba(232,232,232,0.7)', letterSpacing: '0.01em' }}>{apiKey ? 'Live AI' : 'Add key'}</span>}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
+          <span className="wd-dot" style={{ width: 5, height: 5, background: '#10b981' }} />
+          {!isMobile && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 500, color: 'rgba(232,232,232,0.7)', letterSpacing: '0.01em' }}>Online</span>}
         </div>
       </div>
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 14px 0' : '28px 28px 0' }}>
         <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: isMobile ? 18 : 24 }}>
-
-          {/* Welcome state */}
-          {msgs.length === 0 && !thinking && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <DaemonMark size={16} glow={c.d} />
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>
-                  {context.roleLabel?.toUpperCase()} DAEMON
-                </span>
-              </div>
-              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 15, color: c.text, lineHeight: 1.75 }}>
-                {!apiKey
-                  ? <>Add your <strong style={{ color: c.text }}>Anthropic API key</strong> above to start querying your company brain. Your key is stored in this browser session only.</>
-                  : <>Your Company Brain is ready. Ask me anything — sprint status, pipeline, team workload, blockers, or what needs your attention right now.</>
-                }
-              </div>
-            </div>
-          )}
 
           {msgs.map((m, i) => (
             <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', gap: 10 }}>
@@ -663,12 +778,10 @@ function ChatView({ context, onBack, onMenu }) {
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <DaemonMark size={16} glow={c.d} />
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>
-                      {context.roleLabel?.toUpperCase()} DAEMON
-                    </span>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>DAEMON</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi))}
+                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction }))}
                     {m.text && <Md text={m.text} c={c} />}
                   </div>
                 </div>
@@ -714,41 +827,25 @@ function ChatView({ context, onBack, onMenu }) {
             <input
               ref={inputRef}
               className="wd-input"
-              placeholder={apiKey ? (isMobile ? 'Ask your Daemon...' : 'Ask anything — Enter to send') : 'Add API key to start chatting'}
+              placeholder={isMobile ? 'Message your Daemon...' : 'Message your Daemon — Enter to send, Shift+Enter for new line'}
               value={input}
               onChange={e => setInput(e.target.value)}
-              disabled={thinking || !apiKey}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+              disabled={thinking}
               style={{ flex: 1, borderRadius: 24, padding: isMobile ? '11px 16px' : '13px 20px', height: isMobile ? 46 : 50, fontSize: isMobile ? 14 : 15 }}
             />
-            <button type="submit" disabled={!input.trim() || thinking || !apiKey} style={{
+            <button type="submit" disabled={!input.trim() || thinking} style={{
               width: isMobile ? 44 : 50, height: isMobile ? 44 : 50, borderRadius: 14,
-              background: input.trim() && !thinking && apiKey ? '#4172f5' : c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-              border: 'none', color: input.trim() && !thinking && apiKey ? '#fff' : c.text3,
-              fontSize: isMobile ? 18 : 20, cursor: input.trim() && !thinking && apiKey ? 'pointer' : 'not-allowed',
+              background: input.trim() && !thinking ? '#4172f5' : c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+              border: 'none', color: input.trim() && !thinking ? '#fff' : c.text3,
+              fontSize: isMobile ? 18 : 20, cursor: input.trim() && !thinking ? 'pointer' : 'not-allowed',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all 0.15s', flexShrink: 0,
-              boxShadow: input.trim() && !thinking && apiKey ? '0 4px 16px rgba(65,114,245,0.28)' : 'none',
+              boxShadow: input.trim() && !thinking ? '0 4px 16px rgba(65,114,245,0.28)' : 'none',
             }}>↑</button>
           </form>
         </div>
       </div>
-
-      {/* API key modal */}
-      {showApiModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }} onClick={() => setShowApiModal(false)}>
-          <div style={{ background: c.surface, border: `1px solid ${c.cardBorder}`, borderRadius: 16, padding: '28px 32px', width: 420, boxShadow: '0 40px 80px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
-            <p className="wd-label-blue" style={{ marginBottom: 8 }}>ANTHROPIC API KEY</p>
-            <h3 style={{ fontFamily: 'var(--dmsans)', fontSize: 20, fontWeight: 600, color: c.text, marginBottom: 6 }}>Connect your AI</h3>
-            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.6, marginBottom: 20 }}>Your key is stored in this browser session only — never sent to WorkDaemon servers.</p>
-            <input className="wd-input" type="password" placeholder="sk-ant-..." defaultValue={apiKey} id="apiKeyInput" style={{ marginBottom: 14 }} autoFocus />
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="wd-btn" style={{ flex: 1, height: 42, fontSize: 9 }} onClick={() => saveApiKey(document.getElementById('apiKeyInput').value.trim())}>SAVE KEY</button>
-              <button className="wd-btn-ghost" style={{ height: 42, padding: '0 18px', justifyContent: 'center' }} onClick={() => { saveApiKey(''); }}>Clear</button>
-            </div>
-            <p style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.08em', textAlign: 'center', marginTop: 14 }}>SESSION ONLY · NEVER LEAVES YOUR BROWSER</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -785,10 +882,19 @@ function DaemonPage({ onMenu, onChatChange }) {
   useEffect(() => { onChatChange?.(started); }, [started]);
 
   if (started) {
+    const chatContext = {
+      name: profile?.name || null,
+      title: profile?.title || profile?.role || selectedRole?.label || null,
+      company: profile?.workspaces?.name || company || null,
+      industry: profile?.workspaces?.industry || selectedPreset?.id || null,
+      size: profile?.workspaces?.size || null,
+      permissionLevel: profile?.permission_level ?? 2,
+      roleLabel: profile?.title || profile?.role || selectedRole?.label || 'Daemon',
+    };
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ChatView
-          context={{ roleLabel: selectedRole.label, company: company || undefined, role: selectedRole.id, industry: selectedPreset.id }}
+          context={chatContext}
           onBack={hasProfile ? null : () => setStarted(false)}
           onMenu={onMenu}
         />
