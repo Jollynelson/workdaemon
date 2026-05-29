@@ -1236,7 +1236,485 @@ function OverviewPage() {
 // SETTINGS PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Auto-aliases stay current without any code changes on our end
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTINGS PAGE — multi-provider BYOK
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROVIDERS = [
+  {
+    id: 'openrouter', name: 'OpenRouter', color: '#7c3aed',
+    desc: '300+ models via one key', keyLabel: 'API Key',
+    placeholder: 'sk-or-v1-…',
+    staticModels: [],
+  },
+  {
+    id: 'anthropic', name: 'Anthropic', color: '#d97706',
+    desc: 'Direct Claude access', keyLabel: 'API Key',
+    placeholder: 'sk-ant-api03-…',
+    staticModels: [
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'openai', name: 'OpenAI', color: '#10b981',
+    desc: 'GPT models + embeddings', keyLabel: 'API Key',
+    placeholder: 'sk-proj-…',
+    staticModels: [
+      { id: 'gpt-4o', name: 'GPT-4o' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o mini' },
+      { id: 'gpt-4.1', name: 'GPT-4.1' },
+      { id: 'o3', name: 'o3' },
+      { id: 'o4-mini', name: 'o4-mini' },
+      { id: 'text-embedding-3-large', name: 'text-embedding-3-large' },
+      { id: 'text-embedding-3-small', name: 'text-embedding-3-small' },
+    ],
+  },
+  {
+    id: 'google', name: 'Google Gemini', color: '#4172f5',
+    desc: 'Gemini Pro & Flash', keyLabel: 'API Key',
+    placeholder: 'AIza…',
+    staticModels: [
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+    ],
+  },
+  {
+    id: 'mistral', name: 'Mistral', color: '#ec4899',
+    desc: 'Mistral & Codestral', keyLabel: 'API Key',
+    placeholder: 'your-mistral-key',
+    staticModels: [
+      { id: 'mistral-large-latest', name: 'Mistral Large' },
+      { id: 'mistral-small-latest', name: 'Mistral Small' },
+      { id: 'codestral-latest', name: 'Codestral' },
+      { id: 'mistral-embed', name: 'Mistral Embed' },
+    ],
+  },
+  {
+    id: 'ollama', name: 'Ollama', color: '#64748b',
+    desc: 'Self-hosted local models', keyLabel: null,
+    isEndpoint: true, endpointPlaceholder: 'http://localhost:11434',
+    staticModels: [],
+  },
+  {
+    id: 'azure', name: 'Azure OpenAI', color: '#0078d4',
+    desc: 'Enterprise deployments', keyLabel: 'API Key',
+    placeholder: 'your-azure-key',
+    isEndpoint: true, endpointPlaceholder: 'https://your-resource.openai.azure.com',
+    staticModels: [],
+  },
+];
+
+const USE_CASES = [
+  { id: 'reasoning',  label: 'Daemon Chat',      desc: 'Main AI assistant for all users' },
+  { id: 'embeddings', label: 'Embeddings',        desc: 'Vector search & knowledge base' },
+  { id: 'sensitive',  label: 'Sensitive Queries', desc: 'Private data, stays local' },
+  { id: 'fallback',   label: 'Fallback',          desc: 'Used if primary key fails' },
+];
+
+function ProviderBadge({ provider, size = 'sm' }) {
+  const cfg = PROVIDERS.find(p => p.id === provider);
+  if (!cfg) return null;
+  const pad = size === 'sm' ? '3px 8px' : '5px 12px';
+  const fs = size === 'sm' ? 10 : 12;
+  return (
+    <span style={{
+      display: 'inline-block', padding: pad, borderRadius: 20,
+      background: `${cfg.color}18`, border: `1px solid ${cfg.color}40`,
+      fontFamily: 'var(--dmsans)', fontSize: fs, fontWeight: 600,
+      color: cfg.color, whiteSpace: 'nowrap',
+    }}>{cfg.name}</span>
+  );
+}
+
+function UseCaseBadge({ useCase }) {
+  const cfg = USE_CASES.find(u => u.id === useCase) ?? USE_CASES[0];
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 8px', borderRadius: 20,
+      background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.2)',
+      fontFamily: 'var(--dmsans)', fontSize: 10, fontWeight: 600,
+      color: '#4172f5', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.06em',
+    }}>{cfg.label}</span>
+  );
+}
+
+function FocusedInput({ value, onChange, placeholder, inputSt, type = 'text', style: extraStyle = {} }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <input
+      type={type} value={value} onChange={e => onChange(e.target.value)}
+      placeholder={placeholder} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+      autoComplete="off" spellCheck={false}
+      style={{ ...inputSt(focused), ...extraStyle }}
+    />
+  );
+}
+
+const mkPrimaryBtn = (color, enabled) => ({
+  padding: '9px 20px', borderRadius: 7, cursor: enabled ? 'pointer' : 'not-allowed',
+  background: enabled ? color : 'rgba(255,255,255,0.05)', border: 'none',
+  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600,
+  color: enabled ? '#fff' : 'rgba(255,255,255,0.3)', transition: 'opacity 0.15s',
+});
+const mkGhostBtn = (c, extra = {}) => ({
+  padding: '9px 16px', borderRadius: 7, cursor: 'pointer',
+  background: 'none', border: `1px solid ${c.subtleBorder}`,
+  fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, ...extra,
+});
+
+function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
+  const [step, setStep]         = useState(editKey ? 2 : 1);
+  const [provider, setProvider] = useState(editKey?.provider || '');
+  const [apiKey, setApiKey]     = useState('');
+  const [endpoint, setEndpoint] = useState(editKey?.endpoint || '');
+  const [model, setModel]       = useState(editKey?.model || '');
+  const [useCase, setUseCase]   = useState(editKey?.use_case || 'reasoning');
+  const [label, setLabel]       = useState(editKey?.label || '');
+  const [showKey, setShowKey]   = useState(false);
+  const [models, setModels]     = useState([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [err, setErr]           = useState('');
+  const cfg = PROVIDERS.find(p => p.id === provider);
+
+  const inputSt = (focused) => ({
+    width: '100%', padding: '10px 14px', boxSizing: 'border-box',
+    background: focused ? (c.d ? 'rgba(255,255,255,0.07)' : '#fff') : c.inputBg,
+    border: `1px solid ${focused ? 'rgba(65,114,245,0.5)' : c.inputBorder}`,
+    borderRadius: 7, color: c.text, fontSize: 14, fontFamily: 'var(--dmsans)',
+    outline: 'none', transition: 'all 0.15s',
+    boxShadow: focused ? '0 0 0 2px rgba(65,114,245,0.15)' : 'none',
+  });
+
+  const validateAndFetch = useCallback(async () => {
+    if (!cfg) return;
+    setLoadingModels(true);
+    setErr('');
+    try {
+      const r = await fetch('/api/workspace/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'validate', provider, key: apiKey, endpoint }),
+      });
+      const d = await r.json();
+      const live = d.models || [];
+      const merged = live.length ? live : cfg.staticModels;
+      setModels(merged);
+      if (!model && merged[0]) setModel(merged[0].id);
+    } catch {
+      setModels(cfg.staticModels || []);
+      if (!model && cfg.staticModels?.[0]) setModel(cfg.staticModels[0].id);
+    }
+    setLoadingModels(false);
+  }, [cfg, token, provider, apiKey, endpoint, model]);
+
+  const advanceToModels = () => {
+    const base = cfg?.staticModels || [];
+    setModels(base);
+    if (!model && base[0]) setModel(base[0].id);
+    setStep(3);
+    if (apiKey || provider === 'ollama') validateAndFetch();
+  };
+
+  const save = async () => {
+    setSaving(true); setErr('');
+    try {
+      const r = await fetch('/api/workspace/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: editKey?.id, provider,
+          key: apiKey || undefined, endpoint: endpoint || undefined,
+          model, use_case: useCase, label: label || undefined,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error || 'Save failed'); return; }
+      onSaved();
+    } catch { setErr('Network error'); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ background: c.card, border: '1px solid rgba(65,114,245,0.25)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
+      {/* Steps */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, alignItems: 'center' }}>
+        {['Provider', 'Credentials', 'Model & Use'].map((s, i) => (
+          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: step > i + 1 ? '#10b981' : step === i + 1 ? '#4172f5' : c.subtle,
+              border: `1px solid ${step > i + 1 ? '#10b981' : step === i + 1 ? '#4172f5' : c.subtleBorder}`,
+              fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 700,
+              color: step >= i + 1 ? '#fff' : c.text3,
+            }}>{step > i + 1 ? '✓' : i + 1}</div>
+            <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: step === i + 1 ? c.text : c.text3 }}>{s}</span>
+            {i < 2 && <span style={{ color: c.text4, fontSize: 14, marginLeft: 2 }}>›</span>}
+          </div>
+        ))}
+        <button type="button" onClick={onCancel} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: c.text3, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+
+      {/* Step 1: Provider picker */}
+      {step === 1 && (
+        <div>
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, marginBottom: 14 }}>Choose a provider to connect.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 8 }}>
+            {PROVIDERS.map(p => (
+              <button key={p.id} type="button" onClick={() => { setProvider(p.id); setStep(2); }}
+                style={{
+                  padding: '12px 14px', textAlign: 'left', cursor: 'pointer',
+                  background: c.subtle, border: `1px solid ${c.subtleBorder}`,
+                  borderRadius: 9, transition: 'all 0.12s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = p.color + '55'; e.currentTarget.style.background = `${p.color}0e`; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.background = ''; }}
+              >
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 700, color: p.color, marginBottom: 3 }}>{p.name}</div>
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3 }}>{p.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Step 2: Key / endpoint */}
+      {step === 2 && cfg && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <ProviderBadge provider={provider} size="md" />
+            <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2 }}>{cfg.desc}</span>
+          </div>
+          {cfg.isEndpoint && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Endpoint URL</label>
+              <FocusedInput value={endpoint} onChange={setEndpoint} placeholder={cfg.endpointPlaceholder} inputSt={inputSt} />
+            </div>
+          )}
+          {cfg.keyLabel && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{cfg.keyLabel}</label>
+              <div style={{ position: 'relative' }}>
+                <FocusedInput type={showKey ? 'text' : 'password'} value={apiKey} onChange={setApiKey}
+                  placeholder={editKey ? `Leave blank to keep existing key ${editKey.keyHint || ''}` : cfg.placeholder}
+                  inputSt={inputSt} extraStyle={{ paddingRight: 52 }} />
+                <button type="button" onClick={() => setShowKey(s => !s)}
+                  style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: c.text3, fontSize: 12, fontFamily: 'var(--dmsans)' }}>
+                  {showKey ? 'hide' : 'show'}
+                </button>
+              </div>
+            </div>
+          )}
+          {err && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: '#ef4444', marginBottom: 10 }}>{err}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {!editKey && <button type="button" onClick={() => setStep(1)} style={mkGhostBtn(c)}>← Back</button>}
+            <button type="button" onClick={advanceToModels}
+              disabled={!!(cfg.keyLabel && !apiKey && !editKey)}
+              style={mkPrimaryBtn(cfg.color, !cfg.keyLabel || !!apiKey || !!editKey)}>
+              Next: Choose model →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Model + use case */}
+      {step === 3 && cfg && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <ProviderBadge provider={provider} size="md" />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Model</label>
+            {loadingModels && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginBottom: 8 }}>Fetching live model list…</p>}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {models.slice(0, 20).map(m => (
+                <button key={m.id} type="button" onClick={() => setModel(m.id)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, cursor: 'pointer', transition: 'all 0.1s',
+                    background: model === m.id ? `${cfg.color}18` : c.subtle,
+                    border: `1px solid ${model === m.id ? cfg.color + '55' : c.subtleBorder}`,
+                    fontFamily: 'var(--dmsans)', fontSize: 12,
+                    fontWeight: model === m.id ? 600 : 400,
+                    color: model === m.id ? cfg.color : c.text2,
+                  }}>
+                  {m.name || m.id}
+                </button>
+              ))}
+            </div>
+            <FocusedInput value={model} onChange={setModel} placeholder="Or type any model ID…" inputSt={inputSt} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Use Case</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {USE_CASES.map(u => (
+                <button key={u.id} type="button" onClick={() => setUseCase(u.id)}
+                  style={{
+                    padding: '10px 12px', textAlign: 'left', cursor: 'pointer', transition: 'all 0.1s',
+                    background: useCase === u.id ? 'rgba(65,114,245,0.1)' : c.subtle,
+                    border: `1px solid ${useCase === u.id ? 'rgba(65,114,245,0.45)' : c.subtleBorder}`,
+                    borderRadius: 8,
+                  }}>
+                  <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: useCase === u.id ? '#4172f5' : c.text }}>{u.label}</div>
+                  <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, marginTop: 2 }}>{u.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Label <span style={{ color: c.text4, fontWeight: 400 }}>(optional)</span></label>
+            <FocusedInput value={label} onChange={setLabel} placeholder="e.g. Internal Llama, Embeddings key…" inputSt={inputSt} />
+          </div>
+          {err && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: '#ef4444', marginBottom: 10 }}>{err}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={() => setStep(2)} style={mkGhostBtn(c)}>← Back</button>
+            <button type="button" onClick={save} disabled={saving || !model}
+              style={mkPrimaryBtn('#4172f5', !!model && !saving)}>
+              {saving ? 'Saving…' : editKey ? 'Save Changes' : 'Add Provider'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const c = useC();
+  const { token } = useAuth();
+  const [keys, setKeys]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding]   = useState(false);
+  const [editKey, setEditKey] = useState(null);
+  const [syncing, setSyncing] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/workspace/settings', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setKeys(d.keys || []);
+    } catch {}
+    setLoading(false);
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const remove = async (id) => {
+    if (!window.confirm('Remove this provider key? This cannot be undone.')) return;
+    await fetch('/api/workspace/settings', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id }),
+    });
+    load();
+  };
+
+  const syncModels = async (key) => {
+    setSyncing(key.id);
+    const r = await fetch(`/api/workspace/settings?models=true&keyId=${key.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const d = await r.json();
+    setSyncing(null);
+    if (d.models?.length) {
+      alert(`${d.models.length} models available for this key. Edit the provider to update your selection.`);
+    }
+  };
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto', background: c.bg, transition: 'background 0.2s' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '48px 32px 80px' }}>
+
+        <div style={{ marginBottom: 36 }}>
+          <p className="wd-label-blue" style={{ marginBottom: 6 }}>SETTINGS</p>
+          <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: 24, fontWeight: 700, color: c.text, margin: 0 }}>API Keys & Models</h1>
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6, lineHeight: 1.6 }}>
+            Connect any AI provider. Your whole team shares these keys — no per-user setup.
+          </p>
+        </div>
+
+        {(adding || editKey) && (
+          <AddProviderForm
+            token={token} editKey={editKey} c={c}
+            onCancel={() => { setAdding(false); setEditKey(null); }}
+            onSaved={() => { setAdding(false); setEditKey(null); load(); }}
+          />
+        )}
+
+        {loading ? (
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3 }}>Loading…</p>
+        ) : keys.length === 0 ? (
+          <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: '32px 24px', textAlign: 'center', marginBottom: 16 }}>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 15, fontWeight: 600, color: c.text, marginBottom: 6 }}>No providers connected</p>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3 }}>Add a provider key to enable the Daemon for your workspace.</p>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 16 }}>
+            {keys.map(k => (
+              <div key={k.id} style={{
+                background: c.card, border: `1px solid ${c.cardBorder}`,
+                borderRadius: 10, padding: '14px 18px', marginBottom: 8,
+                display: 'flex', alignItems: 'center', gap: 14,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+                    <ProviderBadge provider={k.provider} />
+                    <UseCaseBadge useCase={k.use_case} />
+                    {k.label && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3 }}>· {k.label}</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {k.model && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text2 }}>{k.model}</span>}
+                    {k.endpoint && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text3 }}>{k.endpoint}</span>}
+                    {k.keyHint && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text4 }}>key: {k.keyHint}</span>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button type="button" onClick={() => syncModels(k)}
+                    title="Refresh available models"
+                    style={{ ...mkGhostBtn(c), padding: '5px 10px', fontSize: 13 }}>
+                    {syncing === k.id ? '…' : '↻'}
+                  </button>
+                  <button type="button" onClick={() => { setEditKey(k); setAdding(false); }}
+                    style={{ ...mkGhostBtn(c), padding: '5px 12px', fontSize: 12 }}>Edit</button>
+                  <button type="button" onClick={() => remove(k.id)}
+                    style={{ ...mkGhostBtn(c, { color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }), padding: '5px 12px', fontSize: 12 }}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!adding && !editKey && (
+          <button type="button" onClick={() => { setAdding(true); setEditKey(null); }}
+            style={{
+              padding: '10px 20px', borderRadius: 8, cursor: 'pointer',
+              background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.25)',
+              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+            }}>
+            + Add Provider
+          </button>
+        )}
+
+        <div style={{ marginTop: 32, padding: '14px 18px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 10 }}>
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, lineHeight: 1.65, margin: 0 }}>
+            <strong style={{ color: c.text2 }}>Daemon Chat</strong> uses the reasoning key.{' '}
+            <strong style={{ color: c.text2 }}>Embeddings</strong> powers knowledge base search.{' '}
+            <strong style={{ color: c.text2 }}>Sensitive</strong> keeps queries on your own infra (Ollama).{' '}
+            Switching embedding providers requires re-indexing — runs as a background job.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// (legacy single-model constants kept below for reference, unused by SettingsPage)
 const POPULAR_MODELS = [
   { id: 'anthropic/claude-sonnet-4-6',        name: 'Claude Sonnet',     provider: 'Anthropic', alias: true },
   { id: 'anthropic/claude-opus-4',             name: 'Claude Opus',       provider: 'Anthropic', alias: true },
