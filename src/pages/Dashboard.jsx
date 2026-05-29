@@ -775,9 +775,12 @@ function DaemonPage({ onMenu, onChatChange }) {
   const [selectedRole, setSelectedRole]     = useState(profileRole);
   const [company, setCompany]               = useState(profileCompany);
 
-  // Skip picker for onboarded users OR anyone already in a workspace (invited members)
-  const hasProfile = !!(profile?.onboarded || profile?.workspace_id);
+  // Skip picker for onboarded users OR anyone in a workspace (invited members)
+  const hasProfile = !!(profile?.onboarded || profile?.workspace_id || profile?.workspaces?.id);
   const [started, setStarted]               = useState(hasProfile);
+
+  // Sync started when profile loads asynchronously after mount
+  useEffect(() => { if (hasProfile) setStarted(true); }, [hasProfile]);
 
   useEffect(() => { onChatChange?.(started); }, [started]);
 
