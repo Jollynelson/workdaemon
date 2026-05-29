@@ -283,8 +283,11 @@ export default async function handler(req, res) {
     keyRow = { provider: 'anthropic', api_key: apiKey, model: 'claude-sonnet-4-6' };
   }
 
+  // Trim history to last 12 messages to cap token cost
+  const trimmed = messages.length > 12 ? messages.slice(-12) : messages;
+
   try {
-    const raw = await callProvider(keyRow, sys, messages);
+    const raw = await callProvider(keyRow, sys, trimmed);
     const parsed = parseJsonResponse(raw);
     return res.status(200).json(parsed);
   } catch (e) {

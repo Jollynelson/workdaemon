@@ -1349,45 +1349,50 @@ function OverviewPage() {
 // SETTINGS PAGE — multi-provider BYOK
 // ─────────────────────────────────────────────────────────────────────────────
 
+// cost: 'best' = recommended fast+cheap, 'mid' = balanced, 'high' = expensive/powerful
 const PROVIDERS = [
   {
     id: 'openrouter', name: 'OpenRouter', color: '#7c3aed',
     desc: '300+ models via one key', keyLabel: 'API Key',
     placeholder: 'sk-or-v1-…',
+    keyPrefix: 'sk-or-',
     staticModels: [],
   },
   {
     id: 'anthropic', name: 'Anthropic', color: '#d97706',
     desc: 'Direct Claude access', keyLabel: 'API Key',
     placeholder: 'sk-ant-api03-…',
+    keyPrefix: 'sk-ant-',
     staticModels: [
-      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
-      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', cost: 'best' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', cost: 'mid' },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', cost: 'high' },
     ],
   },
   {
     id: 'openai', name: 'OpenAI', color: '#10b981',
     desc: 'GPT models + embeddings', keyLabel: 'API Key',
     placeholder: 'sk-proj-…',
+    keyPrefix: 'sk-',
     staticModels: [
-      { id: 'gpt-4o', name: 'GPT-4o' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o mini' },
-      { id: 'gpt-4.1', name: 'GPT-4.1' },
-      { id: 'o3', name: 'o3' },
-      { id: 'o4-mini', name: 'o4-mini' },
-      { id: 'text-embedding-3-large', name: 'text-embedding-3-large' },
-      { id: 'text-embedding-3-small', name: 'text-embedding-3-small' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o mini', cost: 'best' },
+      { id: 'gpt-4o', name: 'GPT-4o', cost: 'mid' },
+      { id: 'gpt-4.1', name: 'GPT-4.1', cost: 'mid' },
+      { id: 'o4-mini', name: 'o4-mini', cost: 'mid' },
+      { id: 'o3', name: 'o3', cost: 'high' },
+      { id: 'text-embedding-3-small', name: 'text-embedding-3-small', cost: 'best' },
+      { id: 'text-embedding-3-large', name: 'text-embedding-3-large', cost: 'mid' },
     ],
   },
   {
     id: 'google', name: 'Google Gemini', color: '#4172f5',
     desc: 'Gemini Pro & Flash', keyLabel: 'API Key',
     placeholder: 'AIza…',
+    keyPrefix: 'AIza',
     staticModels: [
-      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', cost: 'best' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', cost: 'best' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', cost: 'high' },
     ],
   },
   {
@@ -1395,10 +1400,10 @@ const PROVIDERS = [
     desc: 'Mistral & Codestral', keyLabel: 'API Key',
     placeholder: 'your-mistral-key',
     staticModels: [
-      { id: 'mistral-large-latest', name: 'Mistral Large' },
-      { id: 'mistral-small-latest', name: 'Mistral Small' },
-      { id: 'codestral-latest', name: 'Codestral' },
-      { id: 'mistral-embed', name: 'Mistral Embed' },
+      { id: 'mistral-small-latest', name: 'Mistral Small', cost: 'best' },
+      { id: 'mistral-large-latest', name: 'Mistral Large', cost: 'mid' },
+      { id: 'codestral-latest', name: 'Codestral', cost: 'mid' },
+      { id: 'mistral-embed', name: 'Mistral Embed', cost: 'best' },
     ],
   },
   {
@@ -1415,6 +1420,21 @@ const PROVIDERS = [
     staticModels: [],
   },
 ];
+
+const COST_LABELS = {
+  best: { label: 'Fast & cheap', color: '#10b981' },
+  mid:  { label: 'Balanced',     color: '#f59e0b' },
+  high: { label: 'Powerful',     color: '#ef4444' },
+};
+
+function detectProviderFromKey(key) {
+  if (!key) return null;
+  if (key.startsWith('sk-ant-')) return 'anthropic';
+  if (key.startsWith('sk-or-'))  return 'openrouter';
+  if (key.startsWith('AIza'))    return 'google';
+  if (key.startsWith('sk-'))     return 'openai';
+  return null;
+}
 
 const USE_CASES = [
   { id: 'reasoning',  label: 'Daemon Chat',      desc: 'Main AI assistant for all users' },
@@ -1488,6 +1508,14 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
   const [saving, setSaving]     = useState(false);
   const [err, setErr]           = useState('');
   const cfg = PROVIDERS.find(p => p.id === provider);
+
+  const handleKeyChange = (val) => {
+    setApiKey(val);
+    if (!provider) {
+      const detected = detectProviderFromKey(val);
+      if (detected) setProvider(detected);
+    }
+  };
 
   const inputSt = (focused) => ({
     width: '100%', padding: '10px 14px', boxSizing: 'border-box',
@@ -1570,7 +1598,22 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
       {/* Step 1: Provider picker */}
       {step === 1 && (
         <div>
-          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, marginBottom: 14 }}>Choose a provider to connect.</p>
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, marginBottom: 8 }}>Choose a provider, or paste your API key below to auto-detect.</p>
+          <div style={{ marginBottom: 14, position: 'relative' }}>
+            <input
+              type="text" placeholder="Paste API key to auto-detect provider (sk-ant-…, AIza…, sk-or-…, sk-…)"
+              style={{
+                width: '100%', padding: '9px 14px', boxSizing: 'border-box',
+                background: c.inputBg, border: `1px solid ${c.inputBorder}`,
+                borderRadius: 7, color: c.text, fontSize: 13, fontFamily: 'var(--dmsans)', outline: 'none',
+              }}
+              onChange={e => {
+                const val = e.target.value;
+                const detected = detectProviderFromKey(val);
+                if (detected) { setApiKey(val); setProvider(detected); setStep(2); }
+              }}
+            />
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 8 }}>
             {PROVIDERS.map(p => (
               <button key={p.id} type="button" onClick={() => { setProvider(p.id); setStep(2); }}
@@ -1605,9 +1648,14 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
           )}
           {cfg.keyLabel && (
             <div style={{ marginBottom: 16 }}>
+              <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(65,114,245,0.06)', border: '1px solid rgba(65,114,245,0.15)' }}>
+                <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text2, margin: 0, lineHeight: 1.5 }}>
+                  <strong style={{ color: '#4172f5' }}>API key required.</strong> Claude Pro, ChatGPT Plus, and Gemini subscriptions don't include API access — they're separate products. Get an API key from the provider's developer console, then add credit separately.
+                </p>
+              </div>
               <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{cfg.keyLabel}</label>
               <div style={{ position: 'relative' }}>
-                <FocusedInput type={showKey ? 'text' : 'password'} value={apiKey} onChange={setApiKey}
+                <FocusedInput type={showKey ? 'text' : 'password'} value={apiKey} onChange={handleKeyChange}
                   placeholder={editKey ? `Leave blank to keep existing key ${editKey.keyHint || ''}` : cfg.placeholder}
                   inputSt={inputSt} extraStyle={{ paddingRight: 52 }} />
                 <button type="button" onClick={() => setShowKey(s => !s)}
@@ -1639,19 +1687,27 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
             <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Model</label>
             {loadingModels && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginBottom: 8 }}>Fetching live model list…</p>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-              {models.slice(0, 20).map(m => (
-                <button key={m.id} type="button" onClick={() => setModel(m.id)}
-                  style={{
-                    padding: '6px 12px', borderRadius: 6, cursor: 'pointer', transition: 'all 0.1s',
-                    background: model === m.id ? `${cfg.color}18` : c.subtle,
-                    border: `1px solid ${model === m.id ? cfg.color + '55' : c.subtleBorder}`,
-                    fontFamily: 'var(--dmsans)', fontSize: 12,
-                    fontWeight: model === m.id ? 600 : 400,
-                    color: model === m.id ? cfg.color : c.text2,
-                  }}>
-                  {m.name || m.id}
-                </button>
-              ))}
+              {models.slice(0, 20).map(m => {
+                const costInfo = m.cost ? COST_LABELS[m.cost] : null;
+                const isSelected = model === m.id;
+                return (
+                  <button key={m.id} type="button" onClick={() => setModel(m.id)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, cursor: 'pointer', transition: 'all 0.1s',
+                      background: isSelected ? `${cfg.color}18` : c.subtle,
+                      border: `1px solid ${isSelected ? cfg.color + '55' : c.subtleBorder}`,
+                      fontFamily: 'var(--dmsans)', fontSize: 12, textAlign: 'left',
+                      fontWeight: isSelected ? 600 : 400,
+                      color: isSelected ? cfg.color : c.text2,
+                      display: 'flex', flexDirection: 'column', gap: 2,
+                    }}>
+                    <span>{m.name || m.id}</span>
+                    {costInfo && (
+                      <span style={{ fontSize: 10, fontWeight: 500, color: costInfo.color, opacity: 0.85 }}>{costInfo.label}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <FocusedInput value={model} onChange={setModel} placeholder="Or type any model ID…" inputSt={inputSt} />
           </div>
