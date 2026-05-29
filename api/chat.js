@@ -66,6 +66,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: sys }] },
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
             contents: messages.map(m => ({
               role: m.role === 'assistant' ? 'model' : 'user',
               parts: [{ text: m.content }],
@@ -76,11 +77,10 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Google error');
       const parts = d.candidates?.[0]?.content?.parts || [];
-      const partTypes = parts.map(p => `${p.thought ? 'thought' : 'text'}:${(p.text || '').slice(0, 30)}`).join(' | ');
-      // Collect all non-thought text parts
-      const text = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
-      console.log('[chat] google parts=%d text_len=%d finish=%s partTypes=%s', parts.length, text.length, d.candidates?.[0]?.finishReason, partTypes);
-      if (!text) console.error('[chat] google empty — raw:', JSON.stringify(d).slice(0, 500));
+      // Non-thought text first; fall back to all text if model outputs only thought parts
+      const nonThought = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
+      const text = nonThought || parts.filter(p => p.text).map(p => p.text).join('');
+      console.log('[chat] google parts=%d text_len=%d finish=%s', parts.length, text.length, d.candidates?.[0]?.finishReason);
       return text;
     }
 
