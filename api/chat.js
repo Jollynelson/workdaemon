@@ -195,12 +195,12 @@ LANGUAGE RULES:
 
 function parseJsonResponse(text) {
   if (!text) return { blocks: [{ type: 'text', md: 'No response.' }], suggestions: [] };
-  try {
-    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return { blocks: [{ type: 'text', md: text }], suggestions: [] };
-  }
+  try { return JSON.parse(text.trim()); } catch {}
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) { try { return JSON.parse(fence[1].trim()); } catch {} }
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  if (s !== -1 && e > s) { try { return JSON.parse(text.slice(s, e + 1)); } catch {} }
+  return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
 export default async function handler(req, res) {

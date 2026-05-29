@@ -590,12 +590,16 @@ function serializeDaemonMsg(msg) {
 
 function parseJsonResponse(text) {
   if (!text) return { blocks: [], suggestions: [] };
-  try {
-    const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return { blocks: [{ type: 'text', md: text }], suggestions: [] };
-  }
+  // 1. Direct parse
+  try { return JSON.parse(text.trim()); } catch {}
+  // 2. Extract from code fence
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) { try { return JSON.parse(fence[1].trim()); } catch {} }
+  // 3. Extract outermost {...}
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  if (s !== -1 && e > s) { try { return JSON.parse(text.slice(s, e + 1)); } catch {} }
+  // 4. Fallback: wrap as plain text
+  return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
 async function callDaemonAPI({ messages, context, apiKey, authToken }) {
@@ -663,27 +667,21 @@ function ChatView({ context, onBack, onMenu }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
 
-  const send = useCallback(async (text, opts = {}) => {
+  const send = useCallback(async (text) => {
     const q = text.trim();
     if (!q || thinking) return;
     setError('');
     setSuggestions([]);
-    const userMsg = opts.silent ? null : { role: 'user', text: q };
-    if (userMsg) setMsgs(m => [...m, userMsg]);
+    const userMsg = { role: 'user', text: q };
+    setMsgs(m => [...m, userMsg]);
     setInput('');
     setThinking(true);
-
     try {
-      const history = userMsg ? [...msgs, userMsg] : msgs;
       const { blocks, suggestions: nextSugs } = await callDaemonAPI({
-        messages: [...(opts.silent ? [] : history.filter((_, i) => i < history.length)), ...(opts.silent ? [{ role: 'user', text: q }] : [])].length
-          ? [...(opts.silent ? [{ role: 'user', text: q }] : history)]
-          : history,
-        context,
-        apiKey,
-        authToken,
+        messages: [...msgs, userMsg],
+        context, apiKey, authToken,
       });
-      setMsgs(m => [...(userMsg ? m : m), { role: 'daemon', blocks }]);
+      setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
       setSuggestions(nextSugs || []);
     } catch (e) {
       setError(e.message || 'Something went wrong. Try again.');
@@ -693,21 +691,21 @@ function ChatView({ context, onBack, onMenu }) {
     }
   }, [msgs, context, apiKey, authToken, thinking]);
 
-  // Session startup: proactive briefing on mount
+  // Session startup: proactive briefing — fires once on mount
   useEffect(() => {
-    if (startedRef.current) return;
+    if (startedRef.current || !authToken) return;
     startedRef.current = true;
     setThinking(true);
     callDaemonAPI({
       messages: [{ role: 'user', text: '[SESSION_START]' }],
-      context,
-      apiKey,
-      authToken,
+      context, apiKey, authToken,
     }).then(({ blocks, suggestions: sugs }) => {
-      setMsgs([{ role: 'daemon', blocks }]);
+      setMsgs([{ role: 'daemon', blocks: blocks || [] }]);
       setSuggestions(sugs || []);
-    }).catch(() => {}).finally(() => setThinking(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }).catch(e => {
+      setError(e.message || 'Failed to load Daemon. Try refreshing.');
+    }).finally(() => setThinking(false));
+  }, [authToken]); // re-run if token loads after mount
 
   const onConfirmAction = useCallback((actionId) => {
     send(`CONFIRMED — execute ${actionId}`);
