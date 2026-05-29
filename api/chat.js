@@ -129,12 +129,34 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
   }
 }
 
+function buildCompanyContext(ws) {
+  const ctx = ws?.context;
+  if (!ctx || typeof ctx !== 'object') return '';
+  const fields = [
+    ['Description',      ctx.description],
+    ['Stage',            ctx.stage],
+    ['Revenue',          ctx.revenue],
+    ['Headcount',        ctx.headcount],
+    ['Q priorities',     ctx.priorities],
+    ['Active projects',  ctx.projects],
+    ['Key metrics',      ctx.metrics],
+    ['Customers / ICP',  ctx.customers],
+    ['Competitors',      ctx.competitors],
+    ['Notes',            ctx.notes],
+  ].filter(([, v]) => v && String(v).trim());
+  if (!fields.length) return '';
+  return '\nCOMPANY CONTEXT (admin-verified facts — cite these when answering):\n'
+    + fields.map(([k, v]) => `${k}: ${v}`).join('\n')
+    + '\n';
+}
+
 function buildDaemonSystemPrompt(profile, workspace) {
   const firstName = profile?.name ? profile.name.split(' ')[0] : null;
   const title = profile?.title || profile?.role || null;
   const permLevel = profile?.permission_level ?? 2;
   const ws = Array.isArray(workspace) ? workspace[0] : workspace;
   const permLabels = { 1: 'Copilot (read-only)', 2: 'Assistant (confirm before act)', 3: 'Autonomous (execute and report)' };
+  const companyContext = buildCompanyContext(ws);
 
   return `OUTPUT CONTRACT — ABSOLUTE RULE:
 Your response is one JSON object. First character: {. Last character: }. Nothing else exists in your output. No reasoning steps. No planning notes. No constraint checks. No asterisks. No text before or after the JSON. Violating this breaks the interface completely — the user sees raw garbage instead of a dashboard.
@@ -146,6 +168,7 @@ You are ${firstName ? `${firstName}'s` : 'the'} Daemon — personal AI operating
 Owner: ${profile?.name || 'Unknown'}${title ? ` (${title})` : ''}
 Company: ${ws?.name || 'Unknown'}${ws?.industry ? `, ${ws.industry}` : ''}${ws?.size ? `, ${ws.size}` : ''}
 Permission: ${permLevel} — ${permLabels[permLevel] || permLabels[2]}
+${companyContext}
 
 BLOCK TYPES — use these schemas exactly:
 
@@ -240,7 +263,7 @@ export default async function handler(req, res) {
   // Resolve user + workspace context for Daemon persona
   const { data: profile } = await db
     .from('profiles')
-    .select('workspace_id, name, title, role, permission_level, workspaces(name, industry, size)')
+    .select('workspace_id, name, title, role, permission_level, workspaces(name, industry, size, context)')
     .eq('id', user.id)
     .single();
 

@@ -1005,44 +1005,168 @@ function DaemonPage({ onMenu, onChatChange }) {
 // COMPANY BRAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
+const BRAIN_FIELDS = [
+  {
+    section: 'ABOUT',
+    fields: [
+      { key: 'description', label: 'What does your company do?', placeholder: 'One or two sentences — what you build, who you serve.', multiline: true, rows: 3 },
+      { key: 'stage',       label: 'Stage', placeholder: 'e.g. Pre-seed · Seed · Series A · Series B · Bootstrapped', multiline: false },
+    ],
+  },
+  {
+    section: 'NUMBERS',
+    fields: [
+      { key: 'revenue',   label: 'Revenue', placeholder: 'e.g. $45k MRR · $540k ARR · Pre-revenue', multiline: false },
+      { key: 'headcount', label: 'Headcount', placeholder: 'e.g. 12 FTEs + 3 contractors', multiline: false },
+    ],
+  },
+  {
+    section: 'CURRENT FOCUS',
+    fields: [
+      { key: 'priorities', label: 'Top priorities this quarter', placeholder: 'What are the 2–3 things that must happen this quarter?', multiline: true, rows: 3 },
+      { key: 'projects',   label: 'Active projects', placeholder: 'What's being built or shipped right now?', multiline: true, rows: 3 },
+    ],
+  },
+  {
+    section: 'MARKET',
+    fields: [
+      { key: 'customers',   label: 'Customers / ICP', placeholder: 'Who buys from you? Any notable names or segments?', multiline: true, rows: 2 },
+      { key: 'competitors', label: 'Competitors', placeholder: 'e.g. Notion, Linear, Asana — and how you differ', multiline: false },
+    ],
+  },
+  {
+    section: 'METRICS & NOTES',
+    fields: [
+      { key: 'metrics', label: 'Key metrics you track', placeholder: 'e.g. NPS 62 · Churn 2.1% · CAC $320 · LTV $4,200', multiline: false },
+      { key: 'notes',   label: 'Anything else the Daemon should know', placeholder: 'Open field — context, history, strategic bets, anything.', multiline: true, rows: 3 },
+    ],
+  },
+];
+
+function CompanyContextForm({ token, c, isMobile }) {
+  const [ctx, setCtx]       = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [err, setErr]         = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    fetch('/api/brain', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => { setCtx(d.context || {}); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const set = (key, val) => { setCtx(prev => ({ ...prev, [key]: val })); setSaved(false); };
+
+  const save = async () => {
+    setSaving(true); setErr(''); setSaved(false);
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ context: ctx }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error || 'Save failed'); return; }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch { setErr('Network error'); }
+    setSaving(false);
+  };
+
+  const inputSt = (multiline) => ({
+    width: '100%', boxSizing: 'border-box',
+    padding: multiline ? '10px 12px' : '9px 12px',
+    background: c.inputBg, border: `1px solid ${c.inputBorder}`,
+    borderRadius: 7, color: c.text, fontSize: 13,
+    fontFamily: 'var(--dmsans)', outline: 'none',
+    resize: multiline ? 'vertical' : 'none',
+    lineHeight: 1.5,
+  });
+
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} height={56} />)}
+    </div>
+  );
+
+  const filled = Object.values(ctx).filter(v => v && String(v).trim()).length;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '12px 16px', borderRadius: 10, background: filled > 0 ? 'rgba(16,185,129,0.05)' : 'rgba(65,114,245,0.05)', border: `1px solid ${filled > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(65,114,245,0.15)'}` }}>
+        <span style={{ fontSize: 16 }}>{filled > 0 ? '◈' : '○'}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: c.text }}>
+            {filled > 0 ? `${filled} field${filled !== 1 ? 's' : ''} saved — Daemon is using this context` : 'Daemon has no company context yet'}
+          </div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, marginTop: 2, letterSpacing: '0.04em' }}>
+            {filled > 0 ? 'Every chat session uses these facts automatically' : 'Fill in the fields below to unlock real answers'}
+          </div>
+        </div>
+      </div>
+
+      {BRAIN_FIELDS.map(({ section, fields }) => (
+        <div key={section} style={{ marginBottom: 28 }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.14em', color: c.text3, marginBottom: 14, paddingBottom: 6, borderBottom: `1px solid ${c.cardBorder}` }}>{section}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {fields.map(({ key, label, placeholder, multiline, rows }) => (
+              <div key={key}>
+                <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 600, color: c.text2, display: 'block', marginBottom: 5 }}>{label}</label>
+                {multiline ? (
+                  <textarea
+                    value={ctx[key] || ''} onChange={e => set(key, e.target.value)}
+                    placeholder={placeholder} rows={rows}
+                    style={inputSt(true)}
+                  />
+                ) : (
+                  <input
+                    type="text" value={ctx[key] || ''} onChange={e => set(key, e.target.value)}
+                    placeholder={placeholder}
+                    style={inputSt(false)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {err && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: '#ef4444', marginBottom: 10 }}>{err}</p>}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          type="button" onClick={save} disabled={saving}
+          style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: saving ? 'wait' : 'pointer', background: saving ? 'rgba(65,114,245,0.5)' : '#4172f5', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#fff', transition: 'all 0.15s' }}
+        >
+          {saving ? 'Saving…' : 'Save to Brain'}
+        </button>
+        {saved && (
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#10b981', letterSpacing: '0.06em' }}>✓ SAVED</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BrainPage() {
   const c = useC();
   const { isMobile } = useViewport();
   const { token } = useAuth();
-  const { data, loading, error } = useFetch('/api/brain', token);
   const [activeTab, setActiveTab] = useState('overview');
   const tabs = ['OVERVIEW', 'INTEGRATIONS', 'KNOWLEDGE GRAPH', 'USERS', 'SECURITY'];
 
-  const stats = data?.stats || [];
-  const integrations = data?.integrations || [];
+  const integrations = [];
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
       <div style={{ maxWidth: 820 }}>
         <p className="wd-label-blue" style={{ marginBottom: 8 }}>COMPANY BRAIN</p>
         <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 20 : 24, fontWeight: 600, color: c.text, letterSpacing: '-0.02em', marginBottom: 6 }}>Knowledge Infrastructure</h1>
-        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 20 }}>Admin-only view · All data encrypted · AES-256-GCM</p>
-
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 10, marginBottom: 24 }}>
-          {loading
-            ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={80} />)
-            : stats.length > 0
-              ? stats.map((s, i) => (
-                  <div key={i} style={{ padding: '14px 16px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 10, boxShadow: c.statShadow }}>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3, letterSpacing: '0.1em', marginBottom: 6 }}>{s.label?.toUpperCase()}</div>
-                    <div style={{ fontFamily: 'var(--orbitron)', fontSize: isMobile ? 16 : 18, fontWeight: 700, color: c.text, marginBottom: 3 }}>{s.value}</div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3 }}>{s.unit}</div>
-                  </div>
-                ))
-              : [{ label: 'Documents', value: '—' }, { label: 'Integrations', value: '—' }, { label: 'Graph Nodes', value: '—' }, { label: 'Query P99', value: '—' }].map((s, i) => (
-                  <div key={i} style={{ padding: '14px 16px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 10 }}>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3, letterSpacing: '0.1em', marginBottom: 6 }}>{s.label.toUpperCase()}</div>
-                    <div style={{ fontFamily: 'var(--orbitron)', fontSize: 18, fontWeight: 700, color: c.text4 }}>{s.value}</div>
-                  </div>
-                ))
-          }
-        </div>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 20 }}>Admin-only view · Context is injected into every Daemon session</p>
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: `1px solid ${c.cardBorder}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -1053,13 +1177,7 @@ function BrainPage() {
           ))}
         </div>
 
-        {error && <BlockAlert block={{ level: 'danger', content: `Failed to load brain data: ${error}` }} />}
-
-        {activeTab === 'overview' && !loading && !error && (
-          data?.chart
-            ? <BlockChartLine block={{ title: 'Documents Indexed — Last 14 Days', filled: true, keys: ['docs'], data: data.chart }} />
-            : <EmptyState icon="◈" title="No brain data yet" subtitle="Connect your integrations to start indexing documents and building your knowledge graph." />
-        )}
+        {activeTab === 'overview' && <CompanyContextForm token={token} c={c} isMobile={isMobile} />}
 
         {activeTab === 'integrations' && (
           loading ? (
