@@ -696,7 +696,7 @@ function ChatView({ context, onBack, onMenu }) {
   // Load persistent history before firing SESSION_START
   useEffect(() => {
     if (!authToken || apiKey) { setHistoryLoaded(true); return; }
-    fetch('/api/daemon/history', {
+    fetch('/api/chat', {
       headers: { Authorization: `Bearer ${authToken}` },
     })
       .then(r => r.ok ? r.json() : { messages: [] })
