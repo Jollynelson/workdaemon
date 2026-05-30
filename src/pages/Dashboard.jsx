@@ -18,28 +18,35 @@ function useC() {
   const d = theme === 'dark';
   return {
     d,
-    text:         d ? '#e8e8e8'                    : '#1a1a1a',
-    text2:        d ? 'rgba(232,232,232,0.65)'     : 'rgba(26,26,26,0.65)',
-    text3:        d ? 'rgba(232,232,232,0.38)'     : 'rgba(26,26,26,0.42)',
-    text4:        d ? 'rgba(232,232,232,0.18)'     : 'rgba(26,26,26,0.22)',
-    bg:           d ? '#191919'                    : '#ffffff',
-    surface:      d ? '#252525'                    : '#fafafa',
-    card:         d ? '#252525'                    : '#ffffff',
-    cardBorder:   d ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.08)',
-    cardShadow:   d ? 'none'                       : '0 1px 3px rgba(0,0,0,0.06)',
-    stat:         d ? '#252525'                    : '#fafafa',
-    statBorder:   d ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.08)',
-    statShadow:   d ? 'none'                       : '0 1px 4px rgba(0,0,0,0.06)',
-    row:          d ? 'rgba(255,255,255,0.04)'     : 'rgba(0,0,0,0.025)',
-    rowBorder:    d ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.07)',
-    subtle:       d ? 'rgba(255,255,255,0.03)'     : 'rgba(0,0,0,0.02)',
-    subtleBorder: d ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.07)',
-    headerBg:     d ? '#191919'                    : '#ffffff',
-    headerBorder: d ? 'rgba(255,255,255,0.07)'     : 'rgba(0,0,0,0.08)',
-    inputBg:      d ? 'rgba(255,255,255,0.05)'     : '#ffffff',
-    inputBorder:  d ? 'rgba(255,255,255,0.1)'      : 'rgba(0,0,0,0.12)',
-    thinkingBg:   d ? 'rgba(255,255,255,0.04)'     : 'rgba(0,0,0,0.03)',
-    thinkingBorder: d ? 'rgba(255,255,255,0.08)'   : 'rgba(0,0,0,0.08)',
+    text:         d ? '#eeeef2'                  : '#1a1a1a',
+    text2:        d ? '#9898a8'                  : '#5d5b54',
+    text3:        d ? '#585868'                  : '#a4a097',
+    text4:        d ? '#2e2e3e'                  : '#ccc9c2',
+    bg:           d ? '#0d0d10'                  : '#ffffff',
+    surface:      d ? '#131318'                  : '#f6f5f4',
+    card:         d ? '#131318'                  : '#ffffff',
+    cardBorder:   d ? '#1e1e28'                  : 'rgba(0,0,0,0.07)',
+    cardShadow:   d ? 'none'                     : '0 1px 3px rgba(15,15,15,0.06)',
+    stat:         d ? '#17171d'                  : '#f6f5f4',
+    statBorder:   d ? '#1e1e28'                  : 'rgba(0,0,0,0.07)',
+    statShadow:   d ? 'none'                     : '0 1px 3px rgba(15,15,15,0.05)',
+    row:          d ? 'rgba(255,255,255,0.02)'   : 'rgba(0,0,0,0.02)',
+    rowBorder:    d ? '#1e1e28'                  : 'rgba(0,0,0,0.06)',
+    subtle:       d ? '#131318'                  : 'rgba(0,0,0,0.02)',
+    subtleBorder: d ? '#1e1e28'                  : '#e5e3df',
+    headerBg:     d ? '#0d0d10'                  : '#ffffff',
+    headerBorder: d ? '#1e1e28'                  : '#e5e3df',
+    inputBg:      d ? '#17171d'                  : '#ffffff',
+    inputBorder:  d ? '#262630'                  : '#c8c4be',
+    thinkingBg:   d ? 'rgba(255,255,255,0.02)'   : 'rgba(0,0,0,0.02)',
+    thinkingBorder: d ? '#1e1e28'                : '#e5e3df',
+    // New tokens
+    navy:         '#0c1428',
+    navyMid:      d ? '#111d3a'                  : '#0c1428',
+    surface2:     d ? '#17171d'                  : '#efeeec',
+    surface3:     d ? '#1c1c24'                  : '#e8e6e3',
+    hairline:     d ? '#1e1e28'                  : '#e5e3df',
+    hairlineStrong: d ? '#262630'                : '#c8c4be',
   };
 }
 
@@ -236,12 +243,12 @@ function BlockStatGrid({ block }) {
   const c = useC();
   const { isMobile } = useViewport();
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+    <div className="wd-block-stats" style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, padding: 12, borderRadius: 12, borderWidth: '1px', borderStyle: 'solid' }}>
       {(block.stats || []).map((s, i) => (
         <div key={i} style={{ padding: '14px 16px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 10, boxShadow: c.statShadow }}>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em', marginBottom: 6 }}>{(s.label || '').toUpperCase()}</div>
           <div style={{ fontFamily: 'var(--orbitron)', fontSize: 22, fontWeight: 700, color: (s.accent || s.status) ? ACCENT_COLORS[s.accent || s.status] : c.text, letterSpacing: '-0.01em', marginBottom: 4 }}>{s.value}</div>
-          {s.unit   && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3 }}>{s.unit}</div>}
+          {s.unit   && <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3 }}>{s.unit}</div>}
           {s.source && (
             <div style={{ marginTop: 8, display: 'inline-flex', padding: '2px 8px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 5 }}>
               <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.06em' }}>#{s.source}</span>
@@ -297,21 +304,24 @@ function BlockChartLine({ block }) {
 function BlockAlert({ block }) {
   const c = useC();
   const styles = {
-    info:     { bg: c.d ? 'rgba(255,255,255,0.04)'  : 'rgba(0,0,0,0.02)',      border: 'rgba(65,114,245,0.22)',  leftBorder: '#4172f5', title: '#4172f5', icon: 'ℹ' },
-    success:  { bg: c.d ? 'rgba(16,185,129,0.08)'   : 'rgba(16,185,129,0.07)', border: 'rgba(16,185,129,0.22)',  leftBorder: '#10b981', title: '#10b981', icon: '✓' },
-    warning:  { bg: c.d ? 'rgba(245,158,11,0.08)'   : 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.22)',  leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠' },
-    danger:   { bg: c.d ? 'rgba(239,68,68,0.08)'    : 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.22)',   leftBorder: '#ef4444', title: '#ef4444', icon: '×' },
-    critical: { bg: c.d ? 'rgba(239,68,68,0.08)'    : 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.22)',   leftBorder: '#ef4444', title: '#ef4444', icon: '×' },
+    info:     { leftBorder: '#4172f5', title: '#4172f5', icon: 'ℹ', tintClass: 'wd-block-alert-info' },
+    success:  { leftBorder: '#10b981', title: '#10b981', icon: '✓', tintClass: 'wd-block-alert-ok' },
+    warning:  { leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠', tintClass: 'wd-block-alert-warn' },
+    warn:     { leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠', tintClass: 'wd-block-alert-warn' },
+    danger:   { leftBorder: '#ef4444', title: '#ef4444', icon: '×', tintClass: 'wd-block-alert-danger' },
+    critical: { leftBorder: '#ef4444', title: '#ef4444', icon: '×', tintClass: 'wd-block-alert-danger' },
+    error:    { leftBorder: '#ef4444', title: '#ef4444', icon: '×', tintClass: 'wd-block-alert-danger' },
+    ok:       { leftBorder: '#10b981', title: '#10b981', icon: '✓', tintClass: 'wd-block-alert-ok' },
   };
   const s = styles[block.level] || styles.info;
   return (
-    <div style={{ padding: '13px 16px', background: s.bg, border: `1px solid ${s.border}`, borderLeft: `3px solid ${s.leftBorder}`, borderRadius: '0 10px 10px 0' }}>
+    <div className={s.tintClass} style={{ padding: '13px 16px', borderRadius: 10, borderWidth: '1px', borderStyle: 'solid', borderLeftWidth: '3px', borderLeftColor: s.leftBorder }}>
       {block.title && (
         <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: s.title, letterSpacing: '0.08em', marginBottom: 6, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>{s.icon}</span> {block.title}
         </div>
       )}
-      <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text2, lineHeight: 1.6 }}>{block.content}</div>
+      <div style={{ fontFamily: 'var(--inter)', fontSize: 14, color: c.text2, lineHeight: 1.6 }}>{block.content}</div>
       {block.tag && (
         <div style={{ marginTop: 10 }}>
           <span style={{ display: 'inline-flex', padding: '3px 9px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 5, fontFamily: 'var(--mono)', fontSize: 10, color: c.text4, letterSpacing: '0.08em' }}>{block.tag}</span>
@@ -746,33 +756,33 @@ function ChatView({ context, onBack, onMenu }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: c.bg, transition: 'background 0.2s' }}>
 
-      {/* Header */}
-      <div style={{ padding: isMobile ? '0 12px' : '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${c.headerBorder}`, background: c.headerBg, flexShrink: 0, gap: 8 }}>
+      {/* Header — Notion navy hero band */}
+      <div style={{ padding: isMobile ? '0 12px' : '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#0c1428', flexShrink: 0, gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 14, minWidth: 0, flex: 1 }}>
           {isMobile && (
-            <button type="button" onClick={onMenu} style={{ width: 32, height: 32, borderRadius: 8, background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', padding: 0, flexShrink: 0, color: c.text3 }}>
+            <button type="button" onClick={onMenu} style={{ width: 32, height: 32, borderRadius: 8, background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', padding: 0, flexShrink: 0, color: 'rgba(255,255,255,0.45)' }}>
               <span style={{ width: 16, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block' }} />
               <span style={{ width: 16, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block' }} />
               <span style={{ width: 11, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block', alignSelf: 'flex-start' }} />
             </button>
           )}
-          {onBack && <div style={{ width: 1, height: 16, background: c.cardBorder, flexShrink: 0 }} />}
+          {onBack && <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />}
           {onBack && (
-          <button type="button" onClick={onBack} style={{ fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 13, color: c.text3, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: 0, letterSpacing: isMobile ? '0.08em' : 0, flexShrink: 0 }}
-            onMouseEnter={e => { e.currentTarget.style.color = c.text2; }}
-            onMouseLeave={e => { e.currentTarget.style.color = c.text3; }}>
+          <button type="button" onClick={onBack} style={{ fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 13, color: 'rgba(255,255,255,0.45)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: 0, letterSpacing: isMobile ? '0.08em' : 0, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; }}>
             ← BACK
           </button>
           )}
-          <div style={{ width: 1, height: 16, background: c.cardBorder, flexShrink: 0 }} />
-          <DaemonMark size={16} glow={c.d} />
-          <div style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
+          <DaemonMark size={16} glow />
+          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
             {context.roleLabel}
           </div>
           {!isMobile && context.company && (
             <>
-              <div style={{ width: 1, height: 14, background: c.cardBorder, flexShrink: 0 }} />
-              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, whiteSpace: 'nowrap' }}>{context.company}</div>
+              <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>{context.company}</div>
             </>
           )}
         </div>
@@ -782,20 +792,20 @@ function ChatView({ context, onBack, onMenu }) {
           disabled={thinking}
           title="Clear chat and start fresh"
           style={{
-            background: 'none', border: `1px solid ${c.subtleBorder}`, borderRadius: 7,
+            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7,
             padding: '5px 10px', cursor: thinking ? 'not-allowed' : 'pointer',
             fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em',
-            color: thinking ? c.text4 : c.text3, flexShrink: 0,
+            color: thinking ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.55)', flexShrink: 0,
             transition: 'all 0.15s',
           }}
-          onMouseEnter={e => { if (!thinking) { e.currentTarget.style.borderColor = c.text3; e.currentTarget.style.color = c.text2; } }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.color = ''; }}
+          onMouseEnter={e => { if (!thinking) { e.currentTarget.style.background = 'rgba(255,255,255,0.14)'; e.currentTarget.style.color = 'rgba(255,255,255,0.85)'; } }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = ''; }}
         >
           NEW
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', flexShrink: 0 }}>
           <span className="wd-dot" style={{ width: 5, height: 5, background: '#10b981' }} />
-          {!isMobile && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 500, color: 'rgba(232,232,232,0.7)', letterSpacing: '0.01em' }}>Online</span>}
+          {!isMobile && <span style={{ fontFamily: 'var(--inter)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.01em' }}>Online</span>}
         </div>
       </div>
 
@@ -945,15 +955,15 @@ function DaemonPage({ onMenu, onChatChange }) {
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
-      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+      <div style={{ maxWidth: 640, margin: '0 auto', textAlign: 'center' }}>
         <p className="wd-label-blue" style={{ marginBottom: 10 }}>MY DAEMON</p>
-        <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 22 : 28, fontWeight: 600, color: c.text, letterSpacing: '-0.02em', marginBottom: 6 }}>Choose your context.</h1>
-        <p style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 14 : 15, color: c.text3, marginBottom: isMobile ? 24 : 32, lineHeight: 1.6 }}>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 22 : 28, fontWeight: 600, color: c.text, letterSpacing: '-0.04em', marginBottom: 6 }}>Choose your context.</h1>
+        <p style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 14 : 15, color: c.text3, marginBottom: isMobile ? 24 : 32, lineHeight: 1.6 }}>
           Your Daemon loads full context for your role. Pick an industry and role to begin.
         </p>
 
         {/* Company name */}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 20, textAlign: 'left' }}>
           <label className="wd-label" style={{ display: 'block', marginBottom: 8 }}>Company Name <span style={{ color: c.text4, fontWeight: 400 }}>(optional)</span></label>
           <input
             className="wd-input"
@@ -965,7 +975,7 @@ function DaemonPage({ onMenu, onChatChange }) {
         </div>
 
         {/* Industry tabs */}
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: 12, textAlign: 'left' }}>
           <label className="wd-label" style={{ display: 'block', marginBottom: 8 }}>Industry</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {CONTEXT_PRESETS.map(p => (
@@ -977,7 +987,7 @@ function DaemonPage({ onMenu, onChatChange }) {
         </div>
 
         {/* Role grid */}
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 8, textAlign: 'left' }}>
           <label className="wd-label" style={{ display: 'block', marginBottom: 8 }}>Role</label>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 28 }}>
@@ -1165,14 +1175,14 @@ function BrainPage() {
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
       <div style={{ maxWidth: 820 }}>
         <p className="wd-label-blue" style={{ marginBottom: 8 }}>COMPANY BRAIN</p>
-        <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 20 : 24, fontWeight: 600, color: c.text, letterSpacing: '-0.02em', marginBottom: 6 }}>Knowledge Infrastructure</h1>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 6 }}>Knowledge Infrastructure</h1>
         <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 20 }}>Admin-only view · Context is injected into every Daemon session</p>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24, borderBottom: `1px solid ${c.cardBorder}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {/* Tabs — Notion pill-tab pattern */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch', flexWrap: 'wrap' }}>
           {tabs.map(t => (
             <button key={t} type="button" onClick={() => setActiveTab(t.toLowerCase().replace(/ /g, '_'))}
-              style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: `2px solid ${activeTab === t.toLowerCase().replace(/ /g, '_') ? '#4172f5' : 'transparent'}`, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', color: activeTab === t.toLowerCase().replace(/ /g, '_') ? '#4172f5' : c.text3, cursor: 'pointer', marginBottom: -1, transition: 'all 0.15s', whiteSpace: 'nowrap', flexShrink: 0 }}
+              className={`wd-pill-tab${activeTab === t.toLowerCase().replace(/ /g, '_') ? ' active' : ''}`}
             >{t}</button>
           ))}
         </div>
@@ -1277,7 +1287,7 @@ function TasksPage() {
         <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 20, gap: isMobile ? 12 : 0 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>{sprint.label || 'TASKS'}</p>
-            <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.02em' }}>Task Board</h1>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Task Board</h1>
           </div>
           {total > 0 && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1355,7 +1365,7 @@ function InboxPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>INBOX</p>
-            <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 }}>
               Messages
               {unread > 0 && <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--mono)', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 20, padding: '2px 10px', letterSpacing: '0.05em' }}>{unread} new</span>}
             </h1>
@@ -1429,7 +1439,7 @@ function OverviewPage() {
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
       <div style={{ maxWidth: 860, margin: '0 auto' }}>
         <p className="wd-label-blue" style={{ marginBottom: 8 }}>ADMIN</p>
-        <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.02em', marginBottom: 24 }}>Company Overview</h1>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 24 }}>Company Overview</h1>
 
         {error && <BlockAlert block={{ level: 'danger', content: `Failed to load overview: ${error}` }} />}
 
@@ -1952,7 +1962,7 @@ function SettingsPage() {
 
         <div style={{ marginBottom: 36 }}>
           <p className="wd-label-blue" style={{ marginBottom: 6 }}>SETTINGS</p>
-          <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: 24, fontWeight: 700, color: c.text, margin: 0 }}>API Keys & Models</h1>
+          <h1 style={{ fontFamily: 'var(--inter)', fontSize: 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>API Keys & Models</h1>
           <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6, lineHeight: 1.6 }}>
             Connect any AI provider. Your whole team shares these keys — no per-user setup.
           </p>

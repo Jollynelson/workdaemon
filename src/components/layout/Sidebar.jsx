@@ -135,8 +135,8 @@ export default function Sidebar({
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        background: isLight ? '#f5f5f5' : '#1e1e1e',
-        borderRight: `1px solid ${isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.06)'}`,
+        background: isLight ? '#f6f5f4' : '#0d0d10',
+        borderRight: `1px solid ${isLight ? '#e5e3df' : '#1e1e28'}`,
         flexShrink: 0,
         overflow: 'hidden',
         transition: 'background 0.2s, border-color 0.2s',
@@ -149,12 +149,12 @@ export default function Sidebar({
       }}>
 
         {/* Logo */}
-        <div style={{ padding: '18px 16px 14px', flexShrink: 0 }}>
+        <div style={{ padding: '18px 16px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#131318' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <DaemonMark size={28} color="#4172f5" glow={!isLight} />
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em', lineHeight: 1 }}>WORKDAEMON</div>
-              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 10, color: isLight ? 'rgba(26,26,26,0.3)' : 'rgba(255,255,255,0.2)', letterSpacing: '0.02em', marginTop: 4 }}>Your company, queryable.</div>
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 10, color: isLight ? '#a4a097' : '#585868', letterSpacing: '0.02em', marginTop: 4 }}>Your company, queryable.</div>
             </div>
             {/* Theme toggle / close button */}
             {isMobile ? (
@@ -198,7 +198,7 @@ export default function Sidebar({
         </div>
 
         {/* Divider */}
-        <div style={{ height: 1, background: isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.06)', flexShrink: 0, margin: '0 12px' }} />
+        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1e1e28', flexShrink: 0, margin: '0 12px' }} />
 
         {/* Nav */}
         <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
@@ -228,10 +228,10 @@ export default function Sidebar({
         </nav>
 
         {/* Divider */}
-        <div style={{ height: 1, background: isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.06)', flexShrink: 0, margin: '0 12px' }} />
+        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1e1e28', flexShrink: 0, margin: '0 12px' }} />
 
         {/* User footer */}
-        <div style={{ padding: '10px 10px 14px', flexShrink: 0 }}>
+        <div style={{ padding: '10px 10px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#0d0d10' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 8px', borderRadius: 7, transition: 'background 0.12s' }}
             onMouseEnter={e => { e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
@@ -249,10 +249,10 @@ export default function Sidebar({
               {displayName.charAt(0).toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#e8e8e8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</div>
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>{displayName}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
                 <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
-                <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: isLight ? 'rgba(26,26,26,0.4)' : 'rgba(232,232,232,0.35)' }}>{displayRole}</span>
+                <span style={{ fontFamily: 'var(--inter)', fontSize: 11, color: isLight ? '#a4a097' : '#585868' }}>{displayRole}</span>
               </div>
             </div>
             <button
