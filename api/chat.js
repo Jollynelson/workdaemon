@@ -38,7 +38,6 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Anthropic error');
-      // Find text block — skip thinking blocks if extended thinking is active
       const types = (d.content || []).map(b => b.type).join(',');
       const textBlock = d.content?.find(b => b.type === 'text');
       console.log('[chat] anthropic stop=%s content_types=%s text_len=%d', d.stop_reason, types, textBlock?.text?.length ?? 0);
@@ -77,7 +76,6 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Google error');
       const parts = d.candidates?.[0]?.content?.parts || [];
-      // Non-thought text first; fall back to all text if model outputs only thought parts
       const nonThought = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
       const text = nonThought || parts.filter(p => p.text).map(p => p.text).join('');
       console.log('[chat] google parts=%d text_len=%d finish=%s', parts.length, text.length, d.candidates?.[0]?.finishReason);
@@ -150,29 +148,42 @@ function buildCompanyContext(ws) {
     + '\n';
 }
 
-function buildDaemonSystemPrompt(profile, workspace) {
+function buildMemoriesContext(memories) {
+  if (!memories?.length) return '';
+  const lines = memories
+    .map(m => `  [${m.memory_type}] ${m.key}: ${m.value}`)
+    .join('\n');
+  return `\nMEMORIES — apply these silently, never announce you remember them:\n${lines}\n`;
+}
+
+function buildDaemonSystemPrompt(profile, workspace, memories) {
   const firstName = profile?.name ? profile.name.split(' ')[0] : null;
   const title = profile?.title || profile?.role || null;
   const permLevel = profile?.permission_level ?? 2;
   const ws = Array.isArray(workspace) ? workspace[0] : workspace;
   const permLabels = { 1: 'Copilot (read-only)', 2: 'Assistant (confirm before act)', 3: 'Autonomous (execute and report)' };
   const companyContext = buildCompanyContext(ws);
+  const memoriesContext = buildMemoriesContext(memories);
 
   return `OUTPUT CONTRACT — ABSOLUTE RULE:
 Your response is one JSON object. First character: {. Last character: }. Nothing else exists in your output. No reasoning steps. No planning notes. No constraint checks. No asterisks. No text before or after the JSON. Violating this breaks the interface completely — the user sees raw garbage instead of a dashboard.
 
-{"blocks":[...],"suggestions":["...","...","..."]}
+{"blocks":[...],"suggestions":["...","...","..."],"memories":[...]}
+
+The "memories" field is OPTIONAL — include it only when you learn something new about the user this turn. When included:
+[{"key":"short-kebab-slug","value":"what you learned","type":"preference|pattern|priority|relationship|fact"}]
+Examples: key="prefers-concise-responses", key="monday-9am-standup", key="reports-to-cfo", key="q2-goal-arr-growth"
+Never announce that you're storing a memory. Never repeat memories back. Just apply them silently.
 
 IDENTITY:
 You are ${firstName ? `${firstName}'s` : 'the'} Daemon — personal AI operating system${ws?.name ? ` at ${ws.name}` : ''}.
 Owner: ${profile?.name || 'Unknown'}${title ? ` (${title})` : ''}
 Company: ${ws?.name || 'Unknown'}${ws?.industry ? `, ${ws.industry}` : ''}${ws?.size ? `, ${ws.size}` : ''}
 Permission: ${permLevel} — ${permLabels[permLevel] || permLabels[2]}
-${companyContext}
-
+${companyContext}${memoriesContext}
 BLOCK TYPES — use these schemas exactly:
 
-{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${profile?.name || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${ws?.name || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"pending","detail":"Learning your patterns"}]}
+{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${profile?.name || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${ws?.name || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"}]}
 
 {"type":"text","md":"prose **bold** for names/IDs/amounts/deadlines. No bullet dashes. Cite sources inline: (Jira BUG-119), (Slack #eng 15 May)."}
 
@@ -214,6 +225,7 @@ PERMISSION: L1=read only | L2=action_confirm then wait for confirm | L3=execute 
 SESSION START — when message is "[SESSION_START]":
 Return: boot block first, then text block greeting ${firstName || 'the user'} by name with smart company-aware intro, then 1–2 relevant blocks.
 If no tools connected: acknowledge honestly, offer 3 specific connection actions.
+If there is conversation history: acknowledge it briefly — "continuing from our last session" — and surface any unresolved threads or outstanding items from that context.
 
 LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. Direct and competent.
 Never: "As an AI", "I don't have access", "I'm just a demo", visible reasoning, constraint checks.
@@ -223,17 +235,13 @@ End with exactly 3 specific actionable suggestions.`;
 function parseJsonResponse(text) {
   if (!text) return { blocks: [{ type: 'text', md: 'No response.' }], suggestions: [] };
 
-  // Strip <thinking> tags (extended thinking models)
   let t = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
 
-  // 1. Direct parse
   try { const p = JSON.parse(t); if (p.blocks) return p; } catch {}
 
-  // 2. Code fence
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) { try { const p = JSON.parse(fence[1].trim()); if (p.blocks) return p; } catch {} }
 
-  // 3. Balanced brace scan — finds first complete JSON object containing "blocks"
   let depth = 0, start = -1;
   for (let i = 0; i < t.length; i++) {
     if (t[i] === '{') { if (depth === 0) start = i; depth++; }
@@ -255,7 +263,7 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { messages, systemPrompt } = req.body ?? {};
+  const { messages } = req.body ?? {};
   if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages array required' });
 
   const db = adminClient();
@@ -268,9 +276,51 @@ export default async function handler(req, res) {
     .single();
 
   const workspaceId = profile?.workspace_id;
-  const sys = buildDaemonSystemPrompt(profile ?? null, profile?.workspaces ?? null);
 
-  // Find the reasoning key from multi-provider table, fall back to legacy columns
+  // Load stored memories — what the daemon has learned about this person
+  const { data: memories } = await db
+    .from('daemon_memory')
+    .select('key, value, memory_type')
+    .eq('user_id', user.id)
+    .order('updated_at', { ascending: false })
+    .limit(40);
+
+  // Load recent DB history to give the AI persistent context
+  const { data: dbHistory } = await db
+    .from('daemon_messages')
+    .select('role, content')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  // Build context: DB history (oldest first) + the new incoming message
+  const historyMsgs = (dbHistory || []).reverse().map(m => ({
+    role: m.role === 'daemon' ? 'assistant' : 'user',
+    content: m.role === 'daemon'
+      ? (() => { try { const p = JSON.parse(m.content); return JSON.stringify({ blocks: p.blocks }); } catch { return m.content; } })()
+      : m.content,
+  }));
+
+  // The new message is always the last entry in the incoming array
+  const newMsg = messages[messages.length - 1];
+  const newMsgNormalized = newMsg
+    ? { role: newMsg.role === 'user' ? 'user' : 'assistant', content: newMsg.content || newMsg.text || '' }
+    : null;
+
+  // Combine: DB history + new message, deduplicate by not adding if identical to last DB message
+  const combined = [...historyMsgs];
+  if (newMsgNormalized) {
+    const last = combined[combined.length - 1];
+    const isDuplicate = last && last.role === newMsgNormalized.role && last.content === newMsgNormalized.content;
+    if (!isDuplicate) combined.push(newMsgNormalized);
+  }
+
+  // Trim to last 16 messages to balance context vs cost
+  const trimmed = combined.length > 16 ? combined.slice(-16) : combined;
+
+  const sys = buildDaemonSystemPrompt(profile ?? null, profile?.workspaces ?? null, memories || []);
+
+  // Find AI provider key
   let keyRow = null;
 
   if (workspaceId) {
@@ -280,13 +330,11 @@ export default async function handler(req, res) {
       .eq('workspace_id', workspaceId)
       .order('created_at');
 
-    // Prefer 'reasoning' use case, then 'default', then first available
     keyRow = keys?.find(k => k.use_case === 'reasoning')
           ?? keys?.find(k => k.use_case === 'default')
           ?? keys?.[0]
           ?? null;
 
-    // Legacy fallback: old openrouter_key column
     if (!keyRow) {
       const { data: ws } = await db
         .from('workspaces')
@@ -300,18 +348,61 @@ export default async function handler(req, res) {
   }
 
   if (!keyRow) {
-    // Server-level Anthropic fallback
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'No AI provider configured. Add a key in Settings.' });
     keyRow = { provider: 'anthropic', api_key: apiKey, model: 'claude-sonnet-4-6' };
   }
 
-  // Trim history to last 12 messages to cap token cost
-  const trimmed = messages.length > 12 ? messages.slice(-12) : messages;
-
   try {
     const raw = await callProvider(keyRow, sys, trimmed);
     const parsed = parseJsonResponse(raw);
+
+    // Persist the new user message and daemon response (fire-and-forget, don't block response)
+    const saveMessages = async () => {
+      try {
+        // Save user message (if it's genuinely new and not SESSION_START)
+        if (newMsgNormalized?.role === 'user' && newMsgNormalized.content !== '[SESSION_START]') {
+          await db.from('daemon_messages').insert({
+            user_id: user.id,
+            workspace_id: workspaceId || null,
+            role: 'user',
+            content: newMsgNormalized.content,
+          });
+        }
+
+        // Save daemon response (blocks + suggestions, strip memories)
+        const stored = JSON.stringify({ blocks: parsed.blocks, suggestions: parsed.suggestions });
+        await db.from('daemon_messages').insert({
+          user_id: user.id,
+          workspace_id: workspaceId || null,
+          role: 'daemon',
+          content: stored,
+        });
+
+        // Process and upsert any memories the daemon decided to store
+        if (Array.isArray(parsed.memories) && parsed.memories.length > 0) {
+          const validMems = parsed.memories.filter(m => m?.key && m?.value);
+          if (validMems.length > 0) {
+            const rows = validMems.map(m => ({
+              user_id: user.id,
+              workspace_id: workspaceId || null,
+              key: String(m.key).slice(0, 120),
+              value: String(m.value).slice(0, 1000),
+              memory_type: m.type || 'preference',
+              updated_at: new Date().toISOString(),
+            }));
+            await db.from('daemon_memory').upsert(rows, { onConflict: 'user_id,key' });
+            console.log('[chat] saved %d memories for user=%s', rows.length, user.id);
+          }
+        }
+      } catch (e) {
+        console.error('[chat] persistence error:', e.message);
+      }
+    };
+
+    // Don't await — send response to user immediately, save in background
+    saveMessages();
+
     return res.status(200).json(parsed);
   } catch (e) {
     console.error('[chat] provider=%s error=%s', keyRow.provider, e.message, e.stack);

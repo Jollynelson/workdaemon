@@ -664,6 +664,16 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
 // CHAT VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 
+function dbMsgToDisplay(m) {
+  if (m.role === 'user') return { role: 'user', text: m.content };
+  try {
+    const p = JSON.parse(m.content);
+    return { role: 'daemon', blocks: p.blocks || [] };
+  } catch {
+    return { role: 'daemon', blocks: [{ type: 'text', md: m.content }] };
+  }
+}
+
 function ChatView({ context, onBack, onMenu }) {
   const c = useC();
   const { isMobile } = useViewport();
@@ -674,6 +684,7 @@ function ChatView({ context, onBack, onMenu }) {
   const [thinking, setThinking]       = useState(false);
   const [error, setError]             = useState('');
   const [apiKey]                      = useState(() => sessionStorage.getItem('wd_apiKey') || '');
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const startedRef = useRef(false);
@@ -681,6 +692,22 @@ function ChatView({ context, onBack, onMenu }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
+
+  // Load persistent history before firing SESSION_START
+  useEffect(() => {
+    if (!authToken || apiKey) { setHistoryLoaded(true); return; }
+    fetch('/api/daemon/history', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then(r => r.ok ? r.json() : { messages: [] })
+      .then(({ messages }) => {
+        if (messages?.length) {
+          setMsgs(messages.map(dbMsgToDisplay));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setHistoryLoaded(true));
+  }, [authToken, apiKey]);
 
   const send = useCallback(async (text) => {
     const q = text.trim();
@@ -706,21 +733,21 @@ function ChatView({ context, onBack, onMenu }) {
     }
   }, [msgs, context, apiKey, authToken, thinking]);
 
-  // Session startup: proactive briefing — fires once on mount
+  // Session startup: fires after history is loaded
   useEffect(() => {
-    if (startedRef.current || !authToken) return;
+    if (startedRef.current || !authToken || !historyLoaded) return;
     startedRef.current = true;
     setThinking(true);
     callDaemonAPI({
       messages: [{ role: 'user', text: '[SESSION_START]' }],
       context, apiKey, authToken,
     }).then(({ blocks, suggestions: sugs }) => {
-      setMsgs([{ role: 'daemon', blocks: blocks || [] }]);
+      setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
       setSuggestions(sugs || []);
     }).catch(e => {
       setError(e.message || 'Failed to load Daemon. Try refreshing.');
     }).finally(() => setThinking(false));
-  }, [authToken]); // re-run if token loads after mount
+  }, [authToken, historyLoaded]);
 
   const onConfirmAction = useCallback((actionId) => {
     send(`CONFIRMED — execute ${actionId}`);
