@@ -1189,61 +1189,497 @@ function CompanyContextForm({ token, c, isMobile }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAIN — HUNT FINDINGS TAB
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HUNT_MODES = [
+  { key: 'threat',      label: 'THREAT HUNT',      icon: '◈', color: '#ef4444', desc: 'Churn, cash flow, legal, staff risk' },
+  { key: 'waste',       label: 'WASTE HUNT',        icon: '⊗', color: '#f59e0b', desc: 'Redundancies, inefficiencies, unused tools' },
+  { key: 'opportunity', label: 'OPPORTUNITY HUNT',  icon: '◇', color: '#10b981', desc: 'Upsells, partnerships, underutilised talent' },
+  { key: 'performance', label: 'PERFORMANCE HUNT',  icon: '▣', color: '#4172f5', desc: 'Team performance, burnout, overload signals' },
+  { key: 'knowledge',   label: 'KNOWLEDGE HUNT',    icon: '○', color: '#8b5cf6', desc: 'Knowledge gaps, missing documentation' },
+];
+
+const SEVERITY_STYLE = {
+  critical: { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.25)',  color: '#ef4444', leftBorder: '#ef4444' },
+  warning:  { bg: 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.22)', color: '#f59e0b', leftBorder: '#f59e0b' },
+  info:     { bg: 'rgba(65,114,245,0.06)', border: 'rgba(65,114,245,0.18)', color: '#4172f5', leftBorder: '#4172f5' },
+};
+
+function HuntFindingCard({ finding, onResolve, c }) {
+  const sev = SEVERITY_STYLE[finding.severity] || SEVERITY_STYLE.info;
+  const mode = HUNT_MODES.find(m => m.key === finding.hunt_mode);
+  const [resolving, setResolving] = useState(false);
+
+  const handleResolve = async () => {
+    setResolving(true);
+    await onResolve(finding.id);
+    setResolving(false);
+  };
+
+  return (
+    <div style={{
+      padding: '14px 16px',
+      background: sev.bg, border: `1px solid ${sev.border}`,
+      borderLeft: `3px solid ${sev.leftBorder}`,
+      borderRadius: '0 10px 10px 0',
+      display: 'flex', gap: 12, alignItems: 'flex-start',
+    }}>
+      <div style={{ flexShrink: 0, marginTop: 2 }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 14, color: mode?.color || sev.color }}>{mode?.icon || '◈'}</span>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: mode?.color || sev.color, background: `${mode?.color || sev.color}15`, border: `1px solid ${mode?.color || sev.color}30`, borderRadius: 4, padding: '2px 7px' }}>
+            {mode?.label || finding.hunt_mode.toUpperCase()}
+          </span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: sev.color, background: `${sev.color}10`, border: `1px solid ${sev.border}`, borderRadius: 4, padding: '2px 7px' }}>
+            {finding.severity.toUpperCase()}
+          </span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.05em' }}>
+            {finding.occurrences}× detected
+          </span>
+        </div>
+        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text, fontWeight: 500, lineHeight: 1.4, marginBottom: finding.recommendation ? 8 : 0 }}>
+          {finding.pattern}
+        </div>
+        {finding.recommendation && (
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, lineHeight: 1.55, marginBottom: 8 }}>
+            → {finding.recommendation}
+          </div>
+        )}
+        {finding.affected_roles?.length > 0 && (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {finding.affected_roles.map(r => (
+              <span key={r} style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 4, padding: '2px 7px', letterSpacing: '0.05em' }}>{r}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        type="button" onClick={handleResolve} disabled={resolving}
+        title="Mark as resolved"
+        style={{
+          flexShrink: 0, padding: '5px 10px', borderRadius: 6,
+          background: 'none', border: `1px solid ${c.subtleBorder}`,
+          fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em',
+          color: c.text4, cursor: resolving ? 'wait' : 'pointer', transition: 'all 0.15s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.color = '#10b981'; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = ''; e.currentTarget.style.color = ''; }}
+      >{resolving ? '…' : '✓ RESOLVE'}</button>
+    </div>
+  );
+}
+
+function HuntTab({ token, c, isMobile }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [findings, setFindings] = useState([]);
+
+  const load = async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/brain?tab=hunt', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setData(d);
+      setFindings(d.findings || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [token]);
+
+  const runScan = async () => {
+    setScanning(true);
+    try {
+      await fetch('/api/brain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'hunt_scan' }),
+      });
+      await load();
+    } catch {}
+    setScanning(false);
+  };
+
+  const resolveFind = async (id) => {
+    await fetch('/api/brain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'resolve_finding', id }),
+    });
+    setFindings(prev => prev.filter(f => f.id !== id));
+  };
+
+  const modeCount = data?.mode_counts || {};
+  const stats     = data?.stats || {};
+
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} height={100} />)}
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Hunt mode status grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(5,1fr)', gap: 8, marginBottom: 24 }}>
+        {HUNT_MODES.map(m => {
+          const count = modeCount[m.key] || 0;
+          return (
+            <div key={m.key} style={{
+              padding: '12px 14px', borderRadius: 10,
+              background: count > 0 ? `${m.color}0d` : c.subtle,
+              border: `1px solid ${count > 0 ? m.color + '30' : c.subtleBorder}`,
+            }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 16, color: count > 0 ? m.color : c.text4, marginBottom: 5 }}>{m.icon}</div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.1em', color: count > 0 ? m.color : c.text4, marginBottom: 3 }}>{m.label}</div>
+              <div style={{ fontFamily: 'var(--orbitron)', fontSize: 18, fontWeight: 700, color: count > 0 ? m.color : c.text4 }}>{count}</div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 10, color: c.text4, marginTop: 2 }}>{count === 1 ? 'finding' : 'findings'}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stats row */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'INTERACTIONS (30D)', value: stats.total_30d || 0 },
+          { label: 'THIS WEEK',          value: stats.total_7d  || 0 },
+          { label: 'ACTIVE USERS',       value: stats.unique_users || 0 },
+          { label: 'ROLES ENGAGED',      value: stats.unique_roles || 0 },
+        ].map(s => (
+          <div key={s.label} style={{ padding: '10px 14px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 9 }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3, letterSpacing: '0.1em', marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontFamily: 'var(--orbitron)', fontSize: 18, fontWeight: 700, color: c.text }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Scan button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+        <button
+          type="button" onClick={runScan} disabled={scanning}
+          style={{
+            padding: '9px 18px', borderRadius: 8, border: 'none', cursor: scanning ? 'wait' : 'pointer',
+            background: scanning ? 'rgba(65,114,245,0.4)' : '#4172f5',
+            fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: '#fff',
+          }}
+        >{scanning ? 'Scanning…' : '⟳ Run Hunt Scan'}</button>
+        <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text4 }}>
+          Scans last 30 days of interactions for patterns across all 5 hunt modes
+        </span>
+      </div>
+
+      {/* Findings list */}
+      {findings.length === 0 ? (
+        <EmptyState icon="◇" title="No active findings" subtitle="Run a hunt scan to detect threats, waste, opportunities, performance issues, and knowledge gaps across your team's interactions." />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {findings.map(f => (
+            <HuntFindingCard key={f.id} finding={f} onResolve={resolveFind} c={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAIN — TEAM AGENTS TAB
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ACCESS_LEVELS = ['junior', 'manager', 'director', 'executive'];
+const ACCESS_TOOLS = {
+  junior:    ['Slack', 'Notion', 'Google Drive'],
+  manager:   ['Slack', 'Notion', 'Google Drive', 'CRM', 'Project Tools'],
+  director:  ['Slack', 'Notion', 'Google Drive', 'CRM', 'Finance', 'HR System'],
+  executive: ['All Tools — Full Company Access'],
+};
+const ACCESS_COLOR = { junior: '#8b5cf6', manager: '#4172f5', director: '#f59e0b', executive: '#10b981' };
+
+function AgentProfileCard({ agent, token, onUpdated, c }) {
+  const [editing, setEditing]   = useState(false);
+  const [level, setLevel]       = useState(agent.access_level);
+  const [saving, setSaving]     = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await fetch('/api/brain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'update_agent', target_user_id: agent.user_id, access_level: level }),
+      });
+      onUpdated();
+      setEditing(false);
+    } catch {}
+    setSaving(false);
+  };
+
+  const ac = ACCESS_COLOR[agent.access_level] || '#4172f5';
+  const trustPct = Math.round((agent.trust_score || 1) * 100);
+
+  return (
+    <div style={{ padding: '14px 18px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ width: 38, height: 38, borderRadius: '50%', background: ac, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+          {(agent.name || '?').charAt(0)}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{agent.name}</span>
+            {agent.workspace_role === 'admin' && (
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 4, padding: '2px 6px', letterSpacing: '0.08em' }}>ADMIN</span>
+            )}
+          </div>
+          {agent.title && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginBottom: 6 }}>{agent.title}</div>}
+
+          {!editing ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: ac, background: `${ac}15`, border: `1px solid ${ac}30`, borderRadius: 5, padding: '3px 8px' }}>
+                {agent.access_level.toUpperCase()}
+              </span>
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text4 }}>
+                {agent.interaction_count} interactions · trust {trustPct}%
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+              {ACCESS_LEVELS.map(l => (
+                <button key={l} type="button" onClick={() => setLevel(l)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 6, cursor: 'pointer', transition: 'all 0.12s',
+                    background: level === l ? `${ACCESS_COLOR[l]}18` : c.subtle,
+                    border: `1px solid ${level === l ? ACCESS_COLOR[l] + '50' : c.subtleBorder}`,
+                    fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: level === l ? 600 : 400,
+                    color: level === l ? ACCESS_COLOR[l] : c.text3,
+                  }}>
+                  {l}
+                  <div style={{ fontSize: 9, color: c.text4, marginTop: 1 }}>{(ACCESS_TOOLS[l] || []).slice(0, 2).join(', ')}{ACCESS_TOOLS[l]?.length > 2 ? '…' : ''}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          {!editing ? (
+            <button type="button" onClick={() => setEditing(true)}
+              style={{ padding: '5px 12px', borderRadius: 6, background: 'none', border: `1px solid ${c.subtleBorder}`, fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, cursor: 'pointer' }}>
+              Edit
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={save} disabled={saving}
+                style={{ padding: '5px 12px', borderRadius: 6, background: '#4172f5', border: 'none', fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 600, color: '#fff', cursor: saving ? 'wait' : 'pointer' }}>
+                {saving ? '…' : 'Save'}
+              </button>
+              <button type="button" onClick={() => { setEditing(false); setLevel(agent.access_level); }}
+                style={{ padding: '5px 10px', borderRadius: 6, background: 'none', border: `1px solid ${c.subtleBorder}`, fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, cursor: 'pointer' }}>
+                ×
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentsTab({ token, c, isMobile }) {
+  const [agents, setAgents]   = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const r = await fetch('/api/brain?tab=agents', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setAgents(d.agents || []);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [token]);
+
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={80} />)}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ padding: '12px 16px', borderRadius: 9, background: 'rgba(65,114,245,0.05)', border: '1px solid rgba(65,114,245,0.15)', marginBottom: 20 }}>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text2, lineHeight: 1.6, margin: 0 }}>
+          <strong style={{ color: '#4172f5' }}>Access levels</strong> control what tools and data each Daemon agent can see.
+          {' '}<strong>Junior</strong> — Slack, Notion, Google Drive.
+          {' '}<strong>Manager</strong> — + CRM & project tools.
+          {' '}<strong>Director</strong> — + Finance & HR.
+          {' '}<strong>Executive</strong> — full company access.
+        </p>
+      </div>
+
+      {agents.length === 0 ? (
+        <EmptyState icon="◎" title="No agents yet" subtitle="As team members start using their Daemon, their agent profiles will appear here." />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {agents.map(a => (
+            <AgentProfileCard key={a.user_id} agent={a} token={token} onUpdated={load} c={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAIN — INTEGRATIONS TAB
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOOL_CATALOG = [
+  { name: 'Notion',          icon: 'N',  category: 'Knowledge',     color: '#191919', hunt: ['knowledge','waste'] },
+  { name: 'Slack',           icon: 'S',  category: 'Communication', color: '#4a154b', hunt: ['threat','performance','knowledge'] },
+  { name: 'Google Drive',    icon: 'G',  category: 'Knowledge',     color: '#4172f5', hunt: ['knowledge'] },
+  { name: 'Gmail',           icon: 'M',  category: 'Communication', color: '#ea4335', hunt: ['threat','opportunity'] },
+  { name: 'Google Calendar', icon: 'C',  category: 'Scheduling',    color: '#1a73e8', hunt: ['performance','waste'] },
+  { name: 'HubSpot',         icon: 'H',  category: 'CRM',           color: '#ff7a59', hunt: ['threat','opportunity'] },
+  { name: 'Salesforce',      icon: 'SF', category: 'CRM',           color: '#00a1e0', hunt: ['threat','opportunity'] },
+  { name: 'Jira',            icon: 'J',  category: 'Project Tools', color: '#0052cc', hunt: ['performance','waste'] },
+  { name: 'Linear',          icon: 'L',  category: 'Project Tools', color: '#5e6ad2', hunt: ['performance','waste'] },
+  { name: 'QuickBooks',      icon: 'QB', category: 'Finance',       color: '#2ca01c', hunt: ['threat','waste'] },
+  { name: 'BambooHR',        icon: 'B',  category: 'HR',            color: '#78b943', hunt: ['threat','performance'] },
+  { name: 'GitHub',          icon: 'GH', category: 'Engineering',   color: '#24292e', hunt: ['performance','waste'] },
+];
+
+function IntegrationsTab({ c, isMobile }) {
+  const categories = [...new Set(TOOL_CATALOG.map(t => t.category))];
+
+  return (
+    <div>
+      <div style={{ padding: '12px 16px', borderRadius: 9, background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)', marginBottom: 20 }}>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text2, lineHeight: 1.6, margin: 0 }}>
+          <strong style={{ color: '#f59e0b' }}>Tool connections</strong> are the Brain's live feed. Each connected tool streams real-time data into the hunt engine — enabling threat detection, waste identification, and opportunity surfacing. Full integration support coming in v2.
+        </p>
+      </div>
+
+      {categories.map(cat => (
+        <div key={cat} style={{ marginBottom: 24 }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.14em', color: c.text3, marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${c.cardBorder}` }}>{cat.toUpperCase()}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {TOOL_CATALOG.filter(t => t.category === cat).map(tool => (
+              <div key={tool.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 9 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: tool.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{tool.icon}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: c.text, marginBottom: 3 }}>{tool.name}</div>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {tool.hunt.map(h => {
+                      const mode = HUNT_MODES.find(m => m.key === h);
+                      return (
+                        <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 8, color: mode?.color || '#4172f5', background: `${mode?.color || '#4172f5'}12`, border: `1px solid ${mode?.color || '#4172f5'}25`, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.07em' }}>
+                          {mode?.icon} {h}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.2)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>
+                  CONNECT
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAIN PAGE — MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
 function BrainPage() {
   const c = useC();
   const { isMobile } = useViewport();
   const { token } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
-  const tabs = ['OVERVIEW', 'INTEGRATIONS', 'KNOWLEDGE GRAPH', 'USERS', 'SECURITY'];
 
-  const integrations = [];
+  const TABS = [
+    { key: 'overview',      label: 'OVERVIEW' },
+    { key: 'patterns',      label: 'PATTERNS' },
+    { key: 'integrations',  label: 'INTEGRATIONS' },
+    { key: 'agents',        label: 'TEAM AGENTS' },
+    { key: 'security',      label: 'SECURITY' },
+  ];
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
-      <div style={{ maxWidth: 820 }}>
-        <p className="wd-label-blue" style={{ marginBottom: 8 }}>COMPANY BRAIN</p>
-        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 6 }}>Knowledge Infrastructure</h1>
-        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 20 }}>Admin-only view · Context is injected into every Daemon session</p>
+      <div style={{ maxWidth: 860 }}>
 
-        {/* Tabs — Notion pill-tab pattern */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto', WebkitOverflowScrolling: 'touch', flexWrap: 'wrap' }}>
-          {tabs.map(t => (
-            <button key={t} type="button" onClick={() => setActiveTab(t.toLowerCase().replace(/ /g, '_'))}
-              className={`wd-pill-tab${activeTab === t.toLowerCase().replace(/ /g, '_') ? ' active' : ''}`}
-            >{t}</button>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <p className="wd-label-blue" style={{ marginBottom: 6 }}>COMPANY BRAIN</p>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em', marginBottom: 4 }}>
+              The Living Intelligence
+            </h1>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3 }}>
+              Always on · Always learning · Always hunting · Admin view
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', flexShrink: 0 }}>
+            <span className="wd-dot" style={{ width: 6, height: 6, background: '#10b981', borderRadius: '50%', display: 'block' }} />
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#10b981', letterSpacing: '0.06em' }}>BRAIN ONLINE</span>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 24, overflowX: 'auto', WebkitOverflowScrolling: 'touch', borderBottom: `1px solid ${c.cardBorder}`, paddingBottom: 0 }}>
+          {TABS.map(t => (
+            <button key={t.key} type="button" onClick={() => setActiveTab(t.key)}
+              style={{
+                padding: '8px 14px', background: 'none', border: 'none',
+                borderBottom: `2px solid ${activeTab === t.key ? '#4172f5' : 'transparent'}`,
+                fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 10, letterSpacing: '0.1em',
+                color: activeTab === t.key ? '#4172f5' : c.text3,
+                cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap', transition: 'all 0.15s',
+              }}>
+              {t.label}
+            </button>
           ))}
         </div>
 
-        {activeTab === 'overview' && <CompanyContextForm token={token} c={c} isMobile={isMobile} />}
-
-        {activeTab === 'integrations' && (
-          loading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={64} />)}
-            </div>
-          ) : integrations.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {integrations.map(intg => (
-                <div key={intg.name} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', background: intg.status === 'connected' ? (c.d ? 'rgba(16,185,129,0.04)' : 'rgba(16,185,129,0.04)') : c.subtle, border: `1px solid ${intg.status === 'connected' ? 'rgba(16,185,129,0.15)' : c.subtleBorder}`, borderRadius: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: c.text3, flexShrink: 0 }}>{intg.icon || intg.name?.charAt(0)}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: c.text, marginBottom: 2 }}>{intg.name}</div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text4, letterSpacing: '0.06em' }}>{intg.status === 'connected' ? `${intg.docs || 0} docs · synced ${intg.lastSync || 'recently'}` : 'Not connected'}</div>
-                  </div>
-                  <span style={{ padding: '4px 10px', borderRadius: 6, fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', background: intg.status === 'connected' ? (c.d ? 'rgba(16,185,129,0.1)' : 'rgba(16,185,129,0.09)') : c.subtle, border: `1px solid ${intg.status === 'connected' ? 'rgba(16,185,129,0.25)' : c.subtleBorder}`, color: intg.status === 'connected' ? '#10b981' : '#4172f5', cursor: 'pointer' }}>
-                    {intg.status === 'connected' ? 'CONNECTED' : 'CONNECT'}
-                  </span>
+        {activeTab === 'overview'     && <CompanyContextForm token={token} c={c} isMobile={isMobile} />}
+        {activeTab === 'patterns'     && <HuntTab token={token} c={c} isMobile={isMobile} />}
+        {activeTab === 'integrations' && <IntegrationsTab c={c} isMobile={isMobile} />}
+        {activeTab === 'agents'       && <AgentsTab token={token} c={c} isMobile={isMobile} />}
+        {activeTab === 'security'     && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <BlockAlert block={{ level: 'info', title: 'SECURITY ARCHITECTURE', content: 'The Brain sees everything — agents surface only what is appropriate to each user\'s role and clearance. Interaction data is used for learning — not exposed to other staff. All interactions are logged, timestamped, and auditable. Data sovereignty and compliance enforced at the Brain level. Agent access controls managed centrally.' }} />
+            <div style={{ padding: '16px 18px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 10 }}>
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em', marginBottom: 10 }}>ISOLATION MODEL</p>
+              {[
+                ['Company data', 'Isolated per workspace — zero crossover between companies'],
+                ['User memory', 'Scoped to user_id + workspace_id — never shared'],
+                ['Hunt findings', 'Workspace-scoped — only admins can view'],
+                ['Agent profiles', 'Individually controlled — admin can revoke at any time'],
+                ['Interaction logs', 'Per-user — used for learning, never exposed peer-to-peer'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: `1px solid ${c.cardBorder}` }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: c.text2, width: 130, flexShrink: 0 }}>{k}</span>
+                  <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3 }}>{v}</span>
                 </div>
               ))}
             </div>
-          ) : (
-            <EmptyState icon="⚡" title="No integrations connected" subtitle="Connect Notion, Slack, GitHub, Gmail, Jira and more to start building your knowledge graph." cta="GO TO INTEGRATIONS" onCta={() => {}} />
-          )
+          </div>
         )}
 
-        {(activeTab === 'users' || activeTab === 'knowledge_graph' || activeTab === 'security') && (
-          <BlockAlert block={{ level: 'info', content: `${activeTab.replace(/_/g, ' ')} — coming in the next release.` }} />
-        )}
       </div>
     </div>
   );
@@ -1612,6 +2048,14 @@ const PROVIDERS = [
     isEndpoint: true, endpointPlaceholder: 'https://your-resource.openai.azure.com',
     staticModels: [],
   },
+  {
+    id: 'modal', name: 'Company Brain (Hermes-3)', color: '#16a34a',
+    desc: 'Your fine-tuned model on Modal GPU', keyLabel: 'Serve Token',
+    placeholder: 'serve token (SERVE_TOKEN)',
+    isEndpoint: true, endpointPlaceholder: 'https://your-serving-url',
+    modelLabel: 'Company ID', modelPlaceholder: 'company_id to route to',
+    staticModels: [],
+  },
 ];
 
 const COST_LABELS = {
@@ -1877,7 +2321,7 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
             <ProviderBadge provider={provider} size="md" />
           </div>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Model</label>
+            <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{cfg.modelLabel || 'Model'}</label>
             {loadingModels && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginBottom: 8 }}>Fetching live model list…</p>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
               {models.slice(0, 20).map(m => {
@@ -1902,7 +2346,7 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
                 );
               })}
             </div>
-            <FocusedInput value={model} onChange={setModel} placeholder="Or type any model ID…" inputSt={inputSt} />
+            <FocusedInput value={model} onChange={setModel} placeholder={cfg.modelPlaceholder || 'Or type any model ID…'} inputSt={inputSt} />
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Use Case</label>

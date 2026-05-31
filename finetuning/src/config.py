@@ -1,0 +1,90 @@
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT_ENV = Path(__file__).parent.parent.parent / ".env"
+_env_file = str(_ROOT_ENV) if _ROOT_ENV.exists() else None
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=_env_file,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Supabase (WorkDaemon main app DB) ──────────────────────────────────────
+    supabase_url: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_URL")
+    supabase_service_key: str = Field(validation_alias="SUPABASE_SERVICE_ROLE_KEY")
+    database_url: str = Field(validation_alias="DATABASE_URL")
+
+    # ── Hugging Face ───────────────────────────────────────────────────────────
+    hf_token: str = Field(validation_alias="HF_TOKEN")
+    hf_org: str = Field(default="workdaemon", validation_alias="HF_ORG")
+
+    # ── Model — Hermes-3 (agentic + tool-calling native) ─────────────────────
+    # NOTE: Changed from Meta-Llama. Hermes-3 understands <tool_call> natively.
+    base_model: str = Field(
+        default="unsloth/Hermes-3-Llama-3.1-8B-bnb-4bit",
+        validation_alias="BASE_MODEL",
+    )
+
+    # ── Training ───────────────────────────────────────────────────────────────
+    max_seq_length: int = 8192
+    lora_r: int = 16
+    lora_alpha: int = 16
+    learning_rate: float = 2e-4
+    num_epochs: int = 2                  # 2 not 3: 48h cadence avoids forgetting
+    min_examples_to_train: int = Field(default=50, validation_alias="MIN_EXAMPLES_TO_TRAIN")
+    training_window_hours: int = Field(default=48, validation_alias="TRAINING_WINDOW_HOURS")
+
+    # ── Quality gate ───────────────────────────────────────────────────────────
+    gate_epsilon: float = 0.01           # new model must score >= old - epsilon
+
+    # ── Modal ──────────────────────────────────────────────────────────────────
+    modal_environment: str = "main"
+
+    # ── Serving ────────────────────────────────────────────────────────────────
+    serve_backend: str = Field(default="ollama", validation_alias="SERVE_BACKEND")
+    warm_pool_business_hours: bool = Field(default=True, validation_alias="WARM_POOL_BUSINESS_HOURS")
+    ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
+
+    # ── Cold-start fallback ────────────────────────────────────────────────────
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    fallback_model: str = "claude-haiku-4-5-20251001"   # fast + cheap for cold-start
+
+    # ── Embeddings ─────────────────────────────────────────────────────────────
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        validation_alias="EMBEDDING_MODEL",
+    )
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
+    embedding_dim: int = 1536            # text-embedding-3-small native dimension
+
+    # ── Vector store ───────────────────────────────────────────────────────────
+    vector_backend: str = Field(default="pgvector", validation_alias="VECTOR_BACKEND")
+    postgres_url: str = Field(default="", validation_alias="POSTGRES_URL")
+
+    # ── Cache / queues ─────────────────────────────────────────────────────────
+    redis_url: str = Field(default="redis://localhost:6379", validation_alias="REDIS_URL")
+
+    # ── Scheduling (Inngest) ───────────────────────────────────────────────────
+    inngest_event_key: str = Field(default="", validation_alias="INNGEST_EVENT_KEY")
+    inngest_signing_key: str = Field(default="", validation_alias="INNGEST_SIGNING_KEY")
+
+    # ── Tool integrations (per company; encrypted at rest in production) ───────
+    slack_bot_token: str = Field(default="", validation_alias="SLACK_BOT_TOKEN")
+    notion_token: str = Field(default="", validation_alias="NOTION_TOKEN")
+    google_service_account_key: str = Field(default="", validation_alias="GOOGLE_SERVICE_ACCOUNT_KEY")
+
+    # ── Security ───────────────────────────────────────────────────────────────
+    jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
+    encryption_key: str = Field(default="", validation_alias="ENCRYPTION_KEY")
+    # Bearer token the WorkDaemon Node app sends when calling /api/serve/chat.
+    # Empty = auth disabled (dev only).
+    serve_token: str = Field(default="", validation_alias="SERVE_TOKEN")
+
+
+settings = Settings()

@@ -8,3 +8,25 @@ dist/
 npm-debug.log*
 .vite/
 coverage/
+.vercel
+
+# Build / framework caches
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Python
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Model / training artifacts (live in HF + Modal Volume, never in git)
+*.gguf
+finetuning/models/
+finetuning/gguf/
+finetuning/outputs/
+*.tar.zst

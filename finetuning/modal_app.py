@@ -1,0 +1,113 @@
+"""
+Modal app — GPU training function for the WorkDaemon fine-tuning pipeline.
+
+The image installs torch+CUDA first, then Unsloth (which depends on a
+CUDA-enabled torch). If Unsloth releases a new version that changes its
+install command, update the pip_install calls below accordingly.
+"""
+
+from __future__ import annotations
+
+import modal
+
+# ── Docker image ───────────────────────────────────────────────────────────────
+# Layer 1: system deps
+# Layer 2: torch with CUDA 12.1 (must precede Unsloth)
+# Layer 3: Unsloth + all training deps
+# Layer 4: local src/ package (mounted so imports work inside the container)
+
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    # Layer 1: system deps + llama.cpp build deps for Unsloth GGUF export
+    .apt_install(
+        "git", "build-essential", "curl",
+        "libssl-dev", "libcurl4-openssl-dev", "cmake",
+    )
+    # Layer 2: pre-build llama.cpp so Unsloth finds it at /root/.unsloth/llama.cpp
+    # and doesn't try to run an interactive install prompt inside the container.
+    # CPU-only build is sufficient — GGUF quantization doesn't need the GPU.
+    .run_commands(
+        "mkdir -p /root/.unsloth",
+        "git clone --depth 1 https://github.com/ggerganov/llama.cpp /root/.unsloth/llama.cpp",
+        "cd /root/.unsloth/llama.cpp && cmake -B build && cmake --build build --config Release -j$(nproc)",
+    )
+    # Layer 3: torch with CUDA (must precede Unsloth)
+    .pip_install(
+        "torch==2.3.1",
+        index_url="https://download.pytorch.org/whl/cu121",
+    )
+    # Layer 4: Unsloth + training deps
+    .pip_install(
+        "unsloth[cu121-torch231]",
+        extra_index_url="https://unsloth.ai/installing",
+    )
+    .pip_install(
+        "trl>=0.8.0",
+        "transformers>=4.40.0",
+        "datasets>=2.18.0",
+        "huggingface_hub>=0.22.0",
+        "peft>=0.10.0",
+        "accelerate>=0.28.0",
+        "bitsandbytes>=0.43.0",
+        "supabase>=2.4.0",
+        "pydantic-settings>=2.2.0",
+        "python-dotenv>=1.0.0",
+        "anthropic>=0.25.0",
+    )
+    .add_local_python_source("src")
+)
+
+app = modal.App("workdaemon-finetuning")
+
+
+@app.function(
+    image=image,
+    gpu="T4",               # 16GB VRAM; fits Llama 3.1 8B 4-bit at max_seq_length=2048
+    timeout=60 * 60 * 3,   # 3h hard cap — typical run is ~1–2h
+    secrets=[modal.Secret.from_name("workdaemon-secrets")],
+)
+def run_training(company_id: str, dataset_jsonl: str, version: int) -> dict:
+    """
+    Train a QLoRA adapter for one company and push it to Hugging Face.
+
+    Args:
+        company_id:    The company UUID.
+        dataset_jsonl: Full contents of the training JSONL (passed by value to
+                       avoid needing a shared volume between caller and container).
+        version:       Monotonically increasing version number for this adapter.
+
+    Returns:
+        {"version": int, "hf_revision": str, "num_examples": int}
+    """
+    import os
+    import tempfile
+
+    from src.config import settings
+    from src.registry.hf_registry import push, push_gguf
+    from src.training.hyperparams import HYPERPARAMS
+    from src.training.train import train_adapter
+
+    # 1. Write the JSONL string to a temp file on the container's /tmp
+    fd, dataset_path = tempfile.mkstemp(prefix=f"{company_id}-", suffix=".jsonl")
+    with os.fdopen(fd, "w") as f:
+        f.write(dataset_jsonl)
+
+    num_examples = sum(1 for line in dataset_jsonl.splitlines() if line.strip())
+
+    # 2. Fine-tune + export GGUF (train_adapter returns both paths)
+    adapter_dir, gguf_path = train_adapter(
+        company_id=company_id,
+        dataset_path=dataset_path,
+        base_model=settings.base_model,
+        hp=HYPERPARAMS,
+    )
+
+    # 3. Push LoRA adapter (safetensors) and merged GGUF to HF
+    hf_revision = push(company_id, adapter_dir, version)
+    push_gguf(company_id, gguf_path, version)
+
+    return {
+        "version": version,
+        "hf_revision": hf_revision,
+        "num_examples": num_examples,
+    }
