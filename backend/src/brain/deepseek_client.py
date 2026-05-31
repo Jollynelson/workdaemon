@@ -84,19 +84,26 @@ class DeepSeekClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        # DeepSeek exposes thinking + reasoning_effort as request params (verify names).
-        extra: dict[str, Any] = {}
+        # DeepSeek thinking mode needs BOTH params (verified against api-docs.deepseek.com):
+        #   thinking={"type": "enabled"|"disabled"} AND reasoning_effort="high"|"max".
+        # They're non-OpenAI params, so the OpenAI SDK must pass them via extra_body
+        # (kwargs at the top level get stripped). Default effort is "high".
+        extra_body: dict[str, Any] = {
+            "thinking": {"type": "enabled" if thinking else "disabled"}
+        }
         if thinking:
-            extra["reasoning_effort"] = reasoning_effort or "high"
+            extra_body["reasoning_effort"] = reasoning_effort or "high"
 
         resp = self._client().chat.completions.create(
             model=model,
             messages=messages,
             max_tokens=kwargs.get("max_tokens", 4096),
-            **extra,
+            extra_body=extra_body,
         )
         choice = resp.choices[0]
         text = choice.message.content or ""
+        # Deep/thinking tier returns its chain-of-thought separately in reasoning_content.
+        reasoning = getattr(choice.message, "reasoning_content", None)
 
         # Convention: structured Brain prompts ask for a trailing JSON object with
         # "confidence" and optional "flagged_complex"; parse it if present.
@@ -107,7 +114,10 @@ class DeepSeekClient:
             confidence=confidence,
             flagged_complex=flagged,
             thinking=thinking,
-            raw={"finish_reason": getattr(choice, "finish_reason", None)},
+            raw={
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "reasoning_content": reasoning,
+            },
         )
 
 
