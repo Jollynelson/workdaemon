@@ -9,10 +9,10 @@ so api/chat.js's `case 'modal'` can treat it like any other provider.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header
 from pydantic import BaseModel
 
-from src.config import settings
+from src.api.auth import require_company
 from src.model.router import chat as route_chat
 
 router = APIRouter()
@@ -27,22 +27,14 @@ class ServeChatRequest(BaseModel):
     max_tokens: int = 2048
 
 
-def _check_auth(authorization: str | None) -> None:
-    """Verify the bearer token if SERVE_TOKEN is configured."""
-    if not settings.serve_token:
-        return  # auth disabled (dev only)
-    expected = f"Bearer {settings.serve_token}"
-    if authorization != expected:
-        raise HTTPException(401, "Invalid or missing serve token")
-
-
 @router.post("/chat")
 def serve_chat(body: ServeChatRequest, authorization: str | None = Header(default=None)):
     """Route one chat turn to the company's model.
 
+    Requires a per-company bearer token (HMAC-bound to company_id); see auth.py.
     Returns: {"content": str, "tool_calls": list[dict], "model": str, "source": str}
     """
-    _check_auth(authorization)
+    require_company(body.company_id, authorization)
     return route_chat(
         company_id=body.company_id,
         messages=body.messages,

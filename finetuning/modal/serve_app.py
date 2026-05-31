@@ -189,7 +189,12 @@ web_image = (
 
 @app.function(
     image=web_image,
-    secrets=[modal.Secret.from_name("workdaemon-secrets")],
+    # workdaemon-secrets: Supabase/HF/etc.  workdaemon-serve-secret: SERVE_MASTER_SECRET
+    # (+ optional ANTHROPIC_API_KEY for the Claude fallback).
+    secrets=[
+        modal.Secret.from_name("workdaemon-secrets"),
+        modal.Secret.from_name("workdaemon-serve-secret"),
+    ],
     timeout=60 * 5,
 )
 @modal.asgi_app()

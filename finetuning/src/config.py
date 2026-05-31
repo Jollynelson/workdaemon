@@ -82,9 +82,10 @@ class Settings(BaseSettings):
     # ── Security ───────────────────────────────────────────────────────────────
     jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
     encryption_key: str = Field(default="", validation_alias="ENCRYPTION_KEY")
-    # Bearer token the WorkDaemon Node app sends when calling /api/serve/chat.
-    # Empty = auth disabled (dev only).
-    serve_token: str = Field(default="", validation_alias="SERVE_TOKEN")
+    # Master secret for the serving API (see src/api/auth.py). Per-company bearer
+    # tokens are HMAC(master, company_id); the master also gates admin routes.
+    # Empty = serve auth DISABLED (dev only).
+    serve_master_secret: str = Field(default="", validation_alias="SERVE_MASTER_SECRET")
 
 
 settings = Settings()

@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.auth import require_admin
 from src.api.routes import agents, brain, serve, staff
 from src.api.websocket import router as ws_router
 
@@ -34,9 +35,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(staff.router,  prefix="/api/staff",  tags=["staff"])
-app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
-app.include_router(brain.router,  prefix="/api/brain",  tags=["brain"])
+# Internal ops routes — gated by the master (admin) secret.
+_admin = [Depends(require_admin)]
+app.include_router(staff.router,  prefix="/api/staff",  tags=["staff"],  dependencies=_admin)
+app.include_router(agents.router, prefix="/api/agents", tags=["agents"], dependencies=_admin)
+app.include_router(brain.router,  prefix="/api/brain",  tags=["brain"],  dependencies=_admin)
+# Serve route does its own per-company token check (company_id is in the body).
 app.include_router(serve.router,  prefix="/api/serve",  tags=["serve"])
 app.include_router(ws_router,                           tags=["websocket"])
 
