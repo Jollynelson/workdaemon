@@ -24,6 +24,7 @@ image = (
         "fastembed>=0.3.0",
         "supabase>=2.4.0",
         "redis>=5.0.0",
+        "cryptography>=42.0.0",
     )
     # mount the backend src/ so `import src...` works inside the container
     .add_local_python_source("src")
@@ -32,7 +33,7 @@ image = (
 app = modal.App("workdaemon-backend")
 
 # bump to bust Modal's local-source mount cache on redeploy
-_SRC_REV = "2026-06-01.3"
+_SRC_REV = "2026-06-01.4"
 
 
 @app.function(
