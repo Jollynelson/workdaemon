@@ -31,6 +31,9 @@ image = (
 
 app = modal.App("workdaemon-backend")
 
+# bump to bust Modal's local-source mount cache on redeploy
+_SRC_REV = "2026-06-01.2"
+
 
 @app.function(
     image=image,

@@ -110,6 +110,11 @@ def redis_publisher() -> Publisher:
 
     class _RedisPub:
         def publish(self, channel: str, message: str) -> None:
-            client.publish(channel, message)
+            # Redis is the real-time fan-out only; the feed already persists to DB.
+            # A Redis outage must never break the request that emitted the event.
+            try:
+                client.publish(channel, message)
+            except Exception:
+                pass
 
     return _RedisPub()

@@ -25,7 +25,9 @@ def local_embedder() -> Any:
 
     class _LocalEmbedder:
         def embed(self, text: str) -> list[float]:
-            return list(next(model.embed([text])))
+            # fastembed yields numpy float32; coerce to plain floats so the vector
+            # is JSON-serializable for the pgvector RPC.
+            return [float(x) for x in next(model.embed([text]))]
 
     return _LocalEmbedder()
 
@@ -66,16 +68,26 @@ def pgvector_store() -> Any:
 
     class _PgVectorStore:
         def upsert(self, namespace: str, text: str, vector: list[float], metadata: dict) -> None:
-            client.table("memory_chunks").insert(
-                {"namespace": namespace, "content": text, "embedding": vector,
-                 "metadata": metadata}
-            ).execute()
+            try:
+                client.table("memory_chunks").insert(
+                    {"namespace": namespace, "content": text, "embedding": vector,
+                     "metadata": metadata}
+                ).execute()
+            except Exception:
+                # memory_chunks table not provisioned yet — ingestion degrades to
+                # no-store rather than crashing.
+                pass
 
         def search(self, namespace: str, vector: list[float], top_k: int) -> list[Chunk]:
-            resp = client.rpc(
-                "match_memory",
-                {"p_namespace": namespace, "query_embedding": vector, "match_count": top_k},
-            ).execute()
+            # Best-effort: if the match_memory RPC / table isn't provisioned, return
+            # no context rather than crashing the chat/hunt path.
+            try:
+                resp = client.rpc(
+                    "match_memory",
+                    {"p_namespace": namespace, "query_embedding": vector, "match_count": top_k},
+                ).execute()
+            except Exception:
+                return []
             rows = getattr(resp, "data", None) or []
             return [Chunk(text=r["content"], metadata=r.get("metadata", {}),
                           score=r.get("similarity", 0.0)) for r in rows]

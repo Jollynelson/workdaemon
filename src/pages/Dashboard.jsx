@@ -130,6 +130,16 @@ function useFetch(url, token) {
   return { data, loading, error };
 }
 
+// Fetch from the new Brain backend (VITE_BRAIN_API_URL) when configured, else the
+// legacy same-origin path. `adapt` maps the backend shape to what the UI expects.
+function useBrainFetch({ brainPath, legacyPath, adapt }, token) {
+  const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
+  const url = brainUrl ? `${brainUrl}${brainPath}` : legacyPath;
+  const { data, loading, error } = useFetch(url, token);
+  const mapped = brainUrl && data && adapt ? adapt(data) : data;
+  return { data: mapped, loading, error };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED UI
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1761,7 +1771,23 @@ function TasksPage() {
   const c = useC();
   const { isMobile } = useViewport();
   const { token } = useAuth();
-  const { data, loading, error } = useFetch('/api/tasks', token);
+  const { data, loading, error } = useBrainFetch({
+    brainPath: '/api/tasks',
+    legacyPath: '/api/tasks',
+    adapt: (d) => {
+      const cols = { todo: [], inProgress: [], review: [], done: [] };
+      const bucket = { pending: 'todo', delivered: 'todo', accepted: 'inProgress',
+        in_progress: 'inProgress', flagged: 'review', handed_off: 'review',
+        completed: 'done', blocked: 'review' };
+      for (const t of (d.tasks || [])) {
+        const col = bucket[t.status] || 'todo';
+        cols[col].push({ title: t.title, priority: t.priority?.toUpperCase?.() || 'P2',
+          tag: t.brief ? `#${(t.brief || '').slice(0, 18)}` : undefined,
+          blocked: t.status === 'blocked' || t.status === 'flagged' });
+      }
+      return { columns: cols, sprint: { label: 'CROSS-AGENT TASKS' } };
+    },
+  }, token);
 
   const columns = data?.columns || { todo: [], inProgress: [], review: [], done: [] };
   const total   = Object.values(columns).reduce((s, a) => s + a.length, 0);
@@ -1832,7 +1858,23 @@ function InboxPage() {
   const c = useC();
   const { isMobile } = useViewport();
   const { token } = useAuth();
-  const { data, loading, error } = useFetch('/api/inbox', token);
+  const { data, loading, error } = useBrainFetch({
+    brainPath: '/api/pushes',
+    legacyPath: '/api/inbox',
+    adapt: (d) => ({
+      items: (d.pushes || []).map((p) => ({
+        id: p.id,
+        title: { task_assignment: 'New task assigned', hunt_finding: 'Brain alert',
+          pattern: 'Pattern detected', brain_insight: 'Brain insight' }[p.kind] || 'Brain',
+        body: p.message || p.recommended_action || '',
+        source: 'Daemon',
+        level: p.kind === 'hunt_finding' ? 'warning' : undefined,
+        unread: !p.read_at,
+        time: p.created_at ? new Date(p.created_at).toLocaleString() : '',
+        icon: 'WD',
+      })),
+    }),
+  }, token);
   const [filter, setFilter] = useState('all');
 
   const FILTERS = [
