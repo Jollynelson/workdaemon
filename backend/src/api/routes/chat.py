@@ -1,32 +1,30 @@
 """Chat route — the single entry point for staff↔agent messages.
 
-Every message flows through here → ChatService → Brain visibility. Auth is left
-to the caller's middleware (the existing WorkDaemon JWT layer); this route trusts
-the resolved company_id + staff_id.
+Identity is derived server-side from the Supabase token (auth.resolve_identity),
+so a caller can only chat as themselves, within their own company.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from src.api.auth import Identity, resolve_identity
 from src.api.deps import chat_service
 
 router = APIRouter()
 
 
 class ChatRequest(BaseModel):
-    company_id: str
-    staff_id: str
     message: str
     history: list[dict] = []
 
 
 @router.post("/chat")
-def chat(body: ChatRequest):
+def chat(body: ChatRequest, ident: Identity = Depends(resolve_identity)):
     try:
-        svc = chat_service(body.company_id)
-        reply = svc.handle_turn(body.staff_id, body.message, body.history)
+        svc = chat_service(ident.company_id)
+        reply = svc.handle_turn(ident.staff_id, body.message, body.history)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {
