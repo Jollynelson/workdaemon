@@ -20,6 +20,25 @@ ROLE_TOOLS: dict[str, list[str]] = {
 
 VALID_LEVELS = frozenset(ROLE_TOOLS)
 
+# Concrete tool-name prefix → permission family. Drive + Calendar both ride the
+# "google_drive" permission. Anything not listed maps to its own prefix.
+_TOOL_PERMISSION = {
+    "notion": "notion",
+    "slack": "slack",
+    "gdrive": "google_drive",
+    "gcal": "google_drive",
+    "crm": "crm",
+    "finance": "finance",
+    "hr": "hr",
+    "project": "project",
+}
+
+
+def permission_for(tool: str) -> str:
+    """Map a concrete tool name (e.g. 'gdrive_search') to its permission family."""
+    prefix = tool.split("_")[0]
+    return _TOOL_PERMISSION.get(prefix, prefix)
+
 
 def tools_for(access_level: str) -> list[str]:
     """Permitted tools for an access level. Unknown levels get the safest set."""
@@ -27,4 +46,7 @@ def tools_for(access_level: str) -> list[str]:
 
 
 def can_use(access_level: str, tool: str) -> bool:
-    return tool in ROLE_TOOLS.get(access_level, ())
+    """True if the role may use this tool. Accepts either a permission family
+    ('google_drive') or a concrete tool name ('gdrive_search')."""
+    allowed = ROLE_TOOLS.get(access_level, ())
+    return tool in allowed or permission_for(tool) in allowed

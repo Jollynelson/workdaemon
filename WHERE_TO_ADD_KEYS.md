@@ -15,12 +15,23 @@ NOTION_CLIENT_ID=
 NOTION_CLIENT_SECRET=
 
 # Slack → https://api.slack.com/apps  (create app → OAuth & Permissions;
-#   bot scopes: channels:history, chat:write, search:read)
+#   bot scopes: channels:history, channels:read, chat:write, search:read, users:read)
 SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
 
+# Google (Drive + Calendar share ONE app) → https://console.cloud.google.com/apis/credentials
+#   enable: Google Drive API + Google Calendar API
+#   scopes: drive.readonly, calendar.readonly, userinfo.email
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_SCOPES=drive.readonly,calendar.readonly,userinfo.email
+
 OAUTH_REDIRECT_BASE=https://nelsonanyanime--workdaemon-backend-fastapi-app.modal.run
 ```
+
+Providers wired: **notion, slack, gdrive, gcal** (connect via
+`POST /api/integrations/connect`, `provider` = one of those + the company's token;
+Drive + Calendar both use the Google token and ride the `google_drive` permission).
 
 NOTE: today a company can connect immediately by pasting a **Notion internal
 integration token** or **Slack bot token** via POST /api/integrations/connect —

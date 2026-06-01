@@ -25,6 +25,14 @@ def _connector_for(provider: str, token: str, metadata: dict) -> Any:
         from src.ingestion.slack_connector import SlackConnector
 
         return SlackConnector(token, channels=metadata.get("channels"))
+    if provider == "gdrive":
+        from src.ingestion.google_connectors import GoogleDriveConnector
+
+        return GoogleDriveConnector(token)
+    if provider == "gcal":
+        from src.ingestion.google_connectors import GoogleCalendarConnector
+
+        return GoogleCalendarConnector(token)
     raise ValueError(f"no connector for provider '{provider}'")
 
 

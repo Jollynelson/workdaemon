@@ -92,28 +92,56 @@ def _slack_handlers(token: str, autonomy: bool) -> dict[str, Callable[[dict], An
             "slack_post_message": post_message}
 
 
-# tool-name → which integration provider supplies it
+# Google Drive + Calendar (read-only) — share one Google OAuth token.
+def _gdrive_handlers(token: str, autonomy: bool) -> dict[str, Callable[[dict], Any]]:
+    from src.ingestion.google_connectors import GoogleDriveConnector
+
+    def search(args: dict) -> Any:
+        q = (args.get("query") or "").lower()
+        files = list(GoogleDriveConnector(token).poll())
+        hits = [f for f in files if q in (f.get("content", "") + f["metadata"].get("name", "")).lower()]
+        return [{"name": f["metadata"].get("name"), "id": f["metadata"].get("file_id")}
+                for f in (hits or files)[:10]]
+
+    return {"gdrive_search": search}
+
+
+def _gcal_handlers(token: str, autonomy: bool) -> dict[str, Callable[[dict], Any]]:
+    from src.ingestion.google_connectors import GoogleCalendarConnector
+
+    def upcoming(args: dict) -> Any:
+        events = list(GoogleCalendarConnector(token).poll())
+        return [{"summary": e.get("content"), "start": e["metadata"].get("start")}
+                for e in events[: args.get("limit", 10)]]
+
+    return {"gcal_upcoming": upcoming}
+
+
+# provider key → (role-permission key, handler builder)
+# The role-permission key is what tool_permissions.can_use checks (Drive + Calendar
+# both ride the "google_drive" permission).
 _PROVIDER_TOOLS = {
     "notion": ("notion", _notion_handlers),
     "slack": ("slack", _slack_handlers),
+    "gdrive": ("google_drive", _gdrive_handlers),
+    "gcal": ("google_drive", _gcal_handlers),
 }
 
 
 def register_company_tools(executor, company_id: str, autonomy: bool = False, store=None) -> None:
     """Register real handlers on the executor for whatever this company has connected
     AND the staff member is permitted to use. Permission is enforced by the executor;
-    here we only wire handlers for connected + available providers. `store` is
+    here we only wire handlers for connected + permitted providers. `store` is
     injectable for tests."""
     store = store or IntegrationStore(CompanyDB(company_id))
-    for provider, (_, build) in _PROVIDER_TOOLS.items():
+    for provider, (perm_key, build) in _PROVIDER_TOOLS.items():
         integ = store.get(provider)
         if integ is None or not integ.access_token:
             continue
+        if not _allowed(executor, perm_key):   # role must permit this provider
+            continue
         for tool_name, fn in build(integ.access_token, autonomy).items():
-            # only register if the permission map allows this tool family for the role
-            base = tool_name.split("_")[0]   # notion_search -> notion
-            if _allowed(executor, base):
-                executor.register(tool_name, fn)
+            executor.register(tool_name, fn)
 
 
 def _allowed(executor, tool: str) -> bool:

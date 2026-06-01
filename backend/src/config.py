@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     notion_client_secret: str = Field(default="", validation_alias="NOTION_CLIENT_SECRET")
     slack_client_id: str = Field(default="", validation_alias="SLACK_CLIENT_ID")
     slack_client_secret: str = Field(default="", validation_alias="SLACK_CLIENT_SECRET")
+    # Google Drive + Calendar share ONE OAuth app.
+    google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", validation_alias="GOOGLE_CLIENT_SECRET")
+    google_scopes: str = Field(
+        default="drive.readonly,calendar.readonly,userinfo.email",
+        validation_alias="GOOGLE_SCOPES",
+    )
     oauth_redirect_base: str = Field(default="", validation_alias="OAUTH_REDIRECT_BASE")
 
     # ── Security ───────────────────────────────────────────────────────────────
