@@ -41,6 +41,7 @@ class ChatService:
         coordinator: Any | None = None,      # CrossAgentCoordinator (optional)
         pending_tasks_fn: Any | None = None,  # (staff_id) -> list[dict]
         build_model: Any | None = None,      # (system_prompt, fallback) -> AgentModel
+        recent_activity_fn: Any | None = None,  # () -> list[dict] (activity events)
     ) -> None:
         self._factory = factory
         self._model = model
@@ -52,20 +53,35 @@ class ChatService:
         # Hybrid: per-turn model selection (e.g. company's own model when it has
         # an adapter). Defaults to the fixed model — backward compatible.
         self._build_model = build_model
+        # Recent activity-feed events for the [SESSION_START] catch-up briefing.
+        self._recent_activity = recent_activity_fn or (lambda: [])
 
     def handle_turn(self, staff_id: str, message: str, history: list[dict] | None = None) -> ChatReply:
         history = history or []
         profile, system_prompt = self._factory.load_for_conversation(staff_id)
+        is_session_start = message.strip() == "[SESSION_START]"
 
         # Inject pending task deliveries into the system prompt.
         pending = self._pending_tasks(staff_id)
         if pending:
             system_prompt += "\n\n## Pending tasks assigned to you\n" + _format_tasks(pending)
 
+        # Catch-up briefing: enrich the boot greeting with real recent activity so
+        # the session-start screen is a useful digest the user reads while the GPU warms.
+        if is_session_start:
+            digest = _format_activity(self._recent_activity())
+            if digest:
+                system_prompt += "\n\n## Recent activity (for your catch-up briefing)\n" + digest
+
         executor: ToolExecutor = self._build_executor(profile.access_level)
         # Pick the model for this turn: the company's own trained model (hybrid)
-        # if build_model is provided, else the fixed default model.
-        model = self._build_model(system_prompt, self._model) if self._build_model else self._model
+        # if build_model is provided, else the fixed default model. The catch-up
+        # greeting always uses the fast hosted model directly — never routed to a
+        # cold company GPU, so [SESSION_START] is always instant.
+        if is_session_start or not self._build_model:
+            model = self._model
+        else:
+            model = self._build_model(system_prompt, self._model)
         result = run_turn(model, executor, system_prompt, history, message)
 
         # ── post_interaction: log + feed + cross-agent routing ──
@@ -116,3 +132,13 @@ class ChatService:
 def _format_tasks(tasks: list[dict]) -> str:
     return "\n".join(f"- [{t.get('priority','normal')}] {t.get('title')}: {t.get('brief','')}"
                      for t in tasks)
+
+
+def _format_activity(events: list[dict]) -> str:
+    """One line per recent activity event for the catch-up digest."""
+    lines = []
+    for e in events:
+        payload = e.get("payload") or {}
+        summary = payload.get("user_message") or payload.get("tool") or payload.get("title") or ""
+        lines.append(f"- {e.get('event_type', 'event')}: {str(summary)[:160]}")
+    return "\n".join(lines)

@@ -157,6 +157,7 @@ class HermesServer:
         import logging
 
         from src.config import settings
+        from src.serving.warm_state import mark_warm
         log = logging.getLogger("HermesServer")
         _ensure_ollama(settings.ollama_base_url)
         limit = int(os.environ.get("WARM_PRELOAD_LIMIT", "4"))
@@ -165,11 +166,28 @@ class HermesServer:
                 try:
                     _ensure_model_loaded(cid, ver)
                     _warm_inference(cid)  # into VRAM + pinned
+                    mark_warm(cid)        # heartbeat: readiness gate sees it as warm
                     log.info("preloaded model company=%s v%s", cid, ver)
                 except Exception as exc:
                     log.warning("preload failed company=%s: %s", cid, exc)
         except Exception as exc:
             log.warning("preload listing failed: %s", exc)
+
+    @modal.method()
+    def warm(self, company_id: str, model_version: int | None = None) -> dict:
+        """Boot this company's model into VRAM and record the heartbeat.
+
+        Called via .spawn() from /api/serve/warm — runs in a background container
+        so the caller returns instantly while the GPU cold-starts. Subsequent
+        readiness probes read the heartbeat (not the GPU) and route to Hermes."""
+        from src.config import settings
+        from src.serving.warm_state import mark_warm
+
+        _ensure_ollama(settings.ollama_base_url)
+        _ensure_model_loaded(company_id, model_version)
+        _warm_inference(company_id)
+        mark_warm(company_id)
+        return {"warmed": True, "company_id": company_id}
 
     @modal.method()
     def chat_completion(
@@ -208,6 +226,11 @@ class HermesServer:
         )
         resp.raise_for_status()
         content = resp.json()["message"]["content"]
+
+        # Live traffic keeps the readiness heartbeat fresh (so the gate stays "warm").
+        from src.serving.warm_state import mark_warm
+        mark_warm(company_id)
+
         return {
             "content": content,
             "tool_calls": _parse_tool_calls(content),
@@ -290,10 +313,13 @@ def fastapi_app():
     # Inject the GPU serving function so router.chat serves the real per-company
     # model (modal_bridge avoids a cross-module `import modal`, which would hit
     # the local `modal/` package shadow).
-    from src.serving.modal_bridge import set_gpu_serving
+    from src.serving.modal_bridge import set_gpu_serving, set_gpu_warm
 
-    # Bind the warm GPU class method; router.chat calls .remote() on it.
-    set_gpu_serving(HermesServer().chat_completion)
+    # Bind the warm GPU class methods; router.chat calls .remote() on chat_completion,
+    # and /api/serve/warm calls .spawn() on warm to boot a cold container in the bg.
+    server = HermesServer()
+    set_gpu_serving(server.chat_completion)
+    set_gpu_warm(server.warm)
 
     from src.api.main import app as fastapi
 

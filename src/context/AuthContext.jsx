@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { brainApi } from '../lib/brainApi';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -48,6 +49,8 @@ export function AuthProvider({ children }) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
         storeSession(session.access_token);
+        // Prewarm the company GPU model the moment we have a session (non-blocking).
+        brainApi.warm({ token: session.access_token }).catch(() => {});
         await fetchProfile(session.access_token);
         setLoading(false);
         return;
@@ -67,6 +70,8 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.access_token) {
         storeSession(session.access_token);
+        // Prewarm the company GPU model on sign-in (non-blocking).
+        brainApi.warm({ token: session.access_token }).catch(() => {});
         await fetchProfile(session.access_token);
       }
       if (event === 'SIGNED_OUT') clearSession();
