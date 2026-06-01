@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     hermes_port_range_start: int = Field(default=8700, validation_alias="HERMES_PORT_RANGE_START")
     hermes_encryption_key: str = Field(default="", validation_alias="HERMES_ENCRYPTION_KEY")
 
+    # ── Per-company trained brain (hybrid) ───────────────────────────────────────
+    # When a company has a deployed wd-{company_id} adapter, agent chat routes to
+    # its own fine-tuned model via the workdaemon-serving endpoint; else DeepSeek.
+    serving_url: str = Field(default="", validation_alias="SERVING_URL")
+    serve_master_secret: str = Field(default="", validation_alias="SERVE_MASTER_SECRET")
+
     # ── Data ───────────────────────────────────────────────────────────────────
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
     supabase_url: str = Field(default="", validation_alias="NEXT_PUBLIC_SUPABASE_URL")

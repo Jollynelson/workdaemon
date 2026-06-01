@@ -56,6 +56,18 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
     ctx = brain_context(company_id, company_name)
     context_for_role = ctx.get_role_context if ctx else None
     factory = AgentFactory(db, company_name, context_for_role=context_for_role)
+
+    # Hybrid brain: if this company has a deployed wd-{company_id} adapter, route
+    # agent chat to its OWN trained model (DeepSeek as fallback); else DeepSeek.
+    from src.agents.company_model import CompanyModel, has_deployed_adapter
+
+    use_company_model = bool(settings.serving_url) and has_deployed_adapter(company_id, db)
+
+    def build_model(system_prompt: str, fallback):
+        if use_company_model:
+            return CompanyModel(company_id, system_prompt, fallback)
+        return fallback
+
     return ChatService(
         factory=factory,
         model=agent_model(),
@@ -63,6 +75,7 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
         logger=InteractionLogger(db),
         build_executor=build_executor,
         pending_tasks_fn=lambda sid: PushInbox(db).pending_for(sid),
+        build_model=build_model,
     )
 
 

@@ -40,6 +40,7 @@ class ChatService:
         build_executor: Any,                 # (access_level) -> ToolExecutor
         coordinator: Any | None = None,      # CrossAgentCoordinator (optional)
         pending_tasks_fn: Any | None = None,  # (staff_id) -> list[dict]
+        build_model: Any | None = None,      # (system_prompt, fallback) -> AgentModel
     ) -> None:
         self._factory = factory
         self._model = model
@@ -48,6 +49,9 @@ class ChatService:
         self._build_executor = build_executor
         self._coordinator = coordinator
         self._pending_tasks = pending_tasks_fn or (lambda sid: [])
+        # Hybrid: per-turn model selection (e.g. company's own model when it has
+        # an adapter). Defaults to the fixed model — backward compatible.
+        self._build_model = build_model
 
     def handle_turn(self, staff_id: str, message: str, history: list[dict] | None = None) -> ChatReply:
         history = history or []
@@ -59,7 +63,10 @@ class ChatService:
             system_prompt += "\n\n## Pending tasks assigned to you\n" + _format_tasks(pending)
 
         executor: ToolExecutor = self._build_executor(profile.access_level)
-        result = run_turn(self._model, executor, system_prompt, history, message)
+        # Pick the model for this turn: the company's own trained model (hybrid)
+        # if build_model is provided, else the fixed default model.
+        model = self._build_model(system_prompt, self._model) if self._build_model else self._model
+        result = run_turn(model, executor, system_prompt, history, message)
 
         # ── post_interaction: log + feed + cross-agent routing ──
         interaction = self._logger.log(
