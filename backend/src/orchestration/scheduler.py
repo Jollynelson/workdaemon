@@ -17,6 +17,7 @@ SCHEDULE = {
     "nightly_deep_pass": {"cron": "0 2 * * *"},     # 02:00 daily
     "hourly_patterns": {"cron": "0 * * * *"},        # top of every hour
     "intraday_hunts": {"cron": "0 */1 * * *"},       # hourly; job self-filters fast modes
+    "training_cycle": {"cron": "0 3 */2 * *"},       # every 2 days at 03:00 — per-company retrain
 }
 
 
@@ -32,10 +33,18 @@ def tick_hunts() -> list[dict]:
     return jobs.fan_out(jobs.intraday_hunts)
 
 
+def tick_training() -> list[dict]:
+    # Train every company that has accumulated enough new interaction signals.
+    from src.orchestration.training_loop import run_training_cycle
+
+    return run_training_cycle()
+
+
 TICKS = {
     "nightly_deep_pass": tick_nightly,
     "hourly_patterns": tick_patterns,
     "intraday_hunts": tick_hunts,
+    "training_cycle": tick_training,
 }
 
 

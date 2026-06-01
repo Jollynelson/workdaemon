@@ -111,3 +111,36 @@ def run_training(company_id: str, dataset_jsonl: str, version: int) -> dict:
         "hf_revision": hf_revision,
         "num_examples": num_examples,
     }
+
+
+# ── CPU orchestrator: the learning-loop entrypoint the backend triggers ─────────
+# Lightweight image (no GPU/torch/unsloth) — run_company builds the dataset, calls
+# the GPU run_training above via .remote(), runs the quality gate, and deploys the
+# adapter. The backend enqueues this per company via Modal lookup (.spawn).
+orchestrator_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "supabase>=2.4.0", "huggingface_hub>=0.22.0", "httpx>=0.27.0",
+        "pydantic-settings>=2.2.0", "python-dotenv>=1.0.0", "anthropic>=0.25.0",
+    )
+    .add_local_python_source("src")
+)
+
+
+@app.function(
+    image=orchestrator_image,
+    timeout=60 * 60 * 4,   # covers the full build→train→gate→deploy cycle
+    secrets=[modal.Secret.from_name("workdaemon-secrets")],
+)
+def run_company_remote(company_id: str) -> dict:
+    """Run the full per-company fine-tune cycle (dataset → train → gate → deploy).
+
+    One call = one company (isolation). Safe to .spawn() fire-and-forget from the
+    backend's 48h training loop. run_company internally guards on
+    MIN_EXAMPLES_TO_TRAIN and the quality gate, so calling it for a company with
+    too little data or a worse-scoring adapter is a no-op.
+    """
+    from src.orchestration.run_company import run_company
+
+    run_company(company_id)
+    return {"company_id": company_id, "status": "done"}
