@@ -137,10 +137,13 @@ def _deployed_companies(limit: int = 4) -> list[tuple[str, int]]:
     image=image,
     gpu="T4",
     timeout=60 * 5,        # 5min per request (long agentic chains)
-    min_containers=1,       # warm pool: keep one GPU container hot. NOTE: a warm
-                            # T4 bills 24/7 — drop to 0 (relies on scaledown_window)
-                            # or run a business-hours schedule to cut idle cost.
-    scaledown_window=600,   # if min_containers is set to 0, stay warm 10min idle
+    min_containers=0,       # scale to ZERO when idle — no GPU bill with no traffic.
+                            # First request after idle pays a cold start (~1-2 min);
+                            # scaledown_window keeps it warm 10 min after activity, so
+                            # active chat stays fast. Flip to 1 (or a business-hours
+                            # cron) only once a company has steady live traffic.
+    scaledown_window=600,   # stay warm 10 min after the last request
+    max_containers=4,       # autoscale up to 4 GPUs under concurrent load, then queue
     volumes={"/models": model_volume},
     secrets=[modal.Secret.from_name("workdaemon-secrets")],
 )
