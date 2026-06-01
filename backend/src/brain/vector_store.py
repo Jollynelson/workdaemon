@@ -13,7 +13,25 @@ from src.brain.memory import Chunk
 from src.config import settings
 
 
+def local_embedder() -> Any:
+    """Free, in-process embeddings via fastembed (ONNX, no API, no key, no bill).
+
+    Default. Downloads a small model once (~50MB) and runs on CPU. Satisfies the
+    Embedder protocol in memory.py.
+    """
+    from fastembed import TextEmbedding
+
+    model = TextEmbedding(model_name=settings.local_embedding_model)
+
+    class _LocalEmbedder:
+        def embed(self, text: str) -> list[float]:
+            return list(next(model.embed([text])))
+
+    return _LocalEmbedder()
+
+
 def openai_embedder() -> Any:
+    """Optional: OpenAI text-embedding-3-small. Only used if EMBEDDING_PROVIDER=openai."""
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -25,6 +43,13 @@ def openai_embedder() -> Any:
             return resp.data[0].embedding
 
     return _OpenAIEmbedder()
+
+
+def default_embedder() -> Any:
+    """Pick the embedder per config — free local by default."""
+    if settings.embedding_provider == "openai" and settings.openai_api_key:
+        return openai_embedder()
+    return local_embedder()
 
 
 def pgvector_store() -> Any:

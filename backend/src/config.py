@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     vector_backend: str = Field(default="pgvector", validation_alias="VECTOR_BACKEND")
 
     # ── Embeddings ─────────────────────────────────────────────────────────────
+    # DeepSeek has no embeddings endpoint, so RAG retrieval needs a separate
+    # embedder. Default to a FREE local model (fastembed, runs in-process, no API,
+    # no key, no extra bill). Set embedding_provider="openai" only if you'd rather
+    # use OpenAI text-embedding-3-small.
+    embedding_provider: str = Field(default="local", validation_alias="EMBEDDING_PROVIDER")
+    local_embedding_model: str = Field(
+        default="BAAI/bge-small-en-v1.5", validation_alias="LOCAL_EMBEDDING_MODEL"
+    )
     openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
     embedding_model: str = Field(
         default="text-embedding-3-small", validation_alias="EMBEDDING_MODEL"

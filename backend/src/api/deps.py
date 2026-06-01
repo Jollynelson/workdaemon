@@ -37,15 +37,14 @@ def build_executor(access_level: str) -> ToolExecutor:
 
 
 def brain_context(company_id: str, company_name: str):
-    """RAG context, or None if embeddings/vector store aren't configured (dev)."""
-    if not settings.openai_api_key:
-        return None
+    """RAG context. Uses the free local embedder by default (no OpenAI). Returns
+    None only if the vector store / embedder can't initialize (degrades to no-RAG)."""
     try:
         from src.brain.context import BrainContext
         from src.brain.memory import MemoryManager
-        from src.brain.vector_store import openai_embedder, pgvector_store
+        from src.brain.vector_store import default_embedder, pgvector_store
 
-        mem = MemoryManager(company_id, openai_embedder(), pgvector_store())
+        mem = MemoryManager(company_id, default_embedder(), pgvector_store())
         return BrainContext(company_id, company_name, mem)
     except Exception:
         return None
