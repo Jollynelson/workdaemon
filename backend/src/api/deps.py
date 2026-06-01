@@ -31,9 +31,23 @@ def agent_model() -> DeepSeekAgentModel:
 
 
 def build_executor(access_level: str) -> ToolExecutor:
-    # MCP tool handlers are registered here as connectors land (Notion/Slack/...).
-    # For now the executor enforces permissions and reports tools as not_configured.
+    # Bare executor (permission-enforcing). Company-scoped tool handlers are wired
+    # by make_executor_builder() which captures the company_id.
     return ToolExecutor(access_level)
+
+
+def make_executor_builder(company_id: str, autonomy: bool = False):
+    """Return a (access_level) -> ToolExecutor that registers this company's REAL
+    connected tools (Notion/Slack with the company's own encrypted token)."""
+    def _build(access_level: str) -> ToolExecutor:
+        ex = ToolExecutor(access_level)
+        try:
+            from src.integrations.tools import register_company_tools
+            register_company_tools(ex, company_id, autonomy=autonomy)
+        except Exception:
+            pass  # no tools connected / integration error → executor still works
+        return ex
+    return _build
 
 
 def brain_context(company_id: str, company_name: str):
@@ -73,7 +87,7 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
         model=agent_model(),
         feed=feed,
         logger=InteractionLogger(db),
-        build_executor=build_executor,
+        build_executor=make_executor_builder(company_id),
         pending_tasks_fn=lambda sid: PushInbox(db).pending_for(sid),
         build_model=build_model,
     )

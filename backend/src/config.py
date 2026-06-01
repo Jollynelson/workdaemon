@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
     twilio_account_sid: str = Field(default="", validation_alias="TWILIO_ACCOUNT_SID")
 
+    # ── Tool OAuth apps (YOURS — one registration per provider, global) ──────────
+    # These identify the WorkDaemon *app* to Notion/Slack so it can ASK each company
+    # for access. They are NOT access to anyone's data. Each company's own token is
+    # obtained at connect-time and stored encrypted per company_id.
+    notion_client_id: str = Field(default="", validation_alias="NOTION_CLIENT_ID")
+    notion_client_secret: str = Field(default="", validation_alias="NOTION_CLIENT_SECRET")
+    slack_client_id: str = Field(default="", validation_alias="SLACK_CLIENT_ID")
+    slack_client_secret: str = Field(default="", validation_alias="SLACK_CLIENT_SECRET")
+    oauth_redirect_base: str = Field(default="", validation_alias="OAUTH_REDIRECT_BASE")
+
     # ── Security ───────────────────────────────────────────────────────────────
     jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
     encryption_key: str = Field(default="", validation_alias="ENCRYPTION_KEY")
