@@ -85,7 +85,23 @@ def main() -> int:
         pend = push.pending_for(staff["id"])
         print(f"    pushes generated: {len(pend)}")
 
-        print("\n✅ DRY RUN PASSED — live Supabase + DeepSeek end-to-end works.")
+        # 5. ISOLATION GATE (live): a second company must see none of company A's data
+        slug_b = f"dryrun-{uuid.uuid4().hex[:8]}"
+        comp_b = sb.table("companies").insert({"name": "DryRun B", "slug": slug_b}).execute().data[0]
+        cid_b = comp_b["id"]
+        try:
+            db_b = CompanyDB(cid_b, client=sb)
+            leaked_findings = db_b.get("hunt_findings", res.findings[0]["id"]) if res.findings else None
+            b_tasks = db_b.select("tasks").execute().data
+            b_pushes = db_b.select("pushes").execute().data
+            assert leaked_findings is None, "ISOLATION FAIL: B read A's finding"
+            assert b_tasks == [], "ISOLATION FAIL: B sees tasks"
+            assert b_pushes == [], "ISOLATION FAIL: B sees pushes"
+            print(f"[5] isolation gate: company B ({cid_b[:8]}) sees 0 of A's findings/tasks/pushes ✓")
+        finally:
+            sb.table("companies").delete().eq("id", cid_b).execute()
+
+        print("\n✅ DRY RUN PASSED — live Supabase + DeepSeek end-to-end + isolation gate.")
         return 0
     finally:
         # cleanup (cascades to staff/agent_profiles/interactions/etc.)
