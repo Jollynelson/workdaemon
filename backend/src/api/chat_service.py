@@ -34,13 +34,13 @@ class ChatReply:
 _SESSION_START_NOTE = """
 
 ## Session start (fresh session)
-Open with a `boot` block, then a one-line welcome to the user, then 1-2 catch-up blocks from recent activity. End with 3 suggestions.
+Open with a `boot` block, then a welcome to the user written in YOUR personality/voice (make it interesting and memorable — this is their first impression of you), then 1-2 catch-up blocks from recent activity. End with 3 suggestions.
 boot shape: {"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"<name> · <role>"},{"label":"Company Brain","status":"ok","detail":"<company> · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL <n>"},{"label":"Memory","status":"ok","detail":"Learning your patterns"}]}"""
 
 _SESSION_RESUME_NOTE = """
 
 ## Returning session
-The user is RESUMING an existing conversation — their prior messages are in the history above. Do NOT show a boot sequence and do NOT re-introduce yourself. Give a brief 1-2 sentence "welcome back" that nods to continuity, then surface ONLY what is NEW since last time (pending tasks, recent activity). 2-3 blocks max. End with 3 suggestions."""
+The user is RESUMING an existing conversation — their prior messages are in the history above. Do NOT show a boot sequence and do NOT re-introduce yourself. Give a brief 1-2 sentence "welcome back" in YOUR personality/voice that nods to continuity, then surface ONLY what is NEW since last time (pending tasks, recent activity). 2-3 blocks max. End with 3 suggestions."""
 
 
 class ChatService:
@@ -55,6 +55,7 @@ class ChatService:
         pending_tasks_fn: Any | None = None,  # (staff_id) -> list[dict]
         build_model: Any | None = None,      # (system_prompt, fallback) -> AgentModel
         recent_activity_fn: Any | None = None,  # () -> list[dict] (activity events)
+        daemon_editor: Any | None = None,    # (staff_id, patch: dict) -> dict
     ) -> None:
         self._factory = factory
         self._model = model
@@ -68,6 +69,8 @@ class ChatService:
         self._build_model = build_model
         # Recent activity-feed events for the [SESSION_START] catch-up briefing.
         self._recent_activity = recent_activity_fn or (lambda: [])
+        # Lets the daemon edit its own name/persona when the user asks in chat.
+        self._daemon_editor = daemon_editor
 
     def handle_turn(self, staff_id: str, message: str, history: list[dict] | None = None) -> ChatReply:
         history = history or []
@@ -92,6 +95,13 @@ class ChatService:
             system_prompt += _SESSION_START_NOTE if is_session_start else _SESSION_RESUME_NOTE
 
         executor: ToolExecutor = self._build_executor(profile.access_level)
+        # Self-management: let the daemon persist a name/persona change the user
+        # asks for in chat (bound to this staff member).
+        if self._daemon_editor is not None:
+            executor.register(
+                "update_daemon",
+                lambda args, sid=staff_id: self._daemon_editor(sid, args),
+            )
         # Pick the model for this turn: the company's own trained model (hybrid)
         # if build_model is provided, else the fixed default model. The catch-up
         # greeting always uses the fast hosted model directly — never routed to a

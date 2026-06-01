@@ -96,7 +96,32 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
         pending_tasks_fn=lambda sid: PushInbox(db).pending_for(sid),
         build_model=build_model,
         recent_activity_fn=recent_activity,
+        daemon_editor=lambda sid, patch: update_daemon(db, sid, patch),
     )
+
+
+_DAEMON_FIELDS = ("daemon_name", "preferred_name", "persona")
+
+
+def update_daemon(db: CompanyDB, staff_id: str, patch: dict) -> dict:
+    """Persist a daemon name/persona change for one staff member. Whitelisted fields
+    only; `persona_append` concatenates onto the existing persona. Returns the saved
+    {daemon_name, preferred_name, persona} so the model can confirm accurately. Shared
+    by the chat `update_daemon` tool and the PATCH /api/daemon route."""
+    prow = db.select("agent_profiles").eq("staff_id", staff_id).limit(1).execute()
+    rows = getattr(prow, "data", None) or []
+    if not rows:
+        return {"error": "no_profile"}
+    row = rows[0]
+    update: dict = {f: patch[f] for f in _DAEMON_FIELDS if isinstance(patch.get(f), str) and patch[f].strip()}
+    append = patch.get("persona_append")
+    if isinstance(append, str) and append.strip() and "persona" not in update:
+        existing = (row.get("persona") or "").strip()
+        update["persona"] = f"{existing} {append.strip()}".strip() if existing else append.strip()
+    if not update:
+        return {"error": "nothing_to_update"}
+    db.update("agent_profiles", row["id"], update)
+    return {f: update.get(f, row.get(f)) for f in _DAEMON_FIELDS}
 
 
 def _safe_publisher():

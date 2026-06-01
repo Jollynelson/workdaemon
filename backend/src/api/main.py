@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import chat, feed, integrations, tasks, warm
+from src.api.routes import chat, daemon, feed, integrations, tasks, warm
 from src.api.websocket import router as ws_router
 
 app = FastAPI(title="WorkDaemon Backend", version="0.1.0")
@@ -26,6 +26,7 @@ app.include_router(tasks.router, prefix="/api", tags=["tasks"])
 app.include_router(feed.router, prefix="/api", tags=["feed"])
 app.include_router(integrations.router, prefix="/api", tags=["integrations"])
 app.include_router(warm.router, prefix="/api", tags=["warm"])
+app.include_router(daemon.router, prefix="/api", tags=["daemon"])
 app.include_router(ws_router, tags=["websocket"])
 
 

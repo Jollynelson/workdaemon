@@ -29,6 +29,11 @@ class AgentProfile:
     interaction_count: int = 0
     status: str = "active"
     id: str | None = None
+    # Daemon character (user-editable): the daemon's own name, what it calls the
+    # user, and a freeform persona ("soul"). None → default personality + unnamed.
+    daemon_name: str | None = None
+    preferred_name: str | None = None
+    persona: str | None = None
 
     def __post_init__(self) -> None:
         if not self.memory_ns:
@@ -50,6 +55,9 @@ class AgentProfile:
             trust_score=row.get("trust_score", 1.0),
             interaction_count=row.get("interaction_count", 0),
             status=row.get("status", "active"),
+            daemon_name=row.get("daemon_name"),
+            preferred_name=row.get("preferred_name"),
+            persona=row.get("persona"),
         )
 
     def to_row(self) -> dict:
@@ -61,4 +69,7 @@ class AgentProfile:
             "trust_score": self.trust_score,
             "interaction_count": self.interaction_count,
             "status": self.status,
+            "daemon_name": self.daemon_name,
+            "preferred_name": self.preferred_name,
+            "persona": self.persona,
         }

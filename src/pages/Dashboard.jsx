@@ -4,6 +4,7 @@ import Sidebar from '../components/layout/Sidebar.jsx';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../context/ThemeContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { brainApi } from '../lib/brainApi.js';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -2457,6 +2458,117 @@ function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
   );
 }
 
+// Quick-fill personality vibes; the textarea (freeform) is the source of truth.
+const PERSONA_PRESETS = [
+  { key: 'witty',      label: 'Sharp & witty',      text: 'Sharp and a little witty — concise, candid, with a dash of dry humour. Never fawning or robotic.' },
+  { key: 'warm',       label: 'Warm & encouraging', text: 'Warm and encouraging — supportive, positive, and personable, while still direct.' },
+  { key: 'precise',    label: 'Calm & precise',     text: 'Calm and precise — measured, exact, detail-oriented, and unflappable.' },
+  { key: 'nononsense', label: 'No-nonsense',        text: 'No-nonsense and direct — brief, blunt, zero filler. Gets straight to the point.' },
+];
+
+function DaemonSettings({ c, token }) {
+  const [daemonName, setDaemonName]       = useState('');
+  const [preferredName, setPreferredName] = useState('');
+  const [persona, setPersona]             = useState('');
+  const [loading, setLoading]             = useState(true);
+  const [saving, setSaving]               = useState(false);
+  const [saved, setSaved]                 = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    brainApi.getDaemon({ token })
+      .then(d => {
+        setDaemonName(d.daemon_name || '');
+        setPreferredName(d.preferred_name || '');
+        setPersona(d.persona || '');
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const save = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      await brainApi.updateDaemon({ token, daemonName, preferredName, persona });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {}
+    setSaving(false);
+  };
+
+  const field = {
+    width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 8,
+    background: c.bg, border: `1px solid ${c.cardBorder}`, color: c.text,
+    fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none',
+  };
+  const lbl = { fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', color: c.text3, marginBottom: 6, display: 'block' };
+
+  return (
+    <div style={{ marginTop: 44 }}>
+      <div style={{ marginBottom: 18 }}>
+        <p className="wd-label-blue" style={{ marginBottom: 6 }}>YOUR DAEMON</p>
+        <h2 style={{ fontFamily: 'var(--inter)', fontSize: 19, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.02em' }}>Name & personality</h2>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginTop: 6, lineHeight: 1.6 }}>
+          Give your daemon a name and a personality. You can also just tell it in chat —
+          “call yourself Atlas, call me Boss, and be more concise.”
+        </p>
+      </div>
+
+      <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: 20 }}>
+        {loading ? (
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, margin: 0 }}>Loading…</p>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 16 }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <label style={lbl}>DAEMON’S NAME</label>
+                <input style={field} value={daemonName} maxLength={40}
+                  onChange={e => setDaemonName(e.target.value)} placeholder="e.g. Atlas (leave blank to stay “your Daemon”)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <label style={lbl}>WHAT SHOULD IT CALL YOU?</label>
+                <input style={field} value={preferredName} maxLength={40}
+                  onChange={e => setPreferredName(e.target.value)} placeholder="e.g. Boss (defaults to your name)" />
+              </div>
+            </div>
+
+            <label style={lbl}>PERSONALITY</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+              {PERSONA_PRESETS.map(p => (
+                <button key={p.key} type="button" onClick={() => setPersona(p.text)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 999, cursor: 'pointer',
+                    fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600,
+                    background: persona === p.text ? 'rgba(65,114,245,0.14)' : c.subtle,
+                    border: `1px solid ${persona === p.text ? 'rgba(65,114,245,0.4)' : c.subtleBorder}`,
+                    color: persona === p.text ? '#4172f5' : c.text2,
+                  }}>{p.label}</button>
+              ))}
+            </div>
+            <textarea style={{ ...field, minHeight: 84, resize: 'vertical', lineHeight: 1.5 }}
+              value={persona} maxLength={1000}
+              onChange={e => setPersona(e.target.value)}
+              placeholder="Pick a vibe above, then tweak — or write your own. e.g. “Sharp and witty, but careful with numbers.”" />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+              <button type="button" onClick={save} disabled={saving}
+                style={{
+                  padding: '9px 20px', borderRadius: 8, cursor: saving ? 'default' : 'pointer',
+                  background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
+                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+                  opacity: saving ? 0.6 : 1,
+                }}>
+                {saving ? 'Saving…' : 'Save daemon'}
+              </button>
+              {saved && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: '#10b981' }}>✓ Saved — it takes effect next message.</span>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage() {
   const c = useC();
   const { token } = useAuth();
@@ -2585,6 +2697,8 @@ function SettingsPage() {
             Switching embedding providers requires re-indexing — runs as a background job.
           </p>
         </div>
+
+        <DaemonSettings c={c} token={token} />
       </div>
     </div>
   );
