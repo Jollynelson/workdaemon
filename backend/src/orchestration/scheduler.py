@@ -17,6 +17,9 @@ SCHEDULE = {
     "nightly_deep_pass": {"cron": "0 2 * * *"},     # 02:00 daily
     "hourly_patterns": {"cron": "0 * * * *"},        # top of every hour
     "intraday_hunts": {"cron": "0 */1 * * *"},       # hourly; job self-filters fast modes
+    # NOTE: the ACTIVE 48h training trigger is the Modal cron `training_cycle` in
+    # finetuning/modal_app.py (it has Modal + the training code). This entry mirrors
+    # it for completeness / manual invocation; don't wire a second live cron here.
     "training_cycle": {"cron": "0 3 */2 * *"},       # every 2 days at 03:00 — per-company retrain
 }
 

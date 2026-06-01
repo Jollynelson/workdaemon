@@ -144,3 +144,41 @@ def run_company_remote(company_id: str) -> dict:
 
     run_company(company_id)
     return {"company_id": company_id, "status": "done"}
+
+
+@app.function(
+    image=orchestrator_image,
+    timeout=60 * 30,
+    secrets=[modal.Secret.from_name("workdaemon-secrets")],
+    schedule=modal.Cron("0 3 */2 * *"),   # every 2 days at 03:00 — the learning loop
+)
+def training_cycle() -> dict:
+    """Scheduled 48h learning loop: find companies with enough new training_signals
+    and spawn a fine-tune for each. Lives in the finetuning app (which already has
+    Modal + the training code), so the web backend needs no Modal dependency.
+
+    Selection = companies with >= MIN_EXAMPLES_TO_TRAIN unused signals. One spawn
+    per company (isolation); run_company self-guards on min-examples + the gate.
+    """
+    import os
+
+    import src.db as db
+
+    threshold = int(os.environ.get("MIN_EXAMPLES_TO_TRAIN", "50"))
+    client = db.db()
+    resp = (
+        client.table("training_signals")
+        .select("company_id")
+        .is_("used_in_version", "null")
+        .execute()
+    )
+    counts: dict[str, int] = {}
+    for r in resp.data or []:
+        cid = r.get("company_id")
+        if cid:
+            counts[cid] = counts.get(cid, 0) + 1
+    ready = [cid for cid, n in counts.items() if n >= threshold]
+
+    for cid in ready:
+        run_company_remote.spawn(cid)   # fire-and-forget per company
+    return {"ready": len(ready), "company_ids": ready}
