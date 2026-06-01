@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import DaemonMark from '../brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../../context/ThemeContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { brainApi } from '../../lib/brainApi.js';
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 
@@ -104,8 +106,25 @@ export default function Sidebar({
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
   const { isMobile } = useViewport();
-  const { user, profile, logout } = useAuth();
+  const { user, profile, logout, token } = useAuth();
   const isLight = theme === 'light';
+
+  // Live nav badges — open tasks + pending inbox pushes. Hidden when zero.
+  const [taskCount, setTaskCount] = useState(0);
+  const [inboxCount, setInboxCount] = useState(0);
+  useEffect(() => {
+    if (!token) { setTaskCount(0); setInboxCount(0); return; }
+    let alive = true;
+    Promise.allSettled([brainApi.tasks({ token }), brainApi.pushes({ token })]).then(([t, p]) => {
+      if (!alive) return;
+      if (t.status === 'fulfilled') {
+        const open = (t.value.tasks || []).filter(x => !['done', 'completed', 'cancelled'].includes(x.status));
+        setTaskCount(open.length);
+      }
+      if (p.status === 'fulfilled') setInboxCount((p.value.pushes || []).length);
+    });
+    return () => { alive = false; };
+  }, [token]);
 
   const displayName = profile?.name || user?.email?.split('@')[0] || '—';
   const displayRole = [profile?.title, profile?.workspaces?.name].filter(Boolean).join(' · ') || 'Workspace member';
@@ -207,8 +226,8 @@ export default function Sidebar({
           <div style={{ marginBottom: 24 }}>
             <p className="wd-label" style={{ padding: '0 12px', marginBottom: 8 }}>WORKSPACE</p>
             <NavItem to="/app/daemon"       icon={icons.daemon}       label="My Daemon"    onClick={handleNavClick} />
-            <NavItem to="/app/tasks"        icon={icons.tasks}        label="Tasks"        badge={3} onClick={handleNavClick} />
-            <NavItem to="/app/inbox"        icon={icons.inbox}        label="Inbox"        badge={7} onClick={handleNavClick} />
+            <NavItem to="/app/tasks"        icon={icons.tasks}        label="Tasks"        badge={taskCount || null} onClick={handleNavClick} />
+            <NavItem to="/app/inbox"        icon={icons.inbox}        label="Inbox"        badge={inboxCount || null} onClick={handleNavClick} />
             <NavItem to="/app/integrations" icon={icons.integrations} label="Integrations" onClick={handleNavClick} />
           </div>
 
