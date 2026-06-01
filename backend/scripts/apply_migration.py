@@ -33,18 +33,25 @@ def _conn():
 
 
 def _split(sql: str) -> list[str]:
-    """Split on ';' at top level, but keep dollar-quoted ($$...$$) blocks whole."""
+    """Split on ';' at top level, but keep dollar-quoted ($$...$$) blocks whole.
+
+    Full-line comments and blank lines outside a dollar block are dropped so a
+    leading comment header doesn't get glued onto the next statement (and then
+    silently filtered out for starting with '--')."""
     out, buf, in_dollar = [], [], False
     for line in sql.splitlines():
         if "$$" in line:
             in_dollar = not in_dollar if line.count("$$") % 2 else in_dollar
+        stripped = line.strip()
+        if not in_dollar and (not stripped or stripped.startswith("--")):
+            continue
         buf.append(line)
         if line.rstrip().endswith(";") and not in_dollar:
             out.append("\n".join(buf))
             buf = []
     if buf:
         out.append("\n".join(buf))
-    return [s.strip() for s in out if s.strip() and not s.strip().startswith("--")]
+    return [s.strip() for s in out if s.strip()]
 
 
 def main() -> int:

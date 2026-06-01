@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-01 · HEAD `f073e68` on `origin/main`_
+_Last updated: 2026-06-01 · HEAD `dcba4b5` on `origin/main` (instant-response layer merged)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
@@ -18,6 +18,8 @@ committed direction (not DeepSeek-only) — see `decision-self-hosted-brain.md`.
 - `workdaemon-backend` (CPU, scale-to-zero) — FastAPI: agents, chat, RAG, tasks,
   hunts, integrations. URL: https://nelsonanyanime--workdaemon-backend-fastapi-app.modal.run
 - `workdaemon-serving` (T4, **scale-to-zero**, idle=$0) — serves per-company models.
+  Now exposes `/api/serve/warm` (Modal `.spawn()`, non-blocking) + `/api/serve/ready`
+  (reads the `serving_heartbeat` table — never wakes the GPU).
 - `workdaemon-finetuning` — training: `run_training` (GPU), `run_company_remote`,
   scheduled `training_cycle` (modal.Cron, 48h).
 - Supabase (Postgres + pgvector) — data, RAG (`memory_chunks`), isolation.
@@ -29,7 +31,19 @@ committed direction (not DeepSeek-only) — see `decision-self-hosted-brain.md`.
 2. ✅ Onboarding + ingestion       5. ✅ Real tools (Notion/Slack/GDrive/GCal)
 3. ✅ Hardening (retries, SECURITY.md)   6. ⏸️ Billing — DEFERRED (free pilots)
 
-116 backend tests passing. Tenant isolation gate green.
+120 backend tests passing. Tenant isolation gate green.
+
+## Instant-response chat ✅ (live in prod, 2026-06-01)
+User always gets a reply in ~1s; the company's own Hermes phases in as it warms.
+1. **Prewarm on login** — `brainApi.warm()` on `SIGNED_IN` → backend `/api/warm` →
+   serving `/api/serve/warm` (`.spawn()`) boots the GPU while the user reads.
+2. **Catch-up content** — `[SESSION_START]` is forced onto fast hosted DeepSeek (never
+   the cold GPU) + a recent-activity digest, so the greeting is instant.
+3. **Readiness gate** — `serving_heartbeat` table replaces the timeout race.
+   `CompanyModel.chat()` probes `/api/serve/ready`: warm → Hermes (`follow_redirects`),
+   cold → instant DeepSeek + background warm. No more ~150s cold-start hang.
+Verified live (company aaaa…01): cold `/ready`=false 2.2s (no wake) → warm at t+205s →
+warm `/chat` 3.7s on `wd-{cid}`. Migration `003_serving_heartbeat.sql` applied to prod.
 
 ## TO DO NEXT (needs YOU)
 1. **Paste tool OAuth keys** in root `.env` (placeholders ready):
@@ -42,6 +56,9 @@ committed direction (not DeepSeek-only) — see `decision-self-hosted-brain.md`.
    ingest is the true test of the connectors.
 
 ## Known gaps (NOT blockers)
+- Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
+  Hermes phases in once warm (~minutes). For Hermes on turn 1 every time, add a
+  business-hours `min_containers=1` warm pool in `finetuning/modal/serve_app.py` (cost).
 - Real-time websocket fan-out degraded (REDIS_URL is localhost; Upstash is
   REST-only). Feed persists to DB; UI can poll.
 - Trained per-company model needs ~weeks of usage before it beats base DeepSeek.
