@@ -724,23 +724,24 @@ function ChatView({ context, onBack, onMenu }) {
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const startedRef = useRef(false);
+  const hadHistoryRef = useRef(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
 
-  // Load persistent history before firing SESSION_START
+  // Restore the persisted transcript before firing the session greeting, so a
+  // fresh login resumes the conversation instead of starting blank.
   useEffect(() => {
     if (!authToken || apiKey) { setHistoryLoaded(true); return; }
-    // The new Brain backend has no history GET (history is client-held); skip.
-    if (import.meta.env.VITE_BRAIN_API_URL) { setHistoryLoaded(true); return; }
-    fetch('/api/chat', {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
+    const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
+    const url = brainUrl ? `${brainUrl}/api/chat/history?limit=30` : '/api/chat';
+    fetch(url, { headers: { Authorization: `Bearer ${authToken}` } })
       .then(r => r.ok ? r.json() : { messages: [] })
       .then(({ messages }) => {
         if (messages?.length) {
           setMsgs(messages.map(dbMsgToDisplay));
+          hadHistoryRef.current = true;
         }
       })
       .catch(() => {})
@@ -771,13 +772,16 @@ function ChatView({ context, onBack, onMenu }) {
     }
   }, [msgs, context, apiKey, authToken, thinking]);
 
-  // Session startup: fires after history is loaded
+  // Session startup: fires after history is loaded. Fresh session → [SESSION_START]
+  // (full boot greeting); returning session with restored history → [SESSION_RESUME]
+  // (brief "welcome back" delta, prior transcript passed as conversation context).
   useEffect(() => {
     if (startedRef.current || !authToken || !historyLoaded) return;
     startedRef.current = true;
     setThinking(true);
+    const sentinel = hadHistoryRef.current ? '[SESSION_RESUME]' : '[SESSION_START]';
     callDaemonAPI({
-      messages: [{ role: 'user', text: '[SESSION_START]' }],
+      messages: [...msgs, { role: 'user', text: sentinel }],
       context, apiKey, authToken,
     }).then(({ blocks, suggestions: sugs }) => {
       setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
