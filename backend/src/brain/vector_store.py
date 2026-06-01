@@ -82,9 +82,14 @@ def pgvector_store() -> Any:
             # Best-effort: if the match_memory RPC / table isn't provisioned, return
             # no context rather than crashing the chat/hunt path.
             try:
+                import json
+
                 resp = client.rpc(
                     "match_memory",
-                    {"p_namespace": namespace, "query_embedding": vector, "match_count": top_k},
+                    {"p_namespace": namespace,
+                     # pass the vector as a JSON-array string; the RPC casts to vector
+                     "query_embedding": json.dumps(vector),
+                     "match_count": top_k},
                 ).execute()
             except Exception:
                 return []
