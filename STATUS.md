@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-01 · HEAD `dcba4b5` on `origin/main` (instant-response layer merged)_
+_Last updated: 2026-06-01 · HEAD `4958bf2` on `origin/main` (instant-response + daemon UX merged)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
@@ -24,14 +24,16 @@ committed direction (not DeepSeek-only) — see `decision-self-hosted-brain.md`.
   scheduled `training_cycle` (modal.Cron, 48h).
 - Supabase (Postgres + pgvector) — data, RAG (`memory_chunks`), isolation.
 - Frontend: existing Vite/React app (`src/`), talks to backend via
-  `src/lib/brainApi.js` + `VITE_BRAIN_API_URL`.
+  `src/lib/brainApi.js` + `VITE_BRAIN_API_URL`. **Deployed on Vercel via GitHub
+  git-integration: merge to `main` → auto Production deploy at `workdaemon.vercel.app`;
+  branch push → Preview.** (No manual frontend deploy needed.)
 
 ## Production-ready for PILOT companies ✅ (6-task program)
 1. ✅ RAG (pgvector, live)         4. ✅ Training on (autonomous 48h)
 2. ✅ Onboarding + ingestion       5. ✅ Real tools (Notion/Slack/GDrive/GCal)
 3. ✅ Hardening (retries, SECURITY.md)   6. ⏸️ Billing — DEFERRED (free pilots)
 
-120 backend tests passing. Tenant isolation gate green.
+126 backend tests passing. Tenant isolation gate green.
 
 ## Instant-response chat ✅ (live in prod, 2026-06-01)
 User always gets a reply in ~1s; the company's own Hermes phases in as it warms.
@@ -44,6 +46,18 @@ User always gets a reply in ~1s; the company's own Hermes phases in as it warms.
    cold → instant DeepSeek + background warm. No more ~150s cold-start hang.
 Verified live (company aaaa…01): cold `/ready`=false 2.2s (no wake) → warm at t+205s →
 warm `/chat` 3.7s on `wd-{cid}`. Migration `003_serving_heartbeat.sql` applied to prod.
+
+## Daemon UX ✅ (live in prod, 2026-06-01)
+- **Per-staff identity fixed** — daemon introduces as "{name}'s Daemon" (not "the
+  Company Brain"); sidebar Tasks/Inbox badges are live counts (were hardcoded 3/7).
+- **Persistent chat history** — `GET /api/chat/history` restores the transcript on
+  login; returning users get `[SESSION_RESUME]` ("welcome back" + what's new), genuinely
+  fresh sessions get `[SESSION_START]` (full boot greeting). History is reconstructed
+  from the `interactions` table.
+- **Daemon character** — `agent_profiles.daemon_name/preferred_name/persona` (migration
+  `005_daemon_identity.sql`). `DEFAULT_PERSONA` baseline; greetings render in the daemon's
+  voice. Edit 3 ways: in chat (always-allowed `update_daemon` tool), Settings → "Your
+  Daemon", or the first-run "offer to be named" greeting. REST: `GET`/`PATCH /api/daemon`.
 
 ## TO DO NEXT (needs YOU)
 1. **Paste tool OAuth keys** in root `.env` (placeholders ready):
