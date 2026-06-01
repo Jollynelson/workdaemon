@@ -671,8 +671,11 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.error || `Server error ${res.status}`);
-    // Map the backend's {text, tools_called} → the rich block shape the UI renders.
-    return { blocks: [{ type: 'text', md: data.text || '' }], suggestions: [] };
+    // Backend returns rich {blocks, suggestions}; fall back to a text block.
+    return {
+      blocks: data.blocks?.length ? data.blocks : [{ type: 'text', md: data.text || '' }],
+      suggestions: data.suggestions || [],
+    };
   }
 
   // Legacy backend endpoint (old /api/chat on the same origin)
