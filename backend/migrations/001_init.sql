@@ -11,8 +11,6 @@ create table if not exists companies (
   name        text not null,
   slug        text unique not null,
   tier        text not null default 'pro',
-  vps_host    text,                          -- company VPS hostname/IP
-  vps_ssh_key text,                          -- encrypted; used by provisioner
   created_at  timestamptz not null default now()
 );
 
@@ -30,22 +28,21 @@ create table if not exists staff (
 );
 create index if not exists staff_company on staff (company_id);
 
+-- Own-runtime agent (no Hermes): the model is shared (DeepSeek Flash); what makes
+-- an agent distinct is its system prompt + memory namespace + permitted tools.
 create table if not exists agent_profiles (
   id                uuid primary key default gen_random_uuid(),
   company_id        uuid not null references companies(id) on delete cascade,
   staff_id          uuid not null references staff(id) on delete cascade,
-  hermes_profile    text not null,           -- "{staff_id}-{company_id}"
-  hermes_port       int not null,            -- API server port for this profile
-  hermes_api_key    text not null,           -- encrypted bearer token
   memory_namespace  text not null,           -- "user_{staff_id}_{company_id}"
   permitted_tools   jsonb not null default '[]',
+  system_prompt     text,                    -- cached; rebuilt with fresh context per convo
   trust_score       float not null default 1.0,
   interaction_count int not null default 0,
   last_active       timestamptz,
   status            text not null default 'active',
   created_at        timestamptz not null default now(),
-  unique (company_id, staff_id),
-  unique (company_id, hermes_port)
+  unique (company_id, staff_id)
 );
 
 -- ── INTERACTIONS (the Brain's visibility layer) ─────────────────────────────────

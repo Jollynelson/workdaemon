@@ -39,15 +39,18 @@ class PushInbox:
 
     def pending_for(self, staff_id: str) -> list[dict]:
         """Undelivered pushes for this staff member; marks them delivered."""
+        from datetime import datetime, timezone
+
         resp = (
             self._db.select("pushes")
             .eq("staff_id", staff_id)
-            .eq("delivered_at", None)
+            .is_("delivered_at", "null")   # SQL NULL, not the string "None"
             .execute()
         )
         rows = getattr(resp, "data", None) or []
+        now = datetime.now(timezone.utc).isoformat()
         for r in rows:
-            self._db.update("pushes", r["id"], {"delivered_at": "now"})
+            self._db.update("pushes", r["id"], {"delivered_at": now})
         return rows
 
     def mark_acted(self, push_id: str, acted: bool) -> None:

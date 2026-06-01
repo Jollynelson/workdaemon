@@ -44,6 +44,11 @@ class _Query:
         self._filters.append((col, val))
         return self
 
+    def is_(self, col, val):
+        # mirror postgrest .is_(col, "null") → match rows where col is None/absent
+        self._filters.append((col, None if str(val).lower() == "null" else val))
+        return self
+
     def limit(self, n):
         self._limit = n
         return self

@@ -53,11 +53,9 @@ class AgentProfile:
         )
 
     def to_row(self) -> dict:
+        # Own-runtime: no Hermes profile/port/key. Just identity + tools + memory.
         return {
             "staff_id": self.staff_id,
-            "hermes_profile": f"{self.staff_id}-{self.company_id}",  # kept for schema compat
-            "hermes_port": 0,                                        # unused in own-runtime
-            "hermes_api_key": "",                                    # unused in own-runtime
             "memory_namespace": self.memory_ns,
             "permitted_tools": self.permitted_tools,
             "trust_score": self.trust_score,
