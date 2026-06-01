@@ -30,6 +30,19 @@ class ChatReply:
     routed_task_id: str | None = None
 
 
+# Greeting shape for the two session-boot sentinels (appended to the system prompt).
+_SESSION_START_NOTE = """
+
+## Session start (fresh session)
+Open with a `boot` block, then a one-line welcome to the user, then 1-2 catch-up blocks from recent activity. End with 3 suggestions.
+boot shape: {"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"<name> · <role>"},{"label":"Company Brain","status":"ok","detail":"<company> · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL <n>"},{"label":"Memory","status":"ok","detail":"Learning your patterns"}]}"""
+
+_SESSION_RESUME_NOTE = """
+
+## Returning session
+The user is RESUMING an existing conversation — their prior messages are in the history above. Do NOT show a boot sequence and do NOT re-introduce yourself. Give a brief 1-2 sentence "welcome back" that nods to continuity, then surface ONLY what is NEW since last time (pending tasks, recent activity). 2-3 blocks max. End with 3 suggestions."""
+
+
 class ChatService:
     def __init__(
         self,
@@ -60,25 +73,30 @@ class ChatService:
         history = history or []
         profile, system_prompt = self._factory.load_for_conversation(staff_id)
         is_session_start = message.strip() == "[SESSION_START]"
+        is_session_resume = message.strip() == "[SESSION_RESUME]"
+        is_boot = is_session_start or is_session_resume
 
         # Inject pending task deliveries into the system prompt.
         pending = self._pending_tasks(staff_id)
         if pending:
             system_prompt += "\n\n## Pending tasks assigned to you\n" + _format_tasks(pending)
 
-        # Catch-up briefing: enrich the boot greeting with real recent activity so
-        # the session-start screen is a useful digest the user reads while the GPU warms.
-        if is_session_start:
+        # Session-boot turns: [SESSION_START] = fresh (full boot + welcome),
+        # [SESSION_RESUME] = returning (brief "welcome back" delta; prior transcript
+        # is already in history). Both get the recent-activity digest and are always
+        # served by the fast hosted model below — never a cold company GPU.
+        if is_boot:
             digest = _format_activity(self._recent_activity())
             if digest:
                 system_prompt += "\n\n## Recent activity (for your catch-up briefing)\n" + digest
+            system_prompt += _SESSION_START_NOTE if is_session_start else _SESSION_RESUME_NOTE
 
         executor: ToolExecutor = self._build_executor(profile.access_level)
         # Pick the model for this turn: the company's own trained model (hybrid)
         # if build_model is provided, else the fixed default model. The catch-up
         # greeting always uses the fast hosted model directly — never routed to a
-        # cold company GPU, so [SESSION_START] is always instant.
-        if is_session_start or not self._build_model:
+        # cold company GPU, so session boot is always instant.
+        if is_boot or not self._build_model:
             model = self._model
         else:
             model = self._build_model(system_prompt, self._model)

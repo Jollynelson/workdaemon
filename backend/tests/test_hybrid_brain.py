@@ -174,6 +174,41 @@ def test_session_start_forces_fast_model_with_activity_digest():
     assert reply.text == "boot greeting"
     assert deepseek.called and not company.called          # never routed to the GPU
     assert "Ship the report" in deepseek.system_seen       # digest reached the prompt
+    assert "boot shape" in deepseek.system_seen            # fresh session → boot instruction
+
+
+# ── [SESSION_RESUME] also uses the fast model but skips the boot greeting ──
+def test_session_resume_forces_fast_model_and_skips_boot():
+    sb = FakeSupabase()
+    db = CompanyDB(CO, client=sb)
+    db.insert("staff", {"id": "s1", "name": "Sam", "role": "Analyst",
+                        "department": "Ops", "access_level": "manager", "company_id": CO})
+    sid = sb.store["staff"][0]["id"]
+    from src.agents.factory import AgentFactory
+    from src.brain.activity_feed import ActivityFeed
+    from src.brain.logger import InteractionLogger
+    from src.agents.tools import ToolExecutor
+
+    AgentFactory(db, "Acme").spin_up({"id": sid, "name": "Sam", "role": "Analyst",
+                                      "department": "Ops", "access_level": "manager"})
+    company = FixedModel("from COMPANY model")   # cold GPU — must NOT run
+    deepseek = FixedModel("welcome back")
+    svc = ChatService(
+        factory=AgentFactory(db, "Acme"),
+        model=deepseek,
+        feed=ActivityFeed(db),
+        logger=InteractionLogger(db),
+        build_executor=lambda lvl: ToolExecutor(lvl),
+        build_model=lambda sysp, fb: company,
+        recent_activity_fn=lambda: [
+            {"event_type": "task_created", "payload": {"title": "Ship the report"}},
+        ],
+    )
+    reply = svc.handle_turn(sid, "[SESSION_RESUME]")
+    assert reply.text == "welcome back"
+    assert deepseek.called and not company.called          # never routed to the GPU
+    assert "Returning session" in deepseek.system_seen     # resume note present
+    assert "boot shape" not in deepseek.system_seen        # returning → no boot greeting
 
 
 def test_warm_route_mounted():
