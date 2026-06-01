@@ -44,6 +44,21 @@ export const brainApi = {
     return call('/api/pushes', { token });
   },
 
+  // Daemon character — name, what it calls you, and persona ("soul").
+  getDaemon({ token }) {
+    return call('/api/daemon', { token });
+  },
+  updateDaemon({ token, daemonName, preferredName, persona }) {
+    return call('/api/daemon', {
+      method: 'PATCH', token,
+      body: {
+        ...(daemonName != null ? { daemon_name: daemonName } : {}),
+        ...(preferredName != null ? { preferred_name: preferredName } : {}),
+        ...(persona != null ? { persona } : {}),
+      },
+    });
+  },
+
   // Cross-agent tasks assigned to the caller.
   tasks({ token }) {
     return call('/api/tasks', { token });

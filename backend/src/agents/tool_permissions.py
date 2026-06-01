@@ -20,6 +20,10 @@ ROLE_TOOLS: dict[str, list[str]] = {
 
 VALID_LEVELS = frozenset(ROLE_TOOLS)
 
+# Self-management tools every daemon may use regardless of access level (e.g. the
+# daemon editing its own name/persona when the user asks in chat).
+ALWAYS_ALLOWED = frozenset({"update_daemon"})
+
 # Concrete tool-name prefix → permission family. Drive + Calendar both ride the
 # "google_drive" permission. Anything not listed maps to its own prefix.
 _TOOL_PERMISSION = {
@@ -48,5 +52,7 @@ def tools_for(access_level: str) -> list[str]:
 def can_use(access_level: str, tool: str) -> bool:
     """True if the role may use this tool. Accepts either a permission family
     ('google_drive') or a concrete tool name ('gdrive_search')."""
+    if tool in ALWAYS_ALLOWED:
+        return True
     allowed = ROLE_TOOLS.get(access_level, ())
     return tool in allowed or permission_for(tool) in allowed
