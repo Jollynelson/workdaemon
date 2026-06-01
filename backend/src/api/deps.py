@@ -82,6 +82,11 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
             return CompanyModel(company_id, system_prompt, fallback)
         return fallback
 
+    def recent_activity() -> list:
+        # Same source as GET /api/feed — most-recent events for the catch-up digest.
+        resp = db.select("activity_events").order("created_at", desc=True).limit(8).execute()
+        return getattr(resp, "data", None) or []
+
     return ChatService(
         factory=factory,
         model=agent_model(),
@@ -90,6 +95,7 @@ def chat_service(company_id: str, company_name: str = "your company") -> ChatSer
         build_executor=make_executor_builder(company_id),
         pending_tasks_fn=lambda sid: PushInbox(db).pending_for(sid),
         build_model=build_model,
+        recent_activity_fn=recent_activity,
     )
 
 

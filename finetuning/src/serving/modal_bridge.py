@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 _gpu_serving_fn: Any | None = None
+_gpu_warm_fn: Any | None = None
 
 
 def set_gpu_serving(fn: Any) -> None:
@@ -28,3 +29,14 @@ def set_gpu_serving(fn: Any) -> None:
 def get_gpu_serving() -> Any | None:
     """Return the registered GPU serving Function, or None for local serving."""
     return _gpu_serving_fn
+
+
+def set_gpu_warm(fn: Any) -> None:
+    """Register the Modal `warm` Function (called from the ASGI app)."""
+    global _gpu_warm_fn
+    _gpu_warm_fn = fn
+
+
+def get_gpu_warm() -> Any | None:
+    """Return the registered GPU warm Function, or None when serving locally."""
+    return _gpu_warm_fn

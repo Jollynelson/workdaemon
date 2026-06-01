@@ -15,10 +15,23 @@ class FixedModel:
     def __init__(self, text):
         self.text = text
         self.called = False
+        self.system_seen = None
 
     def chat(self, messages):
         self.called = True
+        self.system_seen = messages[0]["content"] if messages else ""
         return self.text
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def json(self):
+        return self._p
+
+    def raise_for_status(self):
+        pass
 
 
 # ── adapter presence drives company-model selection ──
@@ -58,6 +71,49 @@ def test_company_model_falls_back_on_serving_error(monkeypatch):
     assert out == "deepseek fallback" and fb.called
 
 
+# ── readiness gate: warm GPU → Hermes; cold → instant fallback + background warm ──
+def test_company_model_routes_to_hermes_when_ready(monkeypatch):
+    monkeypatch.setattr(cm.settings, "serving_url", "http://serve.test")
+    monkeypatch.setattr(cm.settings, "serve_master_secret", "m")
+    calls = {"chat": 0, "warm": 0}
+
+    monkeypatch.setattr(cm.httpx, "get", lambda url, **kw: _Resp({"ready": True}))
+
+    def fake_post(url, **kw):
+        if url.endswith("/api/serve/chat"):
+            calls["chat"] += 1
+            return _Resp({"content": "hermes answer"})
+        calls["warm"] += 1
+        return _Resp({"warming": True})
+
+    monkeypatch.setattr(cm.httpx, "post", fake_post)
+    fb = FixedModel("deepseek")
+    out = CompanyModel(CO, "sys", fb).chat([{"role": "user", "content": "hi"}])
+    assert out == "hermes answer"
+    assert calls["chat"] == 1 and calls["warm"] == 0 and not fb.called
+
+
+def test_company_model_falls_back_and_warms_when_cold(monkeypatch):
+    monkeypatch.setattr(cm.settings, "serving_url", "http://serve.test")
+    monkeypatch.setattr(cm.settings, "serve_master_secret", "m")
+    calls = {"chat": 0, "warm": 0}
+
+    monkeypatch.setattr(cm.httpx, "get", lambda url, **kw: _Resp({"ready": False}))
+
+    def fake_post(url, **kw):
+        if url.endswith("/api/serve/chat"):
+            calls["chat"] += 1
+        else:
+            calls["warm"] += 1
+        return _Resp({"warming": True})
+
+    monkeypatch.setattr(cm.httpx, "post", fake_post)
+    fb = FixedModel("deepseek fallback")
+    out = CompanyModel(CO, "sys", fb).chat([{"role": "user", "content": "hi"}])
+    assert out == "deepseek fallback" and fb.called
+    assert calls["chat"] == 0 and calls["warm"] == 1  # never hit /chat, kicked /warm
+
+
 # ── ChatService uses build_model per turn ──
 def test_chat_service_build_model_selects_per_turn():
     sb = FakeSupabase()
@@ -85,3 +141,43 @@ def test_chat_service_build_model_selects_per_turn():
     reply = svc.handle_turn(sid, "hi")
     assert reply.text == "from COMPANY model"
     assert company.called and not deepseek.called
+
+
+# ── [SESSION_START] always uses the fast model + carries a catch-up digest ──
+def test_session_start_forces_fast_model_with_activity_digest():
+    sb = FakeSupabase()
+    db = CompanyDB(CO, client=sb)
+    db.insert("staff", {"id": "s1", "name": "Sam", "role": "Analyst",
+                        "department": "Ops", "access_level": "manager", "company_id": CO})
+    sid = sb.store["staff"][0]["id"]
+    from src.agents.factory import AgentFactory
+    from src.brain.activity_feed import ActivityFeed
+    from src.brain.logger import InteractionLogger
+    from src.agents.tools import ToolExecutor
+
+    AgentFactory(db, "Acme").spin_up({"id": sid, "name": "Sam", "role": "Analyst",
+                                      "department": "Ops", "access_level": "manager"})
+    company = FixedModel("from COMPANY model")   # would route to a cold GPU — must NOT run
+    deepseek = FixedModel("boot greeting")
+    svc = ChatService(
+        factory=AgentFactory(db, "Acme"),
+        model=deepseek,
+        feed=ActivityFeed(db),
+        logger=InteractionLogger(db),
+        build_executor=lambda lvl: ToolExecutor(lvl),
+        build_model=lambda sysp, fb: company,     # company has an adapter
+        recent_activity_fn=lambda: [
+            {"event_type": "task_created", "payload": {"title": "Ship the report"}},
+        ],
+    )
+    reply = svc.handle_turn(sid, "[SESSION_START]")
+    assert reply.text == "boot greeting"
+    assert deepseek.called and not company.called          # never routed to the GPU
+    assert "Ship the report" in deepseek.system_seen       # digest reached the prompt
+
+
+def test_warm_route_mounted():
+    from src.api.main import app
+
+    paths = {r.path for r in app.routes if hasattr(r, "path")}
+    assert "/api/warm" in paths

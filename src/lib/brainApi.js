@@ -27,6 +27,13 @@ export const brainApi = {
     return call('/api/chat', { method: 'POST', token, body: { message, history } });
   },
 
+  // Prewarm the company's GPU model on login (fire-and-forget — never throws into
+  // the UI). Kicks the scale-to-zero serving GPU so it's warming while the user
+  // reads their catch-up briefing; the first real turn can then use the company model.
+  warm({ token }) {
+    return call('/api/warm', { method: 'POST', token }).catch(() => {});
+  },
+
   // Activity feed (role-gated server-side by the caller's access level).
   feed({ limit = 50, token }) {
     return call(`/api/feed?limit=${limit}`, { token });
