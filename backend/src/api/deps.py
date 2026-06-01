@@ -36,10 +36,27 @@ def build_executor(access_level: str) -> ToolExecutor:
     return ToolExecutor(access_level)
 
 
+def brain_context(company_id: str, company_name: str):
+    """RAG context, or None if embeddings/vector store aren't configured (dev)."""
+    if not settings.openai_api_key:
+        return None
+    try:
+        from src.brain.context import BrainContext
+        from src.brain.memory import MemoryManager
+        from src.brain.vector_store import openai_embedder, pgvector_store
+
+        mem = MemoryManager(company_id, openai_embedder(), pgvector_store())
+        return BrainContext(company_id, company_name, mem)
+    except Exception:
+        return None
+
+
 def chat_service(company_id: str, company_name: str = "your company") -> ChatService:
     db = company_db(company_id)
     feed = ActivityFeed(db, publisher=_safe_publisher())
-    factory = AgentFactory(db, company_name)
+    ctx = brain_context(company_id, company_name)
+    context_for_role = ctx.get_role_context if ctx else None
+    factory = AgentFactory(db, company_name, context_for_role=context_for_role)
     return ChatService(
         factory=factory,
         model=agent_model(),
