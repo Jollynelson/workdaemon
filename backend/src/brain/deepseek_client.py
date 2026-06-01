@@ -94,11 +94,16 @@ class DeepSeekClient:
         if thinking:
             extra_body["reasoning_effort"] = reasoning_effort or "high"
 
-        resp = self._client().chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 4096),
-            extra_body=extra_body,
+        from src.resilience import retry_call
+
+        resp = retry_call(
+            lambda: self._client().chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=kwargs.get("max_tokens", 4096),
+                extra_body=extra_body,
+            ),
+            label=f"deepseek:{model}",
         )
         choice = resp.choices[0]
         text = choice.message.content or ""

@@ -51,11 +51,16 @@ class DeepSeekAgentModel:
         return self.__client
 
     def chat(self, messages: list[dict]) -> str:
-        resp = self._client().chat.completions.create(
-            model=self._model,
-            messages=messages,
-            max_tokens=4096,
-            extra_body={"thinking": {"type": "disabled"}},
+        from src.resilience import retry_call
+
+        resp = retry_call(
+            lambda: self._client().chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_tokens=4096,
+                extra_body={"thinking": {"type": "disabled"}},
+            ),
+            label=f"agent:{self._model}",
         )
         return resp.choices[0].message.content or ""
 
