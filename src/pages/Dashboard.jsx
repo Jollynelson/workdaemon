@@ -642,7 +642,30 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
     return parseJsonResponse(data.content[0]?.text || '');
   }
 
-  // Backend endpoint
+  // New FINAL-spec Brain backend (DeepSeek), when configured. Identity is derived
+  // server-side from the auth token, so we only send the latest message + history.
+  const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
+  if (brainUrl) {
+    const serialized = messages.map(serializeDaemonMsg);
+    const last = serialized[serialized.length - 1];
+    const res = await fetch(`${brainUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: JSON.stringify({
+        message: typeof last?.content === 'string' ? last.content : (last?.content ?? ''),
+        history: serialized.slice(0, -1),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `Server error ${res.status}`);
+    // Map the backend's {text, tools_called} → the rich block shape the UI renders.
+    return { blocks: [{ type: 'text', md: data.text || '' }], suggestions: [] };
+  }
+
+  // Legacy backend endpoint (old /api/chat on the same origin)
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: {
@@ -696,6 +719,8 @@ function ChatView({ context, onBack, onMenu }) {
   // Load persistent history before firing SESSION_START
   useEffect(() => {
     if (!authToken || apiKey) { setHistoryLoaded(true); return; }
+    // The new Brain backend has no history GET (history is client-held); skip.
+    if (import.meta.env.VITE_BRAIN_API_URL) { setHistoryLoaded(true); return; }
     fetch('/api/chat', {
       headers: { Authorization: `Bearer ${authToken}` },
     })
