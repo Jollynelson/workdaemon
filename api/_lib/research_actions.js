@@ -197,7 +197,7 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
 
   const rawFindings = Array.isArray(intel.findings) ? intel.findings : [];
   let insertedFindings = 0;
-  let findingsError = null;          // temporary diagnostic — surfaced in response
+  let findingsError = null;          // first insert error, logged server-side
   for (const f of rawFindings.slice(0, 5)) {
     const headline = (f.headline || '').toString().trim();
     if (!headline) continue;
@@ -235,7 +235,7 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
     status: 200,
     body: {
       ok: true, company, web_grounded: research.grounded, sources: research.sources,
-      competitors, findings_created: insertedFindings, findings_error: findingsError, intel,
+      competitors, findings_created: insertedFindings, intel,
     },
   };
 }
