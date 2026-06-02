@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { decryptSecret } from './security.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared research engine: web search (Brave) + LLM synthesis.
@@ -67,7 +68,9 @@ export async function resolveLLM(workspaceId, db) {
     const row = keys?.find(k => k.use_case === 'reasoning')
              ?? keys?.find(k => k.use_case === 'default')
              ?? keys?.[0];
-    if (row?.api_key && ['anthropic', 'openai', 'openrouter', 'deepseek'].includes(row.provider)) return row;
+    if (row?.api_key && ['anthropic', 'openai', 'openrouter', 'deepseek'].includes(row.provider)) {
+      return { ...row, api_key: decryptSecret(row.api_key) };
+    }
 
     const { data: ws } = await db
       .from('workspaces')
@@ -75,7 +78,7 @@ export async function resolveLLM(workspaceId, db) {
       .eq('id', workspaceId)
       .single();
     if (ws?.openrouter_key) {
-      return { provider: 'openrouter', api_key: ws.openrouter_key, model: ws.openrouter_model };
+      return { provider: 'openrouter', api_key: decryptSecret(ws.openrouter_key), model: ws.openrouter_model };
     }
   }
   // Env fallbacks — DeepSeek first (cheapest capable synthesiser available here).

@@ -1,4 +1,5 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
+import { fail, enforceRateLimit, parseBody } from '../_lib/security.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -6,8 +7,21 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { name, title, company, size, role, industry, slug } = req.body ?? {};
-  if (!company) return res.status(400).json({ error: 'Company name required' });
+  if (!(await enforceRateLimit(res, { key: `setup:${user.id}`, max: 20, windowSec: 3600 }))) return;
+
+  // Strict schema: company required; all fields length-bounded; slug charset-checked.
+  const parsed = parseBody(res, req.body, {
+    name:     { type: 'string', max: 120 },
+    title:    { type: 'string', max: 120 },
+    company:  { type: 'string', required: true, min: 1, max: 160 },
+    size:     { type: 'string', max: 40 },
+    role:     { type: 'string', max: 120 },
+    industry: { type: 'string', max: 120 },
+    slug:     { type: 'string', max: 63, pattern: /^[a-z0-9-]+$/i },
+  });
+  if (!parsed) return;
+  const { name, title, company, size, role, industry } = parsed;
+  const slug = parsed.slug ? parsed.slug.toLowerCase() : null;
 
   const db = adminClient();
 
@@ -37,7 +51,7 @@ export default async function handler(req, res) {
       .select()
       .single();
 
-    if (wsError) return res.status(500).json({ error: wsError.message });
+    if (wsError) return fail(res, 500, 'Could not create workspace', wsError, 'setup');
     workspace = ws;
 
     // Add as admin member
