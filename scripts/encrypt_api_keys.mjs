@@ -23,8 +23,16 @@ function need(name) {
   if (!v) { console.error(`Missing required env var: ${name}`); process.exit(1); }
   return v;
 }
+// Resolve the Supabase URL from whichever common alias the .env uses.
+function needUrl() {
+  const v = process.env.SUPABASE_URL
+    || process.env.NEXT_PUBLIC_SUPABASE_URL
+    || process.env.VITE_SUPABASE_URL;
+  if (!v) { console.error('Missing Supabase URL (SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL / VITE_SUPABASE_URL)'); process.exit(1); }
+  return v.replace(/^["']|["']$/g, '');
+}
 
-const db = createClient(need('SUPABASE_URL'), need('SUPABASE_SERVICE_ROLE_KEY'), {
+const db = createClient(needUrl(), need('SUPABASE_SERVICE_ROLE_KEY'), {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 need('ENCRYPTION_KEY');
