@@ -652,25 +652,26 @@ export default function Onboarding() {
       const body = await res.json().catch(() => ({}));
       if (body.inviteLink) setInviteLink(body.inviteLink);
 
-      // Fire-and-forget background research. Neither call blocks onboarding.
+      // Fire-and-forget background research via /api/brain actions (kept as
+      // actions, not separate routes, to stay under the serverless fn limit).
+      // Neither call blocks onboarding.
       const authHeaders = {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       };
       // (a) Per-user: research the role → role brief in the daemon's memory.
       if (data.role) {
-        fetch('/api/user/research-role', {
+        fetch('/api/brain', {
           method: 'POST', headers: authHeaders,
-          body: JSON.stringify({ role: data.role }),
+          body: JSON.stringify({ action: 'research_role', role: data.role }),
         }).catch(() => null);
       }
       // (b) Workspace: research the company, competitors & market → company
-      //     context + proactive competitor findings (the onboarding user is the
-      //     workspace admin, so this is authorised).
+      //     context + proactive competitor findings (onboarding user is admin).
       if (data.company) {
-        fetch('/api/workspace/research-company', {
+        fetch('/api/brain', {
           method: 'POST', headers: authHeaders,
-          body: JSON.stringify({ company: data.company, industry: data.industry }),
+          body: JSON.stringify({ action: 'research_company', company: data.company, industry: data.industry }),
         }).catch(() => null);
       }
 

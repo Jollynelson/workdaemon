@@ -1,4 +1,5 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
+import { researchRole, researchCompany } from './_lib/research_actions.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,24 @@ export default async function handler(req, res) {
 
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ ok: true });
+    }
+
+    // ── Research the user's role → daemon_memory (any member) ─────────────────
+    if (body.action === 'research_role') {
+      const result = await researchRole(db, user.id, body);
+      return res.status(result.status).json(result.body);
+    }
+
+    // ── Research the company + competitors → context + hunt_findings (admin) ──
+    if (body.action === 'research_company') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const { data: ws } = await db
+        .from('workspaces')
+        .select('name, industry, context')
+        .eq('id', workspaceId)
+        .single();
+      const result = await researchCompany(db, workspaceId, ws, body);
+      return res.status(result.status).json(result.body);
     }
 
     // ── Save company context (existing) ───────────────────────────────────────
