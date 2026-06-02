@@ -64,17 +64,22 @@ Brain: the daemon is per-user and draws on the shared Brain (see
 
 ## Shipped milestones — Vercel app (current focus)
 _Compact log; deep detail in the linked memory files._
-- **Browser QA + two fixes** (06-02) — eyeballed prod end-to-end in a real browser
-  (agent-browser). Surfaced + fixed: **(1)** prod `agent_profiles` was the Modal track's
-  table (`company_id`/`staff_id`, FK→companies/staff), so the app's `user_id`/`access_level`
-  queries silently errored → every user defaulted to `junior` and interaction/trust
-  learning never persisted. Fix: gave the app its own `app_agent_profiles` table
-  (`migration_app_agent_profiles.sql`, applied) and repointed chat.js/brain.js. **(2)**
-  new workspaces 503'd ("No AI provider configured") because chat.js's only env fallback
-  was `ANTHROPIC_API_KEY` (unset in prod). Fix: fallback chain **DeepSeek → Anthropic →
-  OpenAI** (+ added a `deepseek` case to `callProvider`), so a fresh workspace's daemon
-  works out-of-the-box on the already-configured DeepSeek key. Reasoning provider per
-  workspace is still pluggable (`workspace_api_keys` `reasoning` → `openrouter_key` → env).
+- **Browser QA + three fixes** (06-02) — eyeballed prod end-to-end in a real browser
+  (agent-browser); throwaway signup confirmed the daemon now replies (DeepSeek fallback),
+  correct date, role-tailored, "Brain ·" attribution. Surfaced + fixed: **(1)** prod
+  `agent_profiles` was the Modal track's table (`company_id`/`staff_id`, FK→companies/staff),
+  so the app's `user_id`/`access_level` queries silently errored → every user defaulted to
+  `junior` and interaction/trust learning never persisted. Fix: gave the app its own
+  `app_agent_profiles` table (`migration_app_agent_profiles.sql`, applied) and repointed
+  chat.js/brain.js. **(2)** new workspaces 503'd ("No AI provider configured") because
+  chat.js's only env fallback was `ANTHROPIC_API_KEY` (unset in prod). Fix: fallback chain
+  **DeepSeek → Anthropic → OpenAI** (+ a `deepseek` case in `callProvider`), so a fresh
+  workspace's daemon works out-of-the-box on the already-configured DeepSeek key (per-
+  workspace key still overrides: `workspace_api_keys` `reasoning` → `openrouter_key` → env).
+  **(3)** chat.js persisted via bare fire-and-forget `persist()` → Vercel froze the function
+  after `res` returned and **dropped the writes** on slow LLM turns (history/memories/
+  interactions/agent-profile). Fix: `waitUntil(persist())` (`@vercel/functions`) keeps the
+  function alive until writes finish, no added response latency.
 - **Proactive Company Brain** (06-02) — daily 07:00 UTC `vercel.json` cron scans each
   company's market (Brave→DeepSeek) → role-targeted `hunt_findings` + auto-drafted social
   posts → inbox delivery + actions (mark-read, "Use draft", inline detail view). Plus

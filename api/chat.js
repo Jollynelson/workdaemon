@@ -5,6 +5,7 @@ import {
   sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
 } from './_lib/security.js';
 import { braveSearchMany, roleToTags } from './_lib/research.js';
+import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
 // Trigger words that mean the user wants fresh / external info.
@@ -779,7 +780,11 @@ export default async function handler(req, res) {
       }
     };
 
-    persist(); // non-blocking
+    // Run persistence in the background WITHOUT delaying the response, but keep
+    // the serverless function alive until the writes finish — a bare fire-and-
+    // forget gets frozen/dropped after res returns (esp. on slow LLM turns), so
+    // history/memories/interactions/agent-profile writes were silently lost.
+    waitUntil(persist());
 
     return res.status(200).json(parsed);
   } catch (e) {
