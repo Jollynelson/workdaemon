@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-01 · HEAD `4958bf2` on `origin/main` (instant-response + daemon UX merged)_
+_Last updated: 2026-06-02 · HEAD `16e26ad` on `origin/main` (signup-time research + competitor intel merged)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
@@ -59,6 +59,31 @@ warm `/chat` 3.7s on `wd-{cid}`. Migration `003_serving_heartbeat.sql` applied t
   voice. Edit 3 ways: in chat (always-allowed `update_daemon` tool), Settings → "Your
   Daemon", or the first-run "offer to be named" greeting. REST: `GET`/`PATCH /api/daemon`.
 
+## Signup-time research + competitor intel ✅ (live in prod, 2026-06-02)
+On signup a new user's daemon researches its **role** and the **company/competitors**
+on the open web (Brave) and synthesises with DeepSeek, so daemons proactively say
+"your competitor just did X → you should Y."
+- Engine: `api/_lib/research.js` (Brave search + `resolveLLM` workspace-key→env fallback
+  DeepSeek→Anthropic→OpenAI + `callLLM`); domain logic in `api/_lib/research_actions.js`.
+- Exposed as `POST /api/brain` actions **`research_role`** (any member → one
+  `daemon_memory` `role-brief` row; chat.js `buildMemoriesContext` injects it) and
+  **`research_company`** (admin → `workspaces.context` competitors + `<!--auto-market-intel-->`
+  notes block; timely moves → `hunt_findings` opportunity|threat surfaced by
+  `buildHuntContext`). Kept as brain.js actions (NOT new routes) to stay under the
+  **Vercel Hobby 12-serverless-function limit** — standalone routes hit 14 and failed
+  to deploy. `Onboarding.jsx` fires both fire-and-forget after setup.
+- Verified live (signup→setup→actions via API): role `web_grounded:true`; company
+  `web_grounded:true` ~24 sources, real competitors, `findings_created:5` with dated
+  events. Prod env (`workdaemon-prod`, the env-provisioned project — NOT the empty
+  `workdaemon` project): added `DEEPSEEK_API_KEY/BASE_URL` + `BRAVE_SEARCH_API_KEY`
+  (Production + Preview).
+- ⚠️ **Prod DB was under-migrated** (same project as local `.env`'s
+  `DATABASE_URL_UNPOOLED`): it lacked `daemon_messages`/`daemon_memory`/`brain_interactions`
+  and had the old-shape `hunt_findings` — meaning persistent history, daemon memory, AND
+  hunt/competitor alerts had silently never worked in prod. Fixed via pg: created the
+  missing tables + added `workspace_id` (+v2 cols) to `hunt_findings`, relaxed legacy
+  NOT NULLs. See `project-prod-db-undermigrated.md`.
+
 ## TO DO NEXT (needs YOU)
 1. **Paste tool OAuth keys** in root `.env` (placeholders ready):
    NOTION_/SLACK_/GOOGLE_CLIENT_ID+SECRET + a real ENCRYPTION_KEY.
@@ -68,6 +93,10 @@ warm `/chat` 3.7s on `wd-{cid}`. Migration `003_serving_heartbeat.sql` applied t
    not yet visually.
 3. Connect a real company's data (POST /api/integrations/connect) → first live
    ingest is the true test of the connectors.
+4. **Add a `location` field to onboarding** (TO BE DONE LATER) — `research_company`
+   already infers/accepts `location`, but there's no onboarding step capturing it.
+   Add a location step in `Onboarding.jsx` (+ persist on workspace) so competitor
+   research can be location-aware ("competitors near you"). Code task, not a blocker.
 
 ## Known gaps (NOT blockers)
 - Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
