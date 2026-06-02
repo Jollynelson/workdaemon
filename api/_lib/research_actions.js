@@ -222,6 +222,7 @@ async function pushFindingToInbox(db, { workspaceId, members, findingId, mode, s
       severity,
       affected_roles: affected,
       has_draft: !!draft,
+      draft:      draft || null,
     },
   }));
 

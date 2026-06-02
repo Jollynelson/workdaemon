@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/layout/Sidebar.jsx';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../context/ThemeContext.jsx';
@@ -730,6 +730,16 @@ function ChatView({ context, onBack, onMenu }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
+
+  // Seed the composer from elsewhere (e.g. Inbox "Use draft"), then clear it.
+  useEffect(() => {
+    const seed = sessionStorage.getItem('wd_daemon_seed');
+    if (seed) {
+      sessionStorage.removeItem('wd_daemon_seed');
+      setInput(seed);
+      setTimeout(() => inputRef.current?.focus(), 150);
+    }
+  }, []);
 
   // Restore the persisted transcript before firing the session greeting, so a
   // fresh login resumes the conversation instead of starting blank.
@@ -1889,6 +1899,40 @@ function InboxPage() {
     }),
   }, token);
   const [filter, setFilter] = useState('all');
+  const navigate = useNavigate();
+
+  // Locally-tracked reads, so the UI updates instantly without a refetch.
+  const [readIds, setReadIds] = useState(() => new Set());
+
+  const markRead = useCallback((id) => {
+    if (!id) return;
+    setReadIds(prev => prev.has(id) ? prev : new Set(prev).add(id));
+    fetch('/api/inbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ id, read: true }),
+    }).catch(() => {});
+  }, [token]);
+
+  const markAllRead = useCallback((ids) => {
+    setReadIds(new Set(ids));
+    fetch('/api/inbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ all: true, read: true }),
+    }).catch(() => {});
+  }, [token]);
+
+  // Hand a brain-drafted asset to the daemon composer for review/refine/post.
+  const useDraft = useCallback((item) => {
+    if (!item?.draft) return;
+    sessionStorage.setItem(
+      'wd_daemon_seed',
+      `The Company Brain drafted this post for "${item.title}". Refine it, keep it on-brand, and prepare it for posting (ask me to confirm before anything goes out):\n\n${item.draft}`,
+    );
+    markRead(item.id);
+    navigate('/app/daemon');
+  }, [navigate, markRead]);
 
   const FILTERS = [
     { key: 'all',      label: 'ALL',      fn: () => true },
@@ -1897,9 +1941,10 @@ function InboxPage() {
     { key: 'updates',  label: 'UPDATES',  fn: i => ['Jira', 'GitHub', 'Linear'].includes(i.source) },
   ];
 
-  const items   = data?.items || [];
-  const unread  = items.filter(i => i.unread).length;
-  const visible = items.filter(FILTERS.find(f => f.key === filter)?.fn ?? (() => true));
+  const rawItems = data?.items || [];
+  const items    = rawItems.map(i => ({ ...i, unread: i.unread && !readIds.has(i.id) }));
+  const unread   = items.filter(i => i.unread).length;
+  const visible  = items.filter(FILTERS.find(f => f.key === filter)?.fn ?? (() => true));
   const LEVEL_COLOR = { danger: '#ef4444', warning: '#f59e0b' };
 
   return (
@@ -1913,6 +1958,14 @@ function InboxPage() {
               {unread > 0 && <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--mono)', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 20, padding: '2px 10px', letterSpacing: '0.05em' }}>{unread} new</span>}
             </h1>
           </div>
+          {unread > 0 && (
+            <button type="button" onClick={() => markAllRead(items.map(i => i.id))}
+              style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
+              onMouseEnter={e => { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.text3; }}
+              onMouseLeave={e => { e.currentTarget.style.color = c.text3; e.currentTarget.style.borderColor = c.cardBorder; }}>
+              MARK ALL READ
+            </button>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 2, marginBottom: 20, borderBottom: `1px solid ${c.cardBorder}` }}>
@@ -1937,7 +1990,7 @@ function InboxPage() {
               const lc = LEVEL_COLOR[item.level];
               const srcColor = SOURCE_COLORS[item.source] || SOURCE_COLORS.Default;
               return (
-                <div key={item.id || idx} style={{
+                <div key={item.id || idx} onClick={() => item.unread && markRead(item.id)} style={{
                   padding: '13px 15px',
                   background: item.unread ? (lc ? c.d ? `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.05)` : `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.03)` : c.row) : c.subtle,
                   border: `1px solid ${item.unread ? (lc ? `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.2)` : c.rowBorder) : c.subtleBorder}`,
@@ -1952,7 +2005,17 @@ function InboxPage() {
                       {item.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', flexShrink: 0 }} />}
                     </div>
                     <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.body}</div>
-                    <div style={{ marginTop: 5, fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</div>
+                    <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</span>
+                      {item.draft && (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
+                          style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 6, padding: '3px 9px', cursor: 'pointer', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(65,114,245,0.16)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(65,114,245,0.09)'; }}>
+                          ✎ USE DRAFT
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
