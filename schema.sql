@@ -10,7 +10,7 @@ create table public.workspaces (
   name         text not null,
   size         text,
   industry     text,
-  owner_id     uuid references auth.users(id),
+  owner_id     uuid references auth.users(id) on delete set null,
   invite_code  text unique default encode(gen_random_bytes(8), 'hex'),
   created_at   timestamptz default now()
 );
@@ -45,8 +45,8 @@ create table public.tasks (
   description  text,
   status       text default 'todo',  -- 'todo' | 'in_progress' | 'done'
   priority     text default 'P3',   -- 'P0' | 'P1' | 'P2' | 'P3'
-  assignee_id  uuid references auth.users(id),
-  created_by   uuid references auth.users(id),
+  assignee_id  uuid references auth.users(id) on delete set null,
+  created_by   uuid references auth.users(id) on delete set null,
   due_date     date,
   created_at   timestamptz default now(),
   updated_at   timestamptz default now()
@@ -71,7 +71,7 @@ create table public.workspace_invites (
   id           uuid primary key default gen_random_uuid(),
   workspace_id uuid references public.workspaces(id) on delete cascade,
   email        text not null,
-  invited_by   uuid references auth.users(id),
+  invited_by   uuid references auth.users(id) on delete set null,
   accepted     boolean default false,
   created_at   timestamptz default now(),
   unique (workspace_id, email)
