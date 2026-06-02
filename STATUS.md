@@ -146,10 +146,26 @@ links stripped). Plan/priority/OAuth-docs/DoD in **`INTEGRATIONS.md`**.
 - chat.js injects connected tools into the daemon prompt (no more "no tools connected").
 - Verified: state sign/verify (+tamper reject), authorize-URL build, config detection.
 
-**Slack: code complete, needs creds.** Create a Slack app, add redirect
-`https://workdaemon-prod.vercel.app/api/oauth` + bot scopes, set `SLACK_CLIENT_ID`/
-`SLACK_CLIENT_SECRET` in Vercel (Prod+Preview) → redeploy → Connect. Steps in INTEGRATIONS.md.
-Next increment: Slack data ingestion into daemon context/knowledge graph.
+**Slack: LIVE (2026-06-03).** App ID `A0B7Q4W45NH`, public distribution on.
+`SLACK_CLIENT_ID/SECRET/SIGNING_SECRET` set in Vercel (prod+preview). Full 32-tool
+connector (`api/_lib/connectors/slack.js`, `SLACK_TOOLS`+`runSlackTool`, dual bot/user
+tokens). Real-time **Events API** (`api/_lib/connectors/slack_events.js`, signature-
+verified, hosted in `api/overview.js` w/ bodyParser off via `/api/slack/events` rewrite):
+stores `slack_messages`, @mention→inbox alerts, **@WorkDaemon replies in-thread**.
+chat.js now loads recent `slack_messages` into daemon context when Slack is connected.
+Manifest: `docs/integrations/slack-app-manifest.yml`.
+
+## Production domain + YC demo (live 2026-06-03)
+- **app.workdaemon.com** is live (CNAME `app`→`cname.vercel-dns.com`, auto-SSL); this
+  Vercel project serves ONLY the app. Homepage (workdaemon.com) is hosted separately by
+  the user. Slack redirect + events URLs updated to app.workdaemon.com (vercel.app kept
+  as fallback). `public/privacy.html` is the Slack listing's Privacy URL.
+- **Cobalt demo** — a fully-seeded Series-A fintech demo workspace + 7 role logins for
+  the YC demo. Everything in **`DEMO.md`** (logins, what's seeded, isolation, manage).
+  Scripts (committed): `scripts/seed_demo.mjs`, `scripts/seed_slack.mjs`,
+  `scripts/delete_demo.mjs` (`--dry` to preview; safety-guarded to only ever touch
+  "Cobalt"/@cobalt-hq.com). Runs on the env DeepSeek key. **To remove: `node
+  scripts/delete_demo.mjs`** — clears all data + 7 auth users in seconds, real companies untouched.
 
 ## Known gaps (NOT blockers)
 - Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
