@@ -4,7 +4,7 @@ import {
   assertSafeUrl, decryptSecret, enforceRateLimit,
   sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
 } from './_lib/security.js';
-import { braveSearchMany } from './_lib/research.js';
+import { braveSearchMany, roleToTags } from './_lib/research.js';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
 // Trigger words that mean the user wants fresh / external info.
@@ -257,24 +257,6 @@ function buildMemoriesContext(memories) {
     .map(m => `[${m.memory_type}] ${m.key}: ${m.value}`)
     .join('\n');
   return `\nMEMORIES — apply silently, never announce:\n${delimitUntrusted(lines, 4000)}\n`;
-}
-
-// Map a free-text role/title to the canonical function tags the brain scanner
-// uses for affected_roles, so we can route findings to the right person.
-function roleToTags(role) {
-  const s = (role || '').toLowerCase();
-  const tags = new Set();
-  if (/\b(ceo|founder|chief executive|owner|managing director|\bmd\b)\b/.test(s)) tags.add('ceo');
-  if (/market|brand|content|social|growth|comms|communicat/.test(s))            tags.add('marketing');
-  if (/sales|account exec|business development|\bbd\b|revenue/.test(s))         tags.add('sales');
-  if (/product|\bpm\b|design|ux/.test(s))                                       tags.add('product');
-  if (/engineer|developer|\btech\b|cto|software|data/.test(s))                  tags.add('engineering');
-  if (/\bops\b|operations|coo|logistics|supply/.test(s))                        tags.add('operations');
-  if (/financ|account|cfo|bookkeep/.test(s))                                    tags.add('finance');
-  if (/\bhr\b|people|talent|recruit|human resource/.test(s))                    tags.add('hr');
-  if (/legal|counsel|compliance/.test(s))                                       tags.add('legal');
-  if (/customer success|support|\bcs\b|account manage/.test(s))                 tags.add('customer-success');
-  return [...tags];
 }
 
 function buildHuntContext(findings, userTags = []) {

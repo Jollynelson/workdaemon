@@ -1,4 +1,4 @@
-import { braveSearchMany, resolveLLM, callLLM, extractJson } from './research.js';
+import { braveSearchMany, resolveLLM, callLLM, extractJson, roleToTags } from './research.js';
 import { sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE } from './security.js';
 
 // Collapse user-supplied free text to a short, single-line, sanitized token so it
@@ -197,6 +197,76 @@ function buildScanPrompt({ company, industry, location, roles, research }) {
   return { sys, user };
 }
 
+// Deliver a finding to the inbox of each member whose role it was routed to.
+// Idempotent-ish: only called on fresh inserts, then marks pushed_to_inbox.
+async function pushFindingToInbox(db, { workspaceId, members, findingId, mode, severity, headline, recommendation, draft, affected }) {
+  if (!affected?.length || !members?.length) return;
+  const targets = members.filter(m => m.tags.some(t => affected.includes(t)));
+  if (!targets.length) return;
+
+  const body = [
+    recommendation,
+    draft ? `\n\nDraft ready:\n${draft}` : '',
+  ].filter(Boolean).join('').slice(0, 2000);
+
+  const rows = targets.map(m => ({
+    workspace_id: workspaceId,
+    user_id:      m.id,
+    type:         'alert',
+    source:       'daemon',
+    title:        headline.slice(0, 240),
+    body,
+    metadata: {
+      finding_id: findingId,
+      hunt_mode:  mode,
+      severity,
+      affected_roles: affected,
+      has_draft: !!draft,
+    },
+  }));
+
+  const { error } = await db.from('inbox_items').insert(rows);
+  if (error) { console.error('[scan_external] inbox push err:', error.message); return; }
+  await db.from('hunt_findings').update({ pushed_to_inbox: true }).eq('id', findingId);
+}
+
+// Push any unresolved findings that were created before inbox-push existed (or
+// missed a push) to the right members' inboxes. Safe to re-run — only touches
+// findings with pushed_to_inbox = false.
+export async function backfillInboxPush(db, { workspaceId } = {}) {
+  let q = db.from('hunt_findings')
+    .select('id, workspace_id, hunt_mode, severity, pattern, recommendation, draft, affected_roles')
+    .eq('resolved', false)
+    .eq('pushed_to_inbox', false);
+  if (workspaceId) q = q.eq('workspace_id', workspaceId);
+  const { data: findings } = await q;
+
+  const byWs = new Map();
+  for (const f of findings || []) {
+    if (!Array.isArray(f.affected_roles) || !f.affected_roles.length) continue;
+    if (!byWs.has(f.workspace_id)) byWs.set(f.workspace_id, []);
+    byWs.get(f.workspace_id).push(f);
+  }
+
+  let pushed = 0;
+  for (const [wsId, fs] of byWs) {
+    const { data: mem } = await db.from('workspace_members').select('user_id').eq('workspace_id', wsId);
+    const ids = (mem || []).map(m => m.user_id);
+    if (!ids.length) continue;
+    const { data: profs } = await db.from('profiles').select('id, role, title').in('id', ids);
+    const members = (profs || []).map(p => ({ id: p.id, tags: roleToTags(p.role || p.title) }));
+    for (const f of fs) {
+      await pushFindingToInbox(db, {
+        workspaceId: wsId, members, findingId: f.id,
+        mode: f.hunt_mode, severity: f.severity, headline: f.pattern,
+        recommendation: f.recommendation, draft: f.draft, affected: f.affected_roles,
+      });
+      pushed++;
+    }
+  }
+  return { findings: pushed };
+}
+
 export async function scanExternal(db, workspaceId, ws, roles = []) {
   const company = (ws?.name || '').toString().trim();
   if (!company) return { workspaceId, skipped: 'no company' };
@@ -226,6 +296,21 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
   }
 
   const rawFindings = Array.isArray(intel?.findings) ? intel.findings : [];
+
+  // Pre-resolve workspace members → role tags once, for routing inbox pushes.
+  let members = [];
+  if (rawFindings.length) {
+    const { data: mem } = await db
+      .from('workspace_members')
+      .select('user_id')
+      .eq('workspace_id', workspaceId);
+    const ids = (mem || []).map(m => m.user_id);
+    if (ids.length) {
+      const { data: profs } = await db.from('profiles').select('id, role, title').in('id', ids);
+      members = (profs || []).map(p => ({ id: p.id, tags: roleToTags(p.role || p.title) }));
+    }
+  }
+
   let inserted = 0;
   for (const f of rawFindings.slice(0, 4)) {
     const headline = (f.headline || '').toString().trim();
@@ -253,7 +338,7 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
       .limit(1);
     if (existing?.length) continue;
 
-    const { error } = await db.from('hunt_findings').insert({
+    const { data: row, error } = await db.from('hunt_findings').insert({
       workspace_id:   workspaceId,
       hunt_mode:      mode,
       pattern:        headline,
@@ -262,9 +347,15 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
       severity,
       recommendation,
       draft,
+    }).select('id').single();
+    if (error) { console.error('[scan_external] insert err ws=%s:', workspaceId, error.message); continue; }
+    inserted++;
+
+    // Push the finding to the inbox of every member whose role it was routed to.
+    await pushFindingToInbox(db, {
+      workspaceId, members, findingId: row.id,
+      mode, severity, headline, recommendation, draft, affected,
     });
-    if (!error) inserted++;
-    else console.error('[scan_external] insert err ws=%s:', workspaceId, error.message);
   }
 
   console.log('[scan_external] ws=%s company="%s" results=%d findings=%d/%d',

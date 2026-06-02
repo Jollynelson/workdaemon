@@ -7,6 +7,25 @@ import { decryptSecret } from './security.js';
 // api/workspace/research-company.js (workspace competitor/market intel).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Map a free-text role/title to the canonical function tags the brain scanner
+// uses for affected_roles, so findings can be routed to the right person.
+// Shared by api/chat.js (daemon surfacing) and research_actions.js (inbox push).
+export function roleToTags(role) {
+  const s = (role || '').toLowerCase();
+  const tags = new Set();
+  if (/\b(ceo|founder|chief executive|owner|managing director|\bmd\b)\b/.test(s)) tags.add('ceo');
+  if (/market|brand|content|social|growth|comms|communicat/.test(s))            tags.add('marketing');
+  if (/sales|account exec|business development|\bbd\b|revenue/.test(s))         tags.add('sales');
+  if (/product|\bpm\b|design|ux/.test(s))                                       tags.add('product');
+  if (/engineer|developer|\btech\b|cto|software|data/.test(s))                  tags.add('engineering');
+  if (/\bops\b|operations|coo|logistics|supply/.test(s))                        tags.add('operations');
+  if (/financ|account|cfo|bookkeep/.test(s))                                    tags.add('finance');
+  if (/\bhr\b|people|talent|recruit|human resource/.test(s))                    tags.add('hr');
+  if (/legal|counsel|compliance/.test(s))                                       tags.add('legal');
+  if (/customer success|support|\bcs\b|account manage/.test(s))                 tags.add('customer-success');
+  return [...tags];
+}
+
 // ── Web research via Brave Search ─────────────────────────────────────────────
 export async function braveSearch(query, { count = 8, freshness = null } = {}) {
   const key = process.env.BRAVE_SEARCH_API_KEY;
