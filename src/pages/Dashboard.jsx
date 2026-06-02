@@ -740,8 +740,13 @@ function ChatView({ context, onBack, onMenu }) {
     fetch(url, { headers: { Authorization: `Bearer ${authToken}` } })
       .then(r => r.ok ? r.json() : { messages: [] })
       .then(({ messages }) => {
-        if (messages?.length) {
-          setMsgs(messages.map(dbMsgToDisplay));
+        // Filter out any session-ping sentinels that older builds persisted, so
+        // a stray "[SESSION_RESUME]"/"[SESSION_START]" never renders as a bubble.
+        const real = (messages || []).filter(
+          m => !(m.role === 'user' && /^\[SESSION_(START|RESUME)\]$/.test((m.content || '').trim()))
+        );
+        if (real.length) {
+          setMsgs(real.map(dbMsgToDisplay));
           hadHistoryRef.current = true;
         }
       })
