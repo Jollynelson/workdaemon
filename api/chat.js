@@ -1,5 +1,9 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
+import {
+  assertSafeUrl, decryptSecret, enforceRateLimit,
+  sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
+} from './_lib/security.js';
 
 // ── Tool permission map (from agent access_level) ─────────────────────────────
 const TOOL_PERMISSIONS = {
@@ -124,7 +128,8 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
     }
 
     case 'ollama': {
-      const base = (endpoint || 'http://localhost:11434').replace(/\/$/, '');
+      if (!endpoint) throw new Error('Ollama provider requires an endpoint');
+      const base = (await assertSafeUrl(endpoint, { allowHttp: true })).replace(/\/$/, '');
       const client = new OpenAI({ baseURL: `${base}/v1`, apiKey: 'ollama' });
       const r = await client.chat.completions.create({
         model: model || 'llama3',
@@ -134,7 +139,8 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
     }
 
     case 'azure': {
-      const base = (endpoint || '').replace(/\/$/, '');
+      if (!endpoint) throw new Error('Azure provider requires an endpoint');
+      const base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
       const client = new OpenAI({
         baseURL: `${base}/openai/deployments/${model}`,
         apiKey: api_key,
@@ -152,8 +158,8 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
     // serving FastAPI base URL, `model` carries the company_id to route to.
     // The serving layer (router.chat) handles warm/cold/Claude-fallback itself.
     case 'modal': {
-      const base = (endpoint || '').replace(/\/$/, '');
-      if (!base) throw new Error('Modal provider requires an endpoint (serving base URL)');
+      if (!endpoint) throw new Error('Modal provider requires an endpoint (serving base URL)');
+      const base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
       const r = await fetch(`${base}/api/serve/chat`, {
         method: 'POST',
         headers: {
@@ -191,17 +197,19 @@ function buildCompanyContext(ws) {
     ['Notes',           ctx.notes],
   ].filter(([, v]) => v && String(v).trim());
   if (!fields.length) return '';
-  return '\nCOMPANY CONTEXT (admin-verified facts):\n'
-    + fields.map(([k, v]) => `${k}: ${v}`).join('\n')
-    + '\n';
+  // Company context is partly auto-filled from web research → treat as untrusted
+  // data and wrap in delimiters so it can't act as an instruction (prompt injection).
+  const body = fields.map(([k, v]) => `${k}: ${v}`).join('\n');
+  return '\nCOMPANY CONTEXT (admin-verified facts):\n' + delimitUntrusted(body, 4000) + '\n';
 }
 
 function buildMemoriesContext(memories) {
   if (!memories?.length) return '';
+  // Memories are derived from prior user conversations → untrusted; delimit them.
   const lines = memories
-    .map(m => `  [${m.memory_type}] ${m.key}: ${m.value}`)
+    .map(m => `[${m.memory_type}] ${m.key}: ${m.value}`)
     .join('\n');
-  return `\nMEMORIES — apply silently, never announce:\n${lines}\n`;
+  return `\nMEMORIES — apply silently, never announce:\n${delimitUntrusted(lines, 4000)}\n`;
 }
 
 function buildHuntContext(findings) {
@@ -209,11 +217,15 @@ function buildHuntContext(findings) {
   const critical = findings.filter(f => f.severity === 'critical');
   const warnings  = findings.filter(f => f.severity === 'warning');
   if (!critical.length && !warnings.length) return '';
+  // hunt_mode / severity are enums (trusted); pattern + recommendation contain
+  // other users' messages and web-derived text → untrusted, so delimit the block.
+  // This is the key CROSS-USER injection vector (one user's message reaches every
+  // member's daemon via findings), so it must never sit in instruction position.
   const lines = [...critical, ...warnings].slice(0, 5).map(f =>
-    `  [${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}] ${f.pattern}`
+    `[${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}] ${f.pattern}`
     + (f.recommendation ? ` → ${f.recommendation}` : '')
   ).join('\n');
-  return `\nBRAIN INTELLIGENCE — active hunt findings (${findings.length} total):\n${lines}\n`;
+  return `\nBRAIN INTELLIGENCE — active hunt findings (${findings.length} total):\n${delimitUntrusted(lines, 4000)}\n`;
 }
 
 function buildAgentContext(agentProfile) {
@@ -232,10 +244,16 @@ function buildAgentContext(agentProfile) {
 
 // ── System prompt builder ─────────────────────────────────────────────────────
 function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings) {
-  const firstName = profile?.name ? profile.name.split(' ')[0] : null;
-  const title     = profile?.title || profile?.role || null;
+  // Identity fields are user-/admin-supplied free text. Sanitize to a single
+  // short line each so they cannot smuggle instructions into the system prompt.
+  const safeName  = sanitizeForPrompt(profile?.name, 80).replace(/\s+/g, ' ').trim();
+  const firstName = safeName ? safeName.split(' ')[0] : null;
+  const title     = sanitizeForPrompt(profile?.title || profile?.role, 80).replace(/\s+/g, ' ').trim() || null;
   const permLevel = profile?.permission_level ?? 2;
   const ws        = Array.isArray(workspace) ? workspace[0] : workspace;
+  const wsName     = sanitizeForPrompt(ws?.name, 120).replace(/\s+/g, ' ').trim() || null;
+  const wsIndustry = sanitizeForPrompt(ws?.industry, 80).replace(/\s+/g, ' ').trim() || null;
+  const wsSize     = sanitizeForPrompt(ws?.size, 40).replace(/\s+/g, ' ').trim() || null;
   const accessLevel = agentProfile?.access_level || 'junior';
 
   const permLabels = {
@@ -261,14 +279,16 @@ The "memories" field is OPTIONAL — include it only when you learn something ne
 Never announce memories. Just apply them silently.
 
 IDENTITY:
-You are the Company Brain of ${ws?.name || 'this company'}, speaking directly to ${firstName || 'this user'} as their personal intelligence agent.
-Owner: ${profile?.name || 'Unknown'}${title ? ` (${title})` : ''}
-Company: ${ws?.name || 'Unknown'}${ws?.industry ? `, ${ws.industry}` : ''}${ws?.size ? `, ${ws.size}` : ''}
+You are the Company Brain of ${wsName || 'this company'}, speaking directly to ${firstName || 'this user'} as their personal intelligence agent.
+Owner: ${safeName || 'Unknown'}${title ? ` (${title})` : ''}
+Company: ${wsName || 'Unknown'}${wsIndustry ? `, ${wsIndustry}` : ''}${wsSize ? `, ${wsSize}` : ''}
 Permission: ${permLevel} — ${permLabels[permLevel] || permLabels[2]}
+
+${UNTRUSTED_DATA_NOTICE}
 ${agentContext}${companyContext}${memoriesContext}${huntContext}
 BLOCK TYPES — use these schemas exactly:
 
-{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${profile?.name || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${ws?.name || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"},{"label":"Brain Intelligence","status":"${huntFindings?.length ? 'ok' : 'pending'}","detail":"${huntFindings?.length ? `${huntFindings.length} active findings` : 'No patterns detected yet'}"}]}
+{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${safeName || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${wsName || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"},{"label":"Brain Intelligence","status":"${huntFindings?.length ? 'ok' : 'pending'}","detail":"${huntFindings?.length ? `${huntFindings.length} active findings` : 'No patterns detected yet'}"}]}
 
 {"type":"text","md":"prose **bold** for names/IDs/amounts/deadlines. No bullet dashes. Cite sources inline: (Jira BUG-119), (Slack #eng 15 May)."}
 
@@ -372,8 +392,17 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
-  const { messages } = req.body ?? {};
-  if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages array required' });
+  // Rate limit first (cheap reject), then strictly validate the body shape.
+  if (!(await enforceRateLimit(res, { key: `chat:${user.id}`, max: 60, windowSec: 60 }))) return;
+
+  // Cap is a generous upper bound (the client may post a long visible history;
+  // the handler only uses the last message + server-side DB history) — high
+  // enough never to break real sessions, low enough to reject abusive payloads.
+  const body = parseBody(res, req.body, {
+    messages: { type: 'array', required: true, min: 1, max: 1000, items: { type: 'object' } },
+  });
+  if (!body) return;
+  const messages = body.messages;
 
   const db = adminClient();
 
@@ -431,7 +460,12 @@ export default async function handler(req, res) {
 
   const newMsg = messages[messages.length - 1];
   const newMsgNormalized = newMsg
-    ? { role: newMsg.role === 'user' ? 'user' : 'assistant', content: newMsg.content || newMsg.text || '' }
+    ? {
+        role: newMsg.role === 'user' ? 'user' : 'assistant',
+        // Cap content length to bound payload/cost; the message stays in USER
+        // position (never the system prompt), so it can't override instructions.
+        content: String(newMsg.content || newMsg.text || '').slice(0, 8000),
+      }
     : null;
 
   const combined = [...historyMsgs];
@@ -482,8 +516,11 @@ export default async function handler(req, res) {
     keyRow = { provider: 'anthropic', api_key: apiKey, model: 'claude-sonnet-4-6' };
   }
 
+  // Decrypt the stored key at the last moment (no-op for legacy plaintext / env keys).
+  const resolvedKey = { ...keyRow, api_key: decryptSecret(keyRow.api_key) };
+
   try {
-    const raw    = await callProvider(keyRow, sys, trimmed);
+    const raw    = await callProvider(resolvedKey, sys, trimmed);
     const parsed = parseJsonResponse(raw);
 
     // Fire-and-forget: persist messages + run learning pipeline
@@ -601,6 +638,6 @@ export default async function handler(req, res) {
     return res.status(200).json(parsed);
   } catch (e) {
     console.error('[chat] provider=%s error=%s', keyRow.provider, e.message, e.stack);
-    return res.status(502).json({ error: e.message || 'AI request failed' });
+    return res.status(502).json({ error: 'AI request failed. Please try again.' });
   }
 }

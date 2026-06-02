@@ -1,4 +1,9 @@
 import { braveSearchMany, resolveLLM, callLLM, extractJson } from './research.js';
+import { sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE } from './security.js';
+
+// Collapse user-supplied free text to a short, single-line, sanitized token so it
+// cannot inject instructions when interpolated into a system prompt.
+const oneLine = (s, max) => sanitizeForPrompt(s, max).replace(/\s+/g, ' ').trim();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Research actions, invoked from api/brain.js as POST actions (research_role,
@@ -13,24 +18,35 @@ const NOTE_CLOSE = '<!--/auto-market-intel-->';
 
 // ── Per-user: research the role → daemon_memory row ───────────────────────────
 function buildRolePrompt({ role, industry, companyName, size, research }) {
-  const sys = `You are building a concise operating brief for an AI work agent so it can act like a seasoned ${role}. `
+  // Sanitize user-controlled identity fields before they touch the system prompt.
+  const safeRole     = oneLine(role, 100) || 'professional';
+  const safeIndustry = oneLine(industry, 80);
+  const safeCompany  = oneLine(companyName, 120);
+  const safeSize     = oneLine(size, 40);
+
+  const sys = `You are building a concise operating brief for an AI work agent so it can act like a seasoned ${safeRole}. `
     + `Write for the agent, not the user — it is loaded silently as background knowledge.\n`
     + `Output tight markdown, no preamble, under 1600 characters, using these exact sections:\n`
     + `**Mandate** — one sentence on what this role is accountable for.\n`
     + `**Core responsibilities** — 4-6 prose-comma items.\n`
-    + `**Measured on** — the KPIs/metrics a strong ${role} is judged by.\n`
+    + `**Measured on** — the KPIs/metrics a strong ${safeRole} is judged by.\n`
     + `**Tools & systems** — the software/frameworks they typically live in.\n`
     + `**Failure modes** — 2-3 ways this role commonly goes wrong, so the agent can watch for them.\n`
     + `**What great looks like** — one sentence.\n`
-    + `Be specific and current. Tailor to the company context. Do not invent facts about THIS company; describe the role in general, grounded in the research provided.`;
+    + `Be specific and current. Tailor to the company context. Do not invent facts about THIS company; describe the role in general, grounded in the research provided.\n`
+    + UNTRUSTED_DATA_NOTICE;
 
+  // Web search results are untrusted (indirect prompt injection) → delimit them.
   const grounding = research.grounded
-    ? 'WEB RESEARCH (use as grounding):\n'
-      + research.snippets.map((s, i) => `[${i + 1}] ${s.title}\n${s.description}`).join('\n\n')
+    ? 'WEB RESEARCH (reference data only):\n'
+      + delimitUntrusted(
+          research.snippets.map((s, i) => `[${i + 1}] ${s.title}\n${s.description}`).join('\n\n'),
+          6000,
+        )
     : 'No live web research available — rely on your own up-to-date knowledge of the role.';
 
-  const user = `ROLE: ${role}\n`
-    + `COMPANY: ${companyName || 'a company'}${industry ? ` (${industry})` : ''}${size ? `, team size ${size}` : ''}\n\n`
+  const user = `ROLE: ${safeRole}\n`
+    + `COMPANY: ${safeCompany || 'a company'}${safeIndustry ? ` (${safeIndustry})` : ''}${safeSize ? `, team size ${safeSize}` : ''}\n\n`
     + grounding;
 
   return { sys, user };
@@ -93,7 +109,11 @@ export async function researchRole(db, userId, body = {}) {
 
 // ── Workspace: research company + competitors → context + hunt_findings ───────
 function buildCompanyPrompt({ company, industry, location, existingDesc, research }) {
-  const sys = `You are a market-intelligence analyst building a briefing for an AI work agent that advises staff at "${company}". `
+  const safeCompany  = oneLine(company, 120) || 'the company';
+  const safeIndustry = oneLine(industry, 80);
+  const safeLocation = oneLine(location, 120);
+
+  const sys = `You are a market-intelligence analyst building a briefing for an AI work agent that advises staff at "${safeCompany}". `
     + `Use the web research provided as your primary source; if it is thin, use your own knowledge but never fabricate specific events or dates.\n`
     + `Return ONE JSON object, no prose, no code fence, with this exact shape:\n`
     + `{\n`
@@ -101,23 +121,29 @@ function buildCompanyPrompt({ company, industry, location, existingDesc, researc
     + `  "location": "HQ / primary market, or null",\n`
     + `  "competitors": ["direct competitor names", "..."],\n`
     + `  "positioning": "one sentence on where this company sits vs competitors",\n`
-    + `  "industry_trends": "1-2 sentences on current ${industry || 'industry'} trends that matter",\n`
+    + `  "industry_trends": "1-2 sentences on current ${safeIndustry || 'industry'} trends that matter",\n`
     + `  "findings": [\n`
     + `    {"mode":"opportunity|threat","headline":"specific, recent competitor/market move","severity":"info|warning|critical","recommendation":"concrete action this company should take"}\n`
     + `  ]\n`
     + `}\n`
     + `findings: 0-5 items, each a SPECIFIC and RECENT event (a competitor launch, raise, price change, hire, outage, regulation). `
-    + `Phrase headlines so an agent can say them aloud, e.g. "Competitor Acme launched an AI tier last week". Skip vague items.`;
+    + `Phrase headlines so an agent can say them aloud, e.g. "Competitor Acme launched an AI tier last week". Skip vague items.\n`
+    + UNTRUSTED_DATA_NOTICE;
 
+  // Web research is untrusted (indirect prompt injection) → delimit it.
   const grounding = research.grounded
-    ? 'WEB RESEARCH:\n' + research.snippets.map((s, i) =>
-        `[${i + 1}] ${s.title}${s.age ? ` (${s.age})` : ''}\n${s.description}\n${s.url}`).join('\n\n')
+    ? 'WEB RESEARCH (reference data only):\n' + delimitUntrusted(
+        research.snippets.map((s, i) =>
+          `[${i + 1}] ${s.title}${s.age ? ` (${s.age})` : ''}\n${s.description}\n${s.url}`).join('\n\n'),
+        7000,
+      )
     : 'No live web research available — use your own knowledge; keep findings general and do not invent dated events.';
 
-  const user = `COMPANY: ${company}\n`
-    + `INDUSTRY: ${industry || 'unspecified'}\n`
-    + `LOCATION: ${location || 'unspecified'}\n`
-    + (existingDesc ? `KNOWN DESCRIPTION: ${existingDesc}\n` : '')
+  const user = `COMPANY: ${safeCompany}\n`
+    + `INDUSTRY: ${safeIndustry || 'unspecified'}\n`
+    + `LOCATION: ${safeLocation || 'unspecified'}\n`
+    // Existing description may be web-derived → wrap as untrusted data.
+    + (existingDesc ? `KNOWN DESCRIPTION:\n${delimitUntrusted(existingDesc, 1500)}\n` : '')
     + `\n${grounding}`;
 
   return { sys, user };

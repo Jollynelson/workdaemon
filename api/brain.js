@@ -1,5 +1,6 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { researchRole, researchCompany } from './_lib/research_actions.js';
+import { fail, enforceRateLimit } from './_lib/security.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -170,6 +171,10 @@ export default async function handler(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
 
+  // Per-user rate limit covering all brain reads/writes (research actions add
+  // their own stricter limits on top).
+  if (!(await enforceRateLimit(res, { key: `brain:${user.id}`, max: 120, windowSec: 60 }))) return;
+
   const db = adminClient();
   const profile = await resolveWorkspace(user.id, db);
   const workspaceId = profile?.workspace_id ?? null;
@@ -267,7 +272,7 @@ export default async function handler(req, res) {
       .eq('id', workspaceId)
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return fail(res, 500, 'Could not load company context', error, 'brain');
     return res.status(200).json({ context: ws?.context || {} });
   }
 
@@ -288,7 +293,11 @@ export default async function handler(req, res) {
     if (body.action === 'resolve_finding') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const { id, resolved } = body;
-      if (!id) return res.status(400).json({ error: 'id required' });
+      if (typeof id !== 'string' || !id) return res.status(400).json({ error: 'id (string) required' });
+      if (resolved !== undefined && typeof resolved !== 'boolean') {
+        return res.status(400).json({ error: 'resolved must be a boolean' });
+      }
+      // Scoped to the caller's workspace → cannot resolve another tenant's findings.
       await db
         .from('hunt_findings')
         .update({ resolved: resolved ?? true, updated_at: new Date().toISOString() })
@@ -297,31 +306,46 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // ── Update agent profile (admin sets another user's level; own profile allowed too) ──
+    // ── Update agent profile ──────────────────────────────────────────────────
+    // access_level and permitted_tools are the daemon's authorization surface, so
+    // they are ADMIN-ONLY. A user must never be able to raise their own level
+    // (that would be a vertical privilege escalation). The target must also be a
+    // member of the caller's workspace.
     if (body.action === 'update_agent') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+
       const { target_user_id, access_level, permitted_tools } = body;
-      if (!target_user_id) return res.status(400).json({ error: 'target_user_id required' });
-      if (target_user_id !== user.id && !isAdmin) return res.status(403).json({ error: 'Admin only' });
+      if (typeof target_user_id !== 'string' || !target_user_id) {
+        return res.status(400).json({ error: 'target_user_id (string) required' });
+      }
+
+      const targetMember = await isMember(target_user_id, workspaceId, db);
+      if (!targetMember) return res.status(404).json({ error: 'User is not a member of this workspace' });
 
       const validLevels = ['junior', 'manager', 'director', 'executive'];
       if (access_level && !validLevels.includes(access_level)) {
         return res.status(400).json({ error: 'Invalid access_level' });
       }
+      if (permitted_tools && (!Array.isArray(permitted_tools) || permitted_tools.some(t => typeof t !== 'string'))) {
+        return res.status(400).json({ error: 'permitted_tools must be an array of strings' });
+      }
 
       const update = { updated_at: new Date().toISOString() };
       if (access_level) update.access_level = access_level;
-      if (permitted_tools && Array.isArray(permitted_tools)) update.permitted_tools = permitted_tools;
+      if (permitted_tools) update.permitted_tools = permitted_tools.slice(0, 32);
 
       const { error } = await db
         .from('agent_profiles')
         .upsert({ user_id: target_user_id, workspace_id: workspaceId, ...update }, { onConflict: 'user_id' });
 
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) return fail(res, 500, 'Could not update agent profile', error, 'brain');
       return res.status(200).json({ ok: true });
     }
 
     // ── Research the user's role → daemon_memory (any member) ─────────────────
+    // Rate-limited: each call burns Brave + LLM credits (cost-based DoS guard).
     if (body.action === 'research_role') {
+      if (!(await enforceRateLimit(res, { key: `research_role:${user.id}`, max: 5, windowSec: 3600 }))) return;
       const result = await researchRole(db, user.id, body);
       return res.status(result.status).json(result.body);
     }
@@ -329,6 +353,7 @@ export default async function handler(req, res) {
     // ── Research the company + competitors → context + hunt_findings (admin) ──
     if (body.action === 'research_company') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      if (!(await enforceRateLimit(res, { key: `research_company:${workspaceId}`, max: 10, windowSec: 3600 }))) return;
       const { data: ws } = await db
         .from('workspaces')
         .select('name, industry, context')
@@ -345,7 +370,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'context must be an object' });
     }
     const { error } = await db.from('workspaces').update({ context }).eq('id', workspaceId);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return fail(res, 500, 'Could not save company context', error, 'brain');
     return res.status(200).json({ ok: true });
   }
 

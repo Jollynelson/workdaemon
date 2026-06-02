@@ -1,4 +1,5 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
+import { assertSafeUrl, encryptSecret, decryptSecret, enforceRateLimit, fail } from '../_lib/security.js';
 
 // Fetch models from a provider's API (server-side to avoid CORS)
 async function fetchProviderModels(provider, apiKey, endpoint) {
@@ -46,13 +47,15 @@ async function fetchProviderModels(provider, apiKey, endpoint) {
         return (d.data || []).map(m => ({ id: m.id, name: m.id }));
       }
       case 'ollama': {
-        const base = (endpoint || 'http://localhost:11434').replace(/\/$/, '');
+        if (!endpoint) return []; // no public default — localhost is not reachable/safe from serverless
+        const base = (await assertSafeUrl(endpoint, { allowHttp: true })).replace(/\/$/, '');
         const r = await fetch(`${base}/api/tags`);
         const d = await r.json();
         return (d.models || []).map(m => ({ id: m.name, name: m.name }));
       }
       case 'azure': {
-        const base = (endpoint || '').replace(/\/$/, '');
+        if (!endpoint) return [];
+        const base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
         const r = await fetch(
           `${base}/openai/deployments?api-version=2024-02-15-preview`,
           { headers: { 'api-key': apiKey } }
@@ -108,10 +111,14 @@ export default async function handler(req, res) {
   const workspaceId = await resolveWorkspace(db, user.id);
   if (!workspaceId) return res.status(404).json({ error: 'No workspace found' });
 
+  // Per-user rate limit across all settings operations.
+  if (!(await enforceRateLimit(res, { key: `settings:${user.id}`, max: 60, windowSec: 60 }))) return;
+
   // ── GET: list keys (masked) or proxy model fetch ─────────────────────────
   if (req.method === 'GET') {
     // ?models=true&keyId=xxx — proxy model list for a stored key
     if (req.query.models === 'true' && req.query.keyId) {
+      if (!(await enforceRateLimit(res, { key: `models:${user.id}`, max: 30, windowSec: 600 }))) return;
       const { data: keyRow } = await db
         .from('workspace_api_keys')
         .select('provider, api_key, endpoint')
@@ -120,7 +127,7 @@ export default async function handler(req, res) {
         .single();
 
       if (!keyRow) return res.status(404).json({ error: 'Key not found' });
-      const models = await fetchProviderModels(keyRow.provider, keyRow.api_key, keyRow.endpoint);
+      const models = await fetchProviderModels(keyRow.provider, decryptSecret(keyRow.api_key), keyRow.endpoint);
       return res.status(200).json({ models });
     }
 
@@ -131,17 +138,20 @@ export default async function handler(req, res) {
       .eq('workspace_id', workspaceId)
       .order('created_at');
 
-    const masked = (keys || []).map(k => ({
-      id: k.id,
-      provider: k.provider,
-      endpoint: k.endpoint,
-      model: k.model,
-      use_case: k.use_case,
-      label: k.label,
-      created_at: k.created_at,
-      hasKey: !!(k.api_key),
-      keyHint: k.api_key ? `...${k.api_key.slice(-4)}` : null,
-    }));
+    const masked = (keys || []).map(k => {
+      const plain = decryptSecret(k.api_key);
+      return {
+        id: k.id,
+        provider: k.provider,
+        endpoint: k.endpoint,
+        model: k.model,
+        use_case: k.use_case,
+        label: k.label,
+        created_at: k.created_at,
+        hasKey: !!(k.api_key),
+        keyHint: plain ? `...${plain.slice(-4)}` : null,
+      };
+    });
 
     return res.status(200).json({ keys: masked });
   }
@@ -150,8 +160,22 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const { action, provider, key, endpoint, model, use_case, label, id } = req.body ?? {};
 
+    // Type + length validation on every supplied field (reject malformed input early).
+    const ALLOWED_PROVIDERS = ['openrouter', 'anthropic', 'openai', 'google', 'mistral', 'ollama', 'azure', 'modal', 'deepseek'];
+    const strLimits = { provider: 40, key: 8000, endpoint: 2000, model: 200, use_case: 40, label: 120, id: 64 };
+    for (const [field, limit] of Object.entries(strLimits)) {
+      const v = req.body?.[field];
+      if (v === undefined || v === null) continue;
+      if (typeof v !== 'string') return res.status(400).json({ error: `${field} must be a string` });
+      if (v.length > limit) return res.status(400).json({ error: `${field} is too long` });
+    }
+    if (provider && !ALLOWED_PROVIDERS.includes(provider)) {
+      return res.status(400).json({ error: 'Unknown provider' });
+    }
+
     // Validate key + return model list (without saving)
     if (action === 'validate') {
+      if (!(await enforceRateLimit(res, { key: `validate:${user.id}`, max: 20, windowSec: 600 }))) return;
       if (!provider || (!key && provider !== 'ollama'))
         return res.status(400).json({ error: 'Provider and key required' });
       const models = await fetchProviderModels(provider, key, endpoint);
@@ -174,8 +198,15 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString(),
     };
 
-    // Only update api_key if a new one was provided (don't wipe existing key)
-    if (key) upsertData.api_key = key;
+    // Validate any user-supplied endpoint before persisting (SSRF guard).
+    if (endpoint) {
+      try { await assertSafeUrl(endpoint, { allowHttp: provider === 'ollama' }); }
+      catch (e) { return res.status(400).json({ error: `Invalid endpoint: ${e.message}` }); }
+    }
+
+    // Encrypt the key at rest. Only update api_key if a new one was provided
+    // (don't wipe an existing key on a metadata-only edit).
+    if (key) upsertData.api_key = encryptSecret(key);
 
     let error;
     if (id) {
@@ -189,10 +220,10 @@ export default async function handler(req, res) {
       // Insert new
       ({ error } = await db
         .from('workspace_api_keys')
-        .insert({ ...upsertData, api_key: key || null }));
+        .insert({ ...upsertData, api_key: key ? encryptSecret(key) : null }));
     }
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return fail(res, 500, 'Could not save API key', error, 'settings');
     return res.status(200).json({ ok: true });
   }
 
@@ -202,7 +233,7 @@ export default async function handler(req, res) {
     if (!isAdmin) return res.status(403).json({ error: 'Admin access required' });
 
     const { id } = req.body ?? {};
-    if (!id) return res.status(400).json({ error: 'Key id required' });
+    if (typeof id !== 'string' || !id) return res.status(400).json({ error: 'Key id (string) required' });
 
     const { error } = await db
       .from('workspace_api_keys')
@@ -210,7 +241,7 @@ export default async function handler(req, res) {
       .eq('id', id)
       .eq('workspace_id', workspaceId);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return fail(res, 500, 'Could not delete API key', error, 'settings');
     return res.status(200).json({ ok: true });
   }
 

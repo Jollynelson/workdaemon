@@ -1,7 +1,11 @@
 import { adminClient } from '../_lib/supabase.js';
+import { enforceRateLimit, clientIp } from '../_lib/security.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Unauthenticated endpoint — cap per IP to limit workspace-slug enumeration.
+  if (!(await enforceRateLimit(res, { key: `slug:${clientIp(req)}`, max: 60, windowSec: 60 }))) return;
 
   const slug = (req.query.slug || '').toLowerCase().trim();
   if (slug.length < 2) return res.status(400).json({ error: 'Slug too short' });
