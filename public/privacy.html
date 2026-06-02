@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — WorkDaemon</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    body{background:#070b16;color:#eef1f8;font-family:'DM Sans',system-ui,sans-serif;line-height:1.7;margin:0;}
+    .wrap{max-width:760px;margin:0 auto;padding:56px 24px 80px;}
+    h1,h2{font-family:'Inter',sans-serif;letter-spacing:-.02em;}
+    h1{font-size:34px;margin-bottom:6px;} h2{font-size:19px;margin:32px 0 8px;color:#c7d0e6;}
+    p,li{color:#9aa6c2;font-size:15px;} a{color:#4172f5;}
+    .muted{color:#6b7795;font-size:13px;} .logo{font-family:'Inter';font-weight:700;letter-spacing:.12em;}
+    .logo b{color:#4172f5;} hr{border:none;border-top:1px solid rgba(255,255,255,.08);margin:24px 0;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a href="/" class="logo">WORK<b>DAEMON</b></a>
+    <h1 style="margin-top:24px;">Privacy Policy</h1>
+    <p class="muted">Last updated: June 2026</p>
+    <hr/>
+    <p>WorkDaemon ("we", "us") provides an AI assistant that connects to the business tools a company chooses to connect. This policy explains what we access, why, and how we protect it.</p>
+
+    <h2>What we access</h2>
+    <p>Only the data from tools you explicitly connect via OAuth, and only within the scopes you grant. For Slack, that means the channels the WorkDaemon bot is invited to. We never access tools you haven't connected.</p>
+
+    <h2>How we use it</h2>
+    <p>To power your daemon: answering questions, surfacing relevant findings to the right people, and performing actions you authorize. We do not sell your data or use your company's content to train third-party models.</p>
+
+    <h2>How we protect it</h2>
+    <ul>
+      <li>OAuth tokens are <strong>encrypted at rest</strong> (AES-256-GCM).</li>
+      <li>All traffic is over <strong>HTTPS</strong>; incoming events are <strong>signature-verified</strong>.</li>
+      <li>Data is <strong>isolated per workspace</strong>; one company's data is never exposed to another.</li>
+    </ul>
+
+    <h2>Retention &amp; deletion</h2>
+    <p>Disconnect any integration at any time from Settings → Integrations; we delete its stored tokens immediately. To delete your workspace and associated data, contact us.</p>
+
+    <h2>Contact</h2>
+    <p>Questions or requests: <a href="mailto:hello@workdaemon.com">hello@workdaemon.com</a>.</p>
+  </div>
+</body>
+</html>

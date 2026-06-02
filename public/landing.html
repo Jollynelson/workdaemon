@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WorkDaemon — Your company, queryable.</title>
+  <meta name="description" content="WorkDaemon is your company's AI brain. It watches your tools in real time, surfaces what matters to each role, drafts and acts, and answers anything about your company." />
+  <meta property="og:title" content="WorkDaemon — Your company, queryable." />
+  <meta property="og:description" content="An AI daemon for every person in your company. It reads your tools, flags what matters, and acts — with your permission." />
+  <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root { --blue:#4172f5; --blue2:#045abd; --navy:#0c1428; --bg:#070b16; --ink:#eef1f8; --mut:#9aa6c2; --line:rgba(255,255,255,.09); }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html { scroll-behavior:smooth; }
+    body { background:var(--bg); color:var(--ink); font-family:'DM Sans',system-ui,sans-serif; -webkit-font-smoothing:antialiased; line-height:1.6; overflow-x:hidden; }
+    a { color:inherit; text-decoration:none; }
+    .wrap { max-width:1080px; margin:0 auto; padding:0 24px; }
+    .mono { font-family:'Inter',monospace; }
+    h1,h2,h3 { font-family:'Inter',sans-serif; letter-spacing:-.03em; line-height:1.08; }
+
+    /* Nav */
+    nav { position:sticky; top:0; z-index:10; background:rgba(7,11,22,.72); backdrop-filter:blur(12px); border-bottom:1px solid var(--line); }
+    .nav { display:flex; align-items:center; justify-content:space-between; height:64px; }
+    .logo { display:flex; align-items:center; gap:10px; font-family:'Inter'; font-weight:800; letter-spacing:.14em; font-size:15px; }
+    .logo .b { color:var(--blue); }
+    .mark { width:26px; height:26px; }
+    .nav-cta { display:flex; align-items:center; gap:10px; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; font-family:'Inter'; font-weight:600; font-size:14px; border-radius:10px; padding:10px 18px; cursor:pointer; transition:all .15s; border:1px solid transparent; white-space:nowrap; }
+    .btn-ghost { color:var(--ink); border-color:var(--line); }
+    .btn-ghost:hover { border-color:rgba(255,255,255,.28); }
+    .btn-primary { background:var(--blue); color:#fff; box-shadow:0 6px 24px rgba(65,114,245,.35); }
+    .btn-primary:hover { background:#3463e6; transform:translateY(-1px); }
+
+    /* Hero */
+    .hero { position:relative; padding:96px 0 72px; text-align:center; }
+    .glow { position:absolute; inset:0; background:radial-gradient(600px 360px at 50% -10%, rgba(65,114,245,.22), transparent 70%); pointer-events:none; }
+    .tag { display:inline-block; font-family:'Inter'; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--blue); background:rgba(65,114,245,.1); border:1px solid rgba(65,114,245,.25); border-radius:999px; padding:6px 14px; margin-bottom:24px; }
+    .hero h1 { font-size:clamp(38px,6vw,68px); font-weight:800; margin-bottom:20px; }
+    .hero h1 .grad { background:linear-gradient(100deg,var(--blue),#7aa2ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .hero p { font-size:clamp(16px,2.2vw,20px); color:var(--mut); max-width:660px; margin:0 auto 34px; }
+    .hero-cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+    .btn-lg { padding:14px 26px; font-size:15px; }
+    .hero .sub { margin-top:18px; font-size:13px; color:var(--mut); }
+
+    /* App preview band */
+    .preview { margin:54px auto 0; max-width:880px; border:1px solid var(--line); border-radius:16px; background:linear-gradient(180deg,#0e1424,#0a0f1c); overflow:hidden; box-shadow:0 40px 120px rgba(0,0,0,.5); }
+    .preview .bar { height:38px; background:#0c1428; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:7px; padding:0 14px; }
+    .dot { width:10px; height:10px; border-radius:50%; }
+    .preview .body { padding:26px 28px; display:grid; gap:14px; }
+    .bubble { border-radius:12px; padding:13px 16px; font-size:14px; }
+    .bubble.me { background:var(--blue); color:#fff; justify-self:end; max-width:70%; }
+    .bubble.them { background:rgba(255,255,255,.05); border:1px solid var(--line); color:var(--ink); max-width:82%; }
+    .bubble .lbl { font-family:'Inter'; font-size:10px; letter-spacing:.1em; color:var(--blue); margin-bottom:6px; text-transform:uppercase; }
+
+    /* Features */
+    section.feat { padding:88px 0; }
+    .eyebrow { font-family:'Inter'; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--blue); text-align:center; margin-bottom:12px; }
+    .feat h2 { text-align:center; font-size:clamp(28px,4vw,40px); font-weight:800; margin-bottom:14px; }
+    .feat .lede { text-align:center; color:var(--mut); max-width:600px; margin:0 auto 52px; font-size:17px; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+    .card { background:rgba(255,255,255,.025); border:1px solid var(--line); border-radius:14px; padding:26px; transition:all .18s; }
+    .card:hover { border-color:rgba(65,114,245,.4); transform:translateY(-3px); background:rgba(65,114,245,.04); }
+    .card .ic { width:40px; height:40px; border-radius:10px; background:rgba(65,114,245,.12); border:1px solid rgba(65,114,245,.25); display:flex; align-items:center; justify-content:center; font-size:18px; margin-bottom:16px; }
+    .card h3 { font-size:18px; font-weight:700; margin-bottom:8px; }
+    .card p { color:var(--mut); font-size:14.5px; }
+
+    /* How it works */
+    .steps { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:8px; }
+    .step { padding:22px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.02); }
+    .step .n { font-family:'Inter'; font-weight:800; color:var(--blue); font-size:13px; letter-spacing:.1em; margin-bottom:10px; }
+    .step h4 { font-family:'Inter'; font-size:15px; margin-bottom:6px; }
+    .step p { color:var(--mut); font-size:13.5px; }
+
+    /* CTA band */
+    .cta-band { text-align:center; padding:80px 0; }
+    .cta-band h2 { font-size:clamp(28px,4vw,42px); font-weight:800; margin-bottom:14px; }
+    .cta-band p { color:var(--mut); margin-bottom:28px; font-size:17px; }
+
+    footer { border-top:1px solid var(--line); padding:34px 0; color:var(--mut); font-size:13px; }
+    .foot { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px; }
+    .foot a:hover { color:var(--ink); }
+
+    @media (max-width:760px){ .grid,.steps{grid-template-columns:1fr;} .nav-cta .btn-ghost{display:none;} }
+  </style>
+</head>
+<body>
+  <nav><div class="wrap nav">
+    <a class="logo" href="/">
+      <svg class="mark" viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M10 46c0-15 9-26 22-26s22 11 22 26" stroke="#4172f5" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="38" r="3.5" fill="#4172f5"/><circle cx="40" cy="38" r="3.5" fill="#4172f5"/></svg>
+      WORK<span class="b">DAEMON</span>
+    </a>
+    <div class="nav-cta">
+      <a class="btn btn-ghost" href="https://app.workdaemon.com/login">Log in</a>
+      <a class="btn btn-primary" href="https://app.workdaemon.com/signup">Get started</a>
+    </div>
+  </div></nav>
+
+  <header class="hero">
+    <div class="glow"></div>
+    <div class="wrap">
+      <span class="tag">Your company, queryable.</span>
+      <h1>The AI <span class="grad">daemon</span><br/>for your whole company.</h1>
+      <p>WorkDaemon gives every person their own AI agent — tuned to their role, wired into your tools. It watches what's happening, flags what matters, drafts and acts, and answers anything about your company.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary btn-lg" href="https://app.workdaemon.com/signup">Get started free →</a>
+        <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
+      </div>
+      <div class="sub">No credit card · Connect Slack, Google, Notion & more · AES-256 encrypted</div>
+
+      <div class="preview">
+        <div class="bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div>
+        <div class="body">
+          <div class="bubble me">What's the team arguing about in #engineering?</div>
+          <div class="bubble them"><div class="lbl">⬡ Daemon</div>There's an active thread on the database migration — <strong>James</strong> and <strong>Ada</strong> disagree on cutover timing. It's been going 40 minutes. Want me to summarize both sides and draft a decision doc?</div>
+          <div class="bubble them"><div class="lbl">⬡ Brain · Opportunity</div>New Lagos tenancy law (May 2026) affects your market. I drafted a post positioning you as the compliant choice — it's in Marketing's inbox.</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="feat wrap" id="features">
+    <div class="eyebrow">One brain, many daemons</div>
+    <h2>It doesn't wait to be asked.</h2>
+    <p class="lede">WorkDaemon runs in the background, learning your company and surfacing what each role needs — before you go looking.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">⬡</div><h3>A daemon per person</h3><p>Each teammate gets an agent tuned to their role — the CEO, HR, marketing — speaking their language and watching their priorities.</p></div>
+      <div class="card"><div class="ic">◎</div><h3>A proactive brain</h3><p>It scans your market and tools daily, reasons about what's material, and routes findings — with drafts — to the right people's inboxes.</p></div>
+      <div class="card"><div class="ic">⚡</div><h3>Real-time awareness</h3><p>Connected to Slack and your stack, it notices arguments, mentions, and decisions as they happen and tells the people who need to know.</p></div>
+      <div class="card"><div class="ic">⌘</div><h3>Acts, with permission</h3><p>Draft a post, reply in a thread, schedule a reminder. You stay in control — it confirms before acting, or runs autonomously when you say so.</p></div>
+      <div class="card"><div class="ic">⌗</div><h3>Connect everything</h3><p>Slack, Google, Notion, GitHub, Jira, HubSpot and more — native OAuth connectors, no glue code.</p></div>
+      <div class="card"><div class="ic">🔒</div><h3>Secure by design</h3><p>Tokens encrypted at rest, signature-verified events, per-workspace isolation, and a permission ladder on every action.</p></div>
+    </div>
+  </section>
+
+  <section class="feat wrap" id="how">
+    <div class="eyebrow">How it works</div>
+    <h2>Up and running in minutes.</h2>
+    <p class="lede">Sign up, tell it about your company, connect a tool. The brain takes it from there.</p>
+    <div class="steps">
+      <div class="step"><div class="n">01</div><h4>Sign up</h4><p>Create your workspace and your role — the daemon tailors itself to you instantly.</p></div>
+      <div class="step"><div class="n">02</div><h4>Connect tools</h4><p>One-click OAuth into Slack, Google, Notion and more. It only sees what you allow.</p></div>
+      <div class="step"><div class="n">03</div><h4>It learns</h4><p>The brain studies your market and conversations, building company-wide intelligence.</p></div>
+      <div class="step"><div class="n">04</div><h4>It works</h4><p>Proactive findings, drafts, real-time alerts, and answers — for every role, every day.</p></div>
+    </div>
+  </section>
+
+  <section class="cta-band"><div class="wrap">
+    <h2>Give your company a brain.</h2>
+    <p>Start free. Connect a tool. Watch it work.</p>
+    <a class="btn btn-primary btn-lg" href="https://app.workdaemon.com/signup">Get started free →</a>
+  </div></section>
+
+  <footer><div class="wrap foot">
+    <div class="logo" style="font-size:13px;">WORK<span class="b">DAEMON</span></div>
+    <div>© 2026 WorkDaemon · <a href="https://app.workdaemon.com/login">Log in</a> · <a href="/privacy.html">Privacy</a> · <a href="mailto:hello@workdaemon.com">Support</a></div>
+  </div></footer>
+</body>
+</html>
