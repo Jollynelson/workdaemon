@@ -298,14 +298,18 @@ function buildHuntContext(findings, userTags = []) {
   // hunt_mode / severity are enums (trusted); pattern + recommendation contain
   // web-derived and cross-user text → untrusted, so delimit the block. This is a
   // cross-user injection vector, so it must never sit in instruction position.
+  let hasDraft = false;
   const lines = relevant.slice(0, 6).map(f => {
     const mark = targeted(f) ? ' ⟵ ROUTED TO YOU' : '';
-    return `[${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}]${mark} ${f.pattern}`
+    let line = `[${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}]${mark} ${f.pattern}`
       + (f.recommendation ? ` → ${f.recommendation}` : '');
+    if (f.draft && targeted(f)) { hasDraft = true; line += `\n   DRAFT READY: ${f.draft}`; }
+    return line;
   }).join('\n');
 
-  return `\nBRAIN INTELLIGENCE — findings from the Company Brain (external scans + internal patterns):\n${delimitUntrusted(lines, 4000)}\n`
-    + `Findings marked "⟵ ROUTED TO YOU" were directed to your role by the brain. When one is material, proactively raise the most important early in your reply with its recommended action, as an alert block tagged "Brain · …" (it came from the Company Brain, not you).\n`;
+  return `\nBRAIN INTELLIGENCE — findings from the Company Brain (external scans + internal patterns):\n${delimitUntrusted(lines, 5000)}\n`
+    + `Findings marked "⟵ ROUTED TO YOU" were directed to your role by the brain. When one is material, proactively raise the most important early in your reply with its recommended action, as an alert block tagged "Brain · …" (it came from the Company Brain, not you).\n`
+    + (hasDraft ? `When a finding has a "DRAFT READY", the brain has already drafted the asset for you — present it verbatim in a text block as a ready-to-use draft, then offer (via action_confirm, since this is an outward post) to refine, schedule or publish it. Never send it without explicit confirmation.\n` : '');
 }
 
 function buildAgentContext(agentProfile) {
@@ -541,7 +545,7 @@ export default async function handler(req, res) {
   if (workspaceId) {
     const { data: findings } = await db
       .from('hunt_findings')
-      .select('hunt_mode, pattern, severity, recommendation, occurrences, affected_roles')
+      .select('hunt_mode, pattern, severity, recommendation, occurrences, affected_roles, draft')
       .eq('workspace_id', workspaceId)
       .eq('resolved', false)
       .order('severity', { ascending: false })

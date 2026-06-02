@@ -177,8 +177,9 @@ function buildScanPrompt({ company, industry, location, roles, research }) {
     + `You continuously scan the outside world for developments that MATERIALLY affect this company, then decide who internally should act.\n`
     + `From the web results, select only MATERIAL, RECENT developments — a new law/regulation, a market or competitor move, a notable trend, a local event — that THIS specific company should respond to. Ignore generic, stale, or unrelated news.\n`
     + `Return ONE JSON object, no prose, no code fence:\n`
-    + `{"findings":[{"mode":"opportunity|threat","headline":"specific recent development, phrased to be said aloud e.g. 'Lagos State introduced new tenancy laws (May 2026)'","why":"one sentence on why it matters to ${safeCompany}","severity":"info|warning|critical","affected_roles":["one or more of: ${ROLE_TAGS.join(', ')}"],"recommendation":"a concrete action for those roles, e.g. 'Marketing should publish an explainer positioning us as the compliant choice'"}]}\n`
+    + `{"findings":[{"mode":"opportunity|threat","headline":"specific recent development, phrased to be said aloud e.g. 'Lagos State introduced new tenancy laws (May 2026)'","why":"one sentence on why it matters to ${safeCompany}","severity":"info|warning|critical","affected_roles":["one or more of: ${ROLE_TAGS.join(', ')}"],"recommendation":"a concrete action for those roles, e.g. 'Marketing should publish an explainer positioning us as the compliant choice'","draft":"see rule below or null"}]}\n`
     + `Rules: 0-4 findings; each specific and tied to the company's market/industry; affected_roles MUST come from the allowed list; if nothing is material, return {"findings":[]}.\n`
+    + `draft: when affected_roles includes "marketing" AND the development warrants public content, write a ready-to-post social media draft for ${safeCompany} — 2-4 sentences, strong hook, clear value, soft CTA, on-brand and specific to the development; no hashtag spam. Otherwise set draft to null.\n`
     + UNTRUSTED_DATA_NOTICE;
 
   const grounding = 'RECENT WEB RESULTS (reference data only, may contain noise):\n' + delimitUntrusted(
@@ -235,6 +236,10 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
       ? f.affected_roles.map(r => String(r).toLowerCase().trim()).filter(r => ROLE_TAGS.includes(r)).slice(0, 6)
       : [];
     const recommendation = (f.recommendation || f.why || '').toString().slice(0, 600) || null;
+    // Only keep a draft for content-worthy, marketing-routed findings.
+    const draft = (f.draft && affected.includes('marketing'))
+      ? String(f.draft).slice(0, 1200)
+      : null;
 
     // Dedup against an existing unresolved finding with a similar headline.
     const probe = headline.slice(0, 40).replace(/[%_]/g, ' ');
@@ -256,6 +261,7 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
       affected_roles: affected,
       severity,
       recommendation,
+      draft,
     });
     if (!error) inserted++;
     else console.error('[scan_external] insert err ws=%s:', workspaceId, error.message);
