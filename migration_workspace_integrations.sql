@@ -31,3 +31,8 @@ create policy "workspace_integrations_member_select" on public.workspace_integra
   for select using (
     workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid())
   );
+
+-- Some providers (e.g. Slack search / set-status / update-profile) need a USER
+-- token in addition to the bot token. Stored encrypted, separate from access_token.
+alter table public.workspace_integrations
+  add column if not exists user_token text;

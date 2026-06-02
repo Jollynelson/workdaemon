@@ -20,21 +20,34 @@ export const PROVIDERS = {
     label: 'Slack',
     authorizeUrl: 'https://slack.com/oauth/v2/authorize',
     tokenUrl: 'https://slack.com/api/oauth.v2.access',
-    // Bot scopes — least-privilege reads to start (channels + members + team).
-    scopes: ['channels:read', 'channels:history', 'groups:read', 'users:read', 'team:read'],
     scopeSep: ',',                       // Slack uses comma-separated scope
     clientIdEnv: 'SLACK_CLIENT_ID',
     clientSecretEnv: 'SLACK_CLIENT_SECRET',
-    // Map the provider token response → our normalized shape.
+    // Bot scopes — full read + action toolset (parity with the connector below).
+    scopes: [
+      'channels:read', 'channels:history', 'channels:manage',
+      'groups:read', 'groups:write', 'groups:history',
+      'im:read', 'im:write', 'im:history', 'mpim:read', 'mpim:history',
+      'chat:write', 'reactions:read', 'reactions:write',
+      'users:read', 'users:read.email', 'team:read',
+      'reminders:write', 'canvases:write',
+    ],
+    // User scopes — only what truly needs a user token: search, status, profile.
+    userScopes: ['search:read', 'users.profile:write'],
     parseToken: (d) => {
       if (d.ok === false) throw new Error(`slack: ${d.error || 'oauth error'}`);
       return {
         access_token: d.access_token,                 // bot token
+        user_token: d.authed_user?.access_token || null,
         refresh_token: d.refresh_token || null,       // only if token rotation is on
         expires_in: d.expires_in || null,
         scopes: (d.scope || '').split(',').filter(Boolean),
         external_account: d.team?.name || d.team?.id || null,
-        metadata: { team: d.team || null, bot_user_id: d.bot_user_id || null, authed_user: d.authed_user?.id || null, app_id: d.app_id || null },
+        metadata: {
+          team: d.team || null, bot_user_id: d.bot_user_id || null,
+          authed_user: d.authed_user?.id || null, app_id: d.app_id || null,
+          user_scopes: (d.authed_user?.scope || '').split(',').filter(Boolean),
+        },
       };
     },
   },
@@ -84,6 +97,7 @@ export function buildAuthorizeUrl(provider, { state, redirectUri }) {
     state,
     scope: cfg.scopes.join(cfg.scopeSep || ' '),
   });
+  if (cfg.userScopes?.length) params.set('user_scope', cfg.userScopes.join(cfg.scopeSep || ' '));
   if (cfg.responseType) params.set('response_type', cfg.responseType);
   return `${cfg.authorizeUrl}?${params}`;
 }
@@ -115,6 +129,7 @@ export async function storeIntegration(db, { workspaceId, provider, parsed, user
     provider,
     status:           'connected',
     access_token:     parsed.access_token ? encryptSecret(parsed.access_token) : null,
+    user_token:       parsed.user_token ? encryptSecret(parsed.user_token) : null,
     refresh_token:    parsed.refresh_token ? encryptSecret(parsed.refresh_token) : null,
     token_expires_at: expiresAt,
     scopes:           parsed.scopes || [],
@@ -126,12 +141,14 @@ export async function storeIntegration(db, { workspaceId, provider, parsed, user
   if (error) throw new Error(`store integration: ${error.message}`);
 }
 
-// ── Load a connected integration's decrypted access token (for connectors) ────
-export async function getAccessToken(db, workspaceId, provider) {
+// ── Load a connected integration's decrypted token (for connectors) ──────────
+// kind: 'bot' (default, the workspace token) | 'user' (acting-user token).
+export async function getAccessToken(db, workspaceId, provider, kind = 'bot') {
   const { data } = await db.from('workspace_integrations')
-    .select('access_token, status').eq('workspace_id', workspaceId).eq('provider', provider).single();
-  if (!data || data.status !== 'connected' || !data.access_token) return null;
-  return decryptSecret(data.access_token);
+    .select('access_token, user_token, status').eq('workspace_id', workspaceId).eq('provider', provider).single();
+  if (!data || data.status !== 'connected') return null;
+  const enc = kind === 'user' ? data.user_token : data.access_token;
+  return enc ? decryptSecret(enc) : null;
 }
 
 // ── The unauthenticated callback (called from settings.js before requireAuth) ─

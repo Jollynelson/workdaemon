@@ -120,7 +120,9 @@ Everything else: [`docs/integrations/CATALOG.md`](docs/integrations/CATALOG.md).
 - [x] `workspace_integrations` table (encrypted tokens) + migration `migration_workspace_integrations.sql` (applied to prod)
 - [x] Provider registry — `api/_lib/oauth.js` (`PROVIDERS`)
 - [x] `/api/oauth` start + callback (HMAC-signed state, token exchange, encrypted store) — hosted in `api/workspace/settings.js` via a `vercel.json` rewrite (no new function)
-- [x] Connector base — `api/_lib/connectors/slack.js` + `getAccessToken` (decrypt) in oauth.js
+- [x] Connector — `api/_lib/connectors/slack.js`: **32 Slack tools** (14 reads + 18 actions,
+  parity with Zapier) + `SLACK_TOOLS` registry + `runSlackTool` dispatcher; dual bot/user
+  tokens (`workspace_integrations.user_token`, encrypted) via `getAccessToken(…, kind)`
 - [x] Integrations UI — Connect/Disconnect/status (`IntegrationsPage`, replaces the placeholder route)
 - [x] Daemon awareness — connected tools injected into the chat system prompt (stops "no tools connected")
 - [ ] Daemon **data ingestion** — Slack reads (channels/history) into daemon context / knowledge graph (next increment)
@@ -130,7 +132,12 @@ Everything else: [`docs/integrations/CATALOG.md`](docs/integrations/CATALOG.md).
 1. Create a Slack app → https://api.slack.com/apps → "Create New App" (from scratch).
 2. **OAuth & Permissions** → Redirect URLs → add: `https://workdaemon-prod.vercel.app/api/oauth`
    (and the preview URL if you use it). Save.
-3. **Bot Token Scopes** → add: `channels:read`, `channels:history`, `groups:read`, `users:read`, `team:read`.
+3. **Scopes** (for the full 32-tool connector — reads + actions):
+   - **Bot Token Scopes:** `channels:read` `channels:history` `channels:manage`
+     `groups:read` `groups:write` `groups:history` `im:read` `im:write` `im:history`
+     `mpim:read` `mpim:history` `chat:write` `reactions:read` `reactions:write`
+     `users:read` `users:read.email` `team:read` `reminders:write` `canvases:write`
+   - **User Token Scopes:** `search:read` `users.profile:write` (needed for Find Message / Set Status / Update Profile)
 4. Copy **Client ID** and **Client Secret** (Basic Information).
 5. Set them in Vercel env (Production + Preview): `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
    (tell Claude — it sets them via the Vercel API, like `CRON_SECRET`), then redeploy.
