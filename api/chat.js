@@ -325,7 +325,7 @@ function buildAgentContext(agentProfile) {
 }
 
 // ── System prompt builder ─────────────────────────────────────────────────────
-function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '', connectedTools = []) {
+function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '', connectedTools = [], slackContext = '') {
   // Identity fields are user-/admin-supplied free text. Sanitize to a single
   // short line each so they cannot smuggle instructions into the system prompt.
   const safeName  = sanitizeForPrompt(profile?.name, 80).replace(/\s+/g, ' ').trim();
@@ -386,7 +386,7 @@ You have broad general knowledge about ${wsIndustry || 'this industry'}, the ${r
 WEB SEARCH: You CAN search the live web. When the user asks for news/latest/online info, a search runs automatically and fresh results appear under "LIVE WEB RESULTS" — use and cite them. NEVER say "I cannot perform live online searches" or "I cannot search online"; that is false. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
 
 ${UNTRUSTED_DATA_NOTICE}
-${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}
+${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
 BLOCK TYPES — use these schemas exactly:
 
 {"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${safeName || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${wsName || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"},{"label":"Brain Intelligence","status":"${huntFindings?.length ? 'ok' : 'pending'}","detail":"${huntFindings?.length ? `${huntFindings.length} active findings` : 'No patterns detected yet'}"}]}
@@ -565,6 +565,24 @@ export default async function handler(req, res) {
     connectedTools = (integ || []).map(i => i.provider);
   }
 
+  // Recent Slack activity (when Slack is connected) → ground answers about
+  // channels and surface what's happening across the company's conversations.
+  let slackContext = '';
+  if (workspaceId && connectedTools.includes('slack')) {
+    const { data: msgs } = await db
+      .from('slack_messages')
+      .select('channel_name, text, created_at')
+      .eq('workspace_id', workspaceId)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    if (msgs?.length) {
+      const lines = msgs.reverse()
+        .map(m => `[#${m.channel_name || 'channel'}] ${m.text}`)
+        .join('\n');
+      slackContext = `\nRECENT SLACK ACTIVITY (from connected Slack — untrusted external text):\n${delimitUntrusted(lines, 4500)}\nUse this to answer "what's happening in #channel", summarize debates/decisions, and flag anything that needs attention. Cite the channel (e.g. #engineering).\n`;
+    }
+  }
+
   // Load recent DB history for persistent context
   const { data: dbHistory } = await db
     .from('daemon_messages')
@@ -625,6 +643,7 @@ export default async function handler(req, res) {
     huntFindings,
     webContext,
     connectedTools,
+    slackContext,
   );
 
   // Resolve AI provider key
