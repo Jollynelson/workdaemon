@@ -116,6 +116,19 @@ export default async function handler(req, res) {
 
   // ── GET: list keys (masked) or proxy model fetch ─────────────────────────
   if (req.method === 'GET') {
+    // ?publishing=true — read the workspace's autonomous-publishing config
+    if (req.query.publishing === 'true') {
+      const { data: ws } = await db
+        .from('workspaces')
+        .select('auto_publish, publish_webhook_url')
+        .eq('id', workspaceId)
+        .single();
+      return res.status(200).json({
+        auto_publish: !!ws?.auto_publish,
+        publish_webhook_url: ws?.publish_webhook_url || '',
+      });
+    }
+
     // ?models=true&keyId=xxx — proxy model list for a stored key
     if (req.query.models === 'true' && req.query.keyId) {
       if (!(await enforceRateLimit(res, { key: `models:${user.id}`, max: 30, windowSec: 600 }))) return;
@@ -185,6 +198,28 @@ export default async function handler(req, res) {
     // Save / upsert — admin only
     const isAdmin = await checkAdmin(db, workspaceId, user.id);
     if (!isAdmin) return res.status(403).json({ error: 'Admin access required' });
+
+    // ── Autonomous (L3) publishing config ──────────────────────────────────
+    if (action === 'update_publishing') {
+      const autoPublish = req.body?.auto_publish === true;
+      let webhook = (req.body?.publish_webhook_url ?? '').toString().trim();
+      if (webhook.length > 2000) return res.status(400).json({ error: 'Webhook URL is too long' });
+      if (webhook) {
+        // SSRF guard — must be a public https endpoint.
+        try { await assertSafeUrl(webhook); }
+        catch (e) { return res.status(400).json({ error: `Invalid webhook URL: ${e.message}` }); }
+      }
+      // Can't enable autonomous publishing without somewhere to publish.
+      if (autoPublish && !webhook) {
+        return res.status(400).json({ error: 'Set a publish webhook URL before enabling autonomous publishing.' });
+      }
+      const { error: upErr } = await db
+        .from('workspaces')
+        .update({ auto_publish: autoPublish, publish_webhook_url: webhook || null })
+        .eq('id', workspaceId);
+      if (upErr) return fail(res, 500, 'Could not save publishing settings', upErr, 'settings');
+      return res.status(200).json({ ok: true, auto_publish: autoPublish, publish_webhook_url: webhook });
+    }
 
     if (!provider) return res.status(400).json({ error: 'Provider required' });
 

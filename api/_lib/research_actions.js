@@ -1,5 +1,18 @@
 import { braveSearchMany, resolveLLM, callLLM, extractJson, roleToTags } from './research.js';
-import { sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE } from './security.js';
+import { sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, assertSafeUrl } from './security.js';
+
+// Level 3 autonomous publishing: POST an approved draft to the workspace's
+// outbound webhook (Zapier/Make/Slack/n8n → socials). SSRF-guarded.
+async function publishDraft(webhookUrl, payload) {
+  const safe = await assertSafeUrl(webhookUrl); // throws on private/unsafe targets
+  const r = await fetch(safe, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`publish webhook responded ${r.status}`);
+  return true;
+}
 
 // Collapse user-supplied free text to a short, single-line, sanitized token so it
 // cannot inject instructions when interpolated into a system prompt.
@@ -199,30 +212,32 @@ function buildScanPrompt({ company, industry, location, roles, research }) {
 
 // Deliver a finding to the inbox of each member whose role it was routed to.
 // Idempotent-ish: only called on fresh inserts, then marks pushed_to_inbox.
-async function pushFindingToInbox(db, { workspaceId, members, findingId, mode, severity, headline, recommendation, draft, affected }) {
+async function pushFindingToInbox(db, { workspaceId, members, findingId, mode, severity, headline, recommendation, draft, affected, published = false }) {
   if (!affected?.length || !members?.length) return;
   const targets = members.filter(m => m.tags.some(t => affected.includes(t)));
   if (!targets.length) return;
 
-  const body = [
-    recommendation,
-    draft ? `\n\nDraft ready:\n${draft}` : '',
-  ].filter(Boolean).join('').slice(0, 2000);
+  // When the brain auto-published (L3), the inbox item is a report, not a to-do.
+  const body = published
+    ? [`✓ The brain auto-published this via your publish webhook.`, draft ? `\n\nPosted:\n${draft}` : '', recommendation ? `\n\nContext: ${recommendation}` : '']
+        .filter(Boolean).join('').slice(0, 2000)
+    : [recommendation, draft ? `\n\nDraft ready:\n${draft}` : ''].filter(Boolean).join('').slice(0, 2000);
 
   const rows = targets.map(m => ({
     workspace_id: workspaceId,
     user_id:      m.id,
-    type:         'alert',
+    type:         published ? 'update' : 'alert',
     source:       'daemon',
-    title:        headline.slice(0, 240),
+    title:        (published ? `✓ Auto-posted: ${headline}` : headline).slice(0, 240),
     body,
     metadata: {
       finding_id: findingId,
       hunt_mode:  mode,
-      severity,
+      severity:   published ? 'info' : severity,
       affected_roles: affected,
       has_draft: !!draft,
-      draft:      draft || null,
+      draft:      published ? null : (draft || null), // posted already → no "Use draft"
+      auto_published: published,
     },
   }));
 
@@ -275,6 +290,9 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
   const ctx = (ws?.context && typeof ws.context === 'object') ? ws.context : {};
   const location = ws?.location || ctx.location || null;
 
+  // Level 3 autonomous publishing: opted-in workspace with a configured webhook.
+  const autoMode = !!(ws?.auto_publish && ws?.publish_webhook_url);
+
   const llm = await resolveLLM(workspaceId, db);
   if (!llm) return { workspaceId, skipped: 'no llm' };
 
@@ -313,6 +331,7 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
   }
 
   let inserted = 0;
+  let publishedCount = 0;
   for (const f of rawFindings.slice(0, 4)) {
     const headline = (f.headline || '').toString().trim();
     if (!headline) continue;
@@ -352,22 +371,39 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
     if (error) { console.error('[scan_external] insert err ws=%s:', workspaceId, error.message); continue; }
     inserted++;
 
-    // Push the finding to the inbox of every member whose role it was routed to.
+    // L3: auto-publish the draft via the workspace webhook, then report.
+    let published = false;
+    if (draft && autoMode) {
+      try {
+        await publishDraft(ws.publish_webhook_url, {
+          type: 'social_post', company, finding: headline, text: draft,
+          severity, posted_at: new Date().toISOString(),
+        });
+        published = true;
+        await db.from('hunt_findings').update({ auto_published: true }).eq('id', row.id);
+        publishedCount++;
+      } catch (e) {
+        console.error('[scan_external] auto-publish failed ws=%s:', workspaceId, e.message);
+      }
+    }
+
+    // Push to the inbox of every member whose role it was routed to — as a
+    // "posted" report when auto-published, else a draft to confirm.
     await pushFindingToInbox(db, {
       workspaceId, members, findingId: row.id,
-      mode, severity, headline, recommendation, draft, affected,
+      mode, severity, headline, recommendation, draft, affected, published,
     });
   }
 
-  console.log('[scan_external] ws=%s company="%s" results=%d findings=%d/%d',
-    workspaceId, company, research.snippets.length, inserted, rawFindings.length);
-  return { workspaceId, inserted, candidates: rawFindings.length };
+  console.log('[scan_external] ws=%s company="%s" results=%d findings=%d/%d published=%d',
+    workspaceId, company, research.snippets.length, inserted, rawFindings.length, publishedCount);
+  return { workspaceId, inserted, candidates: rawFindings.length, published: publishedCount };
 }
 
 export async function scanAllWorkspaces(db, { limit = 25 } = {}) {
   const { data: workspaces } = await db
     .from('workspaces')
-    .select('id, name, industry, location, context')
+    .select('id, name, industry, location, context, auto_publish, publish_webhook_url')
     .order('created_at', { ascending: true })
     .limit(limit);
 

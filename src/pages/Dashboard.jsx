@@ -2819,6 +2819,94 @@ function SettingsPage() {
         </div>
 
         <DaemonSettings c={c} token={token} />
+        <PublishingSettings c={c} token={token} />
+      </div>
+    </div>
+  );
+}
+
+function PublishingSettings({ c, token }) {
+  const [autoPublish, setAutoPublish] = useState(false);
+  const [webhook, setWebhook]         = useState('');
+  const [loading, setLoading]         = useState(true);
+  const [saving, setSaving]           = useState(false);
+  const [saved, setSaved]             = useState(false);
+  const [err, setErr]                 = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    fetch('/api/workspace/settings?publishing=true', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { setAutoPublish(!!d.auto_publish); setWebhook(d.publish_webhook_url || ''); } })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const save = async () => {
+    setSaving(true); setSaved(false); setErr('');
+    try {
+      const r = await fetch('/api/workspace/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'update_publishing', auto_publish: autoPublish, publish_webhook_url: webhook }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErr(d.error || 'Could not save.'); if (d.error?.includes('webhook')) setAutoPublish(false); }
+      else { setSaved(true); setTimeout(() => setSaved(false), 2500); }
+    } catch { setErr('Network error.'); }
+    setSaving(false);
+  };
+
+  const field = {
+    width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 8,
+    background: c.bg, border: `1px solid ${c.cardBorder}`, color: c.text,
+    fontFamily: 'var(--mono)', fontSize: 13, outline: 'none',
+  };
+  const lbl = { fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', color: c.text3, marginBottom: 6, display: 'block' };
+
+  return (
+    <div style={{ marginTop: 44 }}>
+      <div style={{ marginBottom: 18 }}>
+        <p className="wd-label-blue" style={{ marginBottom: 6 }}>AUTONOMOUS PUBLISHING · LEVEL 3</p>
+        <h2 style={{ fontFamily: 'var(--inter)', fontSize: 19, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.02em' }}>Let the brain post for you</h2>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginTop: 6, lineHeight: 1.6 }}>
+          When on, the brain auto-publishes content drafts it generates from market findings — no confirmation —
+          and reports each post to the affected team’s inbox. It POSTs to your webhook (Zapier, Make, n8n or a Slack
+          incoming webhook → your socials). Leave off to keep the default: drafts wait for you to confirm.
+        </p>
+      </div>
+
+      <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: 20 }}>
+        {loading ? (
+          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, margin: 0 }}>Loading…</p>
+        ) : (
+          <>
+            <label style={lbl}>PUBLISH WEBHOOK URL</label>
+            <input style={field} value={webhook} maxLength={2000}
+              onChange={e => setWebhook(e.target.value)} placeholder="https://hooks.zapier.com/…  (receives {company, finding, text})" />
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, cursor: 'pointer' }}>
+              <input type="checkbox" checked={autoPublish} onChange={e => setAutoPublish(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text, fontWeight: 500 }}>
+                Enable autonomous publishing (Level 3 — execute &amp; report)
+              </span>
+            </label>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
+              <button type="button" onClick={save} disabled={saving}
+                style={{
+                  padding: '9px 20px', borderRadius: 8, cursor: saving ? 'default' : 'pointer',
+                  background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
+                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+                  opacity: saving ? 0.6 : 1,
+                }}>
+                {saving ? 'Saving…' : 'Save publishing'}
+              </button>
+              {saved && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: '#10b981' }}>✓ Saved.</span>}
+              {err && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: '#ef4444' }}>{err}</span>}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
