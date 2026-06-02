@@ -124,6 +124,14 @@ end-to-end encryption round-trip).
    already infers/accepts `location`, but there's no onboarding step capturing it.
    Add a location step in `Onboarding.jsx` (+ persist on workspace) so competitor
    research can be location-aware ("competitors near you"). Code task, not a blocker.
+5. **Delete-a-user from the app UI** (TO BE DONE LATER) — DB side already unblocked:
+   `migration_user_delete_fkeys.sql` (commit `fdf6697`, applied to prod) set the four
+   dangling `auth.users(id)` FKs (`workspaces.owner_id`, `tasks.assignee_id`,
+   `tasks.created_by`, `workspace_invites.invited_by`) to `ON DELETE SET NULL`, so user
+   deletes no longer fail. Still need: an API route using the Supabase **service-role**
+   Admin API (`auth.admin.deleteUser`), admin/self authz (consistent with the IDOR
+   fixes), a confirm UI in member/settings, and an owner-deletion decision (transfer
+   vs. orphan, since SET NULL currently orphans owned workspaces). Code task, not a blocker.
 
 ## Known gaps (NOT blockers)
 - Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
