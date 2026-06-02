@@ -1903,6 +1903,8 @@ function InboxPage() {
 
   // Locally-tracked reads, so the UI updates instantly without a refetch.
   const [readIds, setReadIds] = useState(() => new Set());
+  const [expandedId, setExpandedId] = useState(null); // inline detail view
+  const [copiedId, setCopiedId] = useState(null);     // transient "copied" state
 
   const markRead = useCallback((id) => {
     if (!id) return;
@@ -1933,6 +1935,20 @@ function InboxPage() {
     markRead(item.id);
     navigate('/app/daemon');
   }, [navigate, markRead]);
+
+  // Toggle the inline detail view; opening also marks the item read.
+  const toggleExpand = useCallback((item) => {
+    setExpandedId(prev => (prev === item.id ? null : item.id));
+    if (item.unread) markRead(item.id);
+  }, [markRead]);
+
+  const copyDraft = useCallback((item) => {
+    if (!item?.draft) return;
+    navigator.clipboard?.writeText(item.draft).then(() => {
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(c => (c === item.id ? null : c)), 1600);
+    }).catch(() => {});
+  }, []);
 
   const FILTERS = [
     { key: 'all',      label: 'ALL',      fn: () => true },
@@ -1989,34 +2005,70 @@ function InboxPage() {
             {visible.map((item, idx) => {
               const lc = LEVEL_COLOR[item.level];
               const srcColor = SOURCE_COLORS[item.source] || SOURCE_COLORS.Default;
+              const expanded       = expandedId === item.id;
+              const roles          = item.metadata?.affected_roles || [];
+              const recommendation = (item.body || '').split('\n\nDraft ready:\n')[0];
               return (
-                <div key={item.id || idx} onClick={() => item.unread && markRead(item.id)} style={{
-                  padding: '13px 15px',
+                <div key={item.id || idx} style={{
                   background: item.unread ? (lc ? c.d ? `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.05)` : `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.03)` : c.row) : c.subtle,
                   border: `1px solid ${item.unread ? (lc ? `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.2)` : c.rowBorder) : c.subtleBorder}`,
                   borderLeft: lc && item.unread ? `3px solid ${lc}` : undefined,
                   borderRadius: lc && item.unread ? '0 9px 9px 0' : 9,
-                  display: 'flex', gap: 12, cursor: 'pointer', transition: 'background 0.15s',
+                  transition: 'background 0.15s',
                 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 8, background: srcColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{item.icon || item.source?.charAt(0)}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: item.unread ? 500 : 400, color: item.unread ? c.text : c.text2 }}>{item.title}</span>
-                      {item.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', flexShrink: 0 }} />}
+                  {/* Header row — click to expand/collapse */}
+                  <div onClick={() => toggleExpand(item)} style={{ display: 'flex', gap: 12, cursor: 'pointer', padding: '13px 15px' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: srcColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{item.icon || item.source?.charAt(0)}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: item.unread ? 500 : 400, color: item.unread ? c.text : c.text2 }}>{item.title}</span>
+                        {item.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', flexShrink: 0 }} />}
+                      </div>
+                      {!expanded && (
+                        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{recommendation}</div>
+                      )}
+                      <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</span>
+                        {item.draft && !expanded && (
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 6, padding: '2px 7px' }}>✎ DRAFT</span>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.body}</div>
-                    <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</span>
+                    <span style={{ alignSelf: 'flex-start', marginTop: 2, color: c.text4, fontSize: 12, transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }}>▸</span>
+                  </div>
+
+                  {/* Inline detail panel */}
+                  {expanded && (
+                    <div style={{ padding: '0 15px 14px 57px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {recommendation && (
+                        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text2, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{recommendation}</div>
+                      )}
+                      {roles.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.08em' }}>ROUTED TO</span>
+                          {roles.map(r => (
+                            <span key={r} style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.06em', color: c.text3, background: c.subtle, border: `1px solid ${c.cardBorder}`, borderRadius: 5, padding: '2px 7px', textTransform: 'uppercase' }}>{r}</span>
+                          ))}
+                        </div>
+                      )}
                       {item.draft && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
-                          style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 6, padding: '3px 9px', cursor: 'pointer', transition: 'all 0.15s' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(65,114,245,0.16)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(65,114,245,0.09)'; }}>
-                          ✎ USE DRAFT
-                        </button>
+                        <div style={{ border: '1px solid rgba(65,114,245,0.22)', background: 'rgba(65,114,245,0.05)', borderRadius: 9, padding: '12px 13px' }}>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 7 }}>✎ DRAFT — READY TO POST</div>
+                          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{item.draft}</div>
+                          <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
+                              style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                              ✎ REFINE IN DAEMON
+                            </button>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); copyDraft(item); }}
+                              style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                              {copiedId === item.id ? 'COPIED ✓' : 'COPY'}
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
