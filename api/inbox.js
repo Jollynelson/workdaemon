@@ -43,20 +43,23 @@ export default async function handler(req, res) {
 
   // Shape rows into the fields the Inbox UI expects (unread/time/level/icon).
   const SEV_LEVEL = { critical: 'danger', warning: 'warning' };
-  const items = (rows ?? []).map(r => ({
+  const SRC = { daemon: { label: 'Daemon', icon: 'WD' }, slack: { label: 'Slack', icon: 'SL' } };
+  const items = (rows ?? []).map(r => {
+    const src = SRC[r.source] || { label: r.source ? r.source[0].toUpperCase() + r.source.slice(1) : 'Daemon', icon: undefined };
+    return ({
     id:        r.id,
     type:      r.type,
     title:     r.title,
     body:      r.body,
-    source:    r.source === 'daemon' ? 'Daemon' : (r.source || 'Daemon'),
-    icon:      r.source === 'daemon' ? 'WD' : undefined,
+    source:    src.label,
+    icon:      src.icon,
     level:     SEV_LEVEL[r.metadata?.severity],
     unread:    !r.read,
     time:      r.created_at ? new Date(r.created_at).toLocaleString() : '',
     draft:     r.metadata?.draft || null,
     findingId: r.metadata?.finding_id || null,
     metadata:  r.metadata ?? null,
-  }));
+  }); });
 
   return res.status(200).json({ items });
 }

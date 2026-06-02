@@ -142,3 +142,20 @@ Everything else: [`docs/integrations/CATALOG.md`](docs/integrations/CATALOG.md).
 5. Set them in Vercel env (Production + Preview): `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
    (tell Claude — it sets them via the Vercel API, like `CRON_SECRET`), then redeploy.
 6. App → **Integrations** → Slack now shows **Connect** → consent → connected. Done → tick Slack in the catalog.
+
+### ▶ Real-time (Events API) — for proactive alerts + brain learning
+So the daemon reacts the moment something happens (you're @mentioned, a thread heats up) and the brain learns from the live stream:
+1. **Basic Information → Signing Secret** → set `SLACK_SIGNING_SECRET` in Vercel (Prod+Preview).
+   *(Must be set BEFORE step 3 — Slack signs the verification request.)*
+2. Redeploy.
+3. **Event Subscriptions** → toggle **On** → **Request URL:** `https://workdaemon-prod.vercel.app/api/slack/events`
+   (Slack pings it; we answer the `url_verification` challenge → "Verified ✓").
+4. **Subscribe to bot events:** `message.channels` (public), `message.groups` (private),
+   `message.im`, `message.mpim`, `app_mention`. Save → reinstall the app to add the events scopes.
+5. **Invite the bot** to the channels you want watched (`/invite @WorkDaemon`) — Slack only
+   delivers events from channels the bot is in.
+- Built: `api/_lib/connectors/slack_events.js` (signature-verified, fast-ack + `waitUntil`),
+  hosted in `api/overview.js` (bodyParser off) via a `/api/slack/events` rewrite. Stores to
+  `slack_messages`; @mentions → the mentioned member's inbox (resolved by email → `slack_user_map`).
+- Next increment: **brain pulse** — periodic LLM over recent `slack_messages` → findings
+  ("argument brewing in #engineering", "decision needed in #product") routed to the right roles.

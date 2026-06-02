@@ -1,7 +1,29 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { enforceRateLimit } from './_lib/security.js';
+import { waitUntil } from '@vercel/functions';
+import { readRawBody, verifySlackSignature, processSlackEvent } from './_lib/connectors/slack_events.js';
+
+// Raw body needed to verify Slack's signature — disable Vercel's parser. This
+// route is otherwise GET-only (no parsed body needed), so this is safe.
+export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
+  // ── Slack Events API endpoint (POST /api/slack/events → rewritten here) ──────
+  if (req.method === 'POST' && req.query.__slack === 'events') {
+    const raw = await readRawBody(req);
+    if (!verifySlackSignature(raw, req.headers)) return res.status(401).json({ error: 'bad signature' });
+    let payload;
+    try { payload = JSON.parse(raw); } catch { return res.status(400).json({ error: 'bad payload' }); }
+    // url_verification must answer with the challenge synchronously.
+    if (payload.type === 'url_verification') {
+      return res.status(200).json(await processSlackEvent(adminClient(), payload));
+    }
+    // Ack within Slack's 3s window; process in the background (waitUntil keeps
+    // the function alive so the work actually completes).
+    waitUntil(processSlackEvent(adminClient(), payload).catch(e => console.error('[slack_events]', e.message)));
+    return res.status(200).json({ ok: true });
+  }
+
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   const user = await requireAuth(req, res);
