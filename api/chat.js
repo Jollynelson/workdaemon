@@ -4,6 +4,53 @@ import {
   assertSafeUrl, decryptSecret, enforceRateLimit,
   sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
 } from './_lib/security.js';
+import { braveSearchMany } from './_lib/research.js';
+
+// ── Live web search (retrieval augmentation for the daemon chat) ──────────────
+// Trigger words that mean the user wants fresh / external info.
+const SEARCH_TRIGGER = /\b(search|google|look\s?up|browse|online|web|latest|news|recent(?:ly)?|current(?:ly)?|today|tonight|this\s+(?:week|month|year)|right\s+now|happening|trending|headlines?|updates?|breaking|price|market)\b/i;
+const FRESH_TRIGGER  = /\b(latest|news|recent(?:ly)?|today|tonight|this\s+(?:week|month)|right\s+now|happening|trending|headlines?|currently|updates?|breaking)\b/i;
+
+function wantsWebSearch(text) {
+  if (!text) return false;
+  if (text === '[SESSION_START]' || text === '[SESSION_RESUME]') return false;
+  if (/^CONFIRMED —/.test(text)) return false;
+  return SEARCH_TRIGGER.test(text);
+}
+
+async function runWebSearch(userText, { wsName, wsIndustry, companyDesc }) {
+  const freshness = FRESH_TRIGGER.test(userText) ? 'pw' : null; // past week
+  const queries = [];
+  const cleaned = userText
+    .replace(/\b(search(\s+online|\s+the\s+web)?|google|look\s?up|browse)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned) queries.push(cleaned.slice(0, 200));
+  // If the question names the company, add a scoped query for richer grounding.
+  if (wsName) {
+    const esc = wsName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(esc, 'i').test(userText)) {
+      queries.push([wsName, wsIndustry, companyDesc].filter(Boolean).join(' ').slice(0, 200));
+    }
+  }
+  if (!queries.length) return { grounded: false, snippets: [] };
+  return braveSearchMany([...new Set(queries)], { count: 6, freshness });
+}
+
+// Format fetched results as delimited UNTRUSTED context (web text can carry
+// prompt-injection, so it must never sit in instruction position).
+function buildWebContext(web, { attempted }) {
+  if (web?.snippets?.length) {
+    const lines = web.snippets.slice(0, 6).map((s, i) =>
+      `${i + 1}. ${s.title || '(untitled)'}${s.age ? ` [${s.age}]` : ''}\n   ${s.description || ''}\n   ${s.url || ''}`
+    ).join('\n');
+    return `\nLIVE WEB RESULTS — you ran a live web search just now for this query; these are fresh external facts:\n${delimitUntrusted(lines, 5000)}\nGround your answer in these results and cite sources inline as (domain.com). You DID perform a live web search — never claim you "cannot search online".\n`;
+  }
+  if (attempted) {
+    return `\nWEB SEARCH: ran a live search for this query but it returned no usable results. Answer from your general knowledge and briefly note the search was thin — do NOT claim you are permanently unable to search the web.\n`;
+  }
+  return '';
+}
 
 // ── Tool permission map (from agent access_level) ─────────────────────────────
 const TOOL_PERMISSIONS = {
@@ -243,7 +290,7 @@ function buildAgentContext(agentProfile) {
 }
 
 // ── System prompt builder ─────────────────────────────────────────────────────
-function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings) {
+function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '') {
   // Identity fields are user-/admin-supplied free text. Sanitize to a single
   // short line each so they cannot smuggle instructions into the system prompt.
   const safeName  = sanitizeForPrompt(profile?.name, 80).replace(/\s+/g, ' ').trim();
@@ -299,10 +346,11 @@ ROLE-TAILORED MINDSET:
 This daemon is tuned for a ${roleLabel}${wsIndustry ? ` in ${wsIndustry}` : ''}. Think and speak the way a great chief-of-staff for a ${roleLabel} would: know what a ${roleLabel} cares about, the metrics they watch, the fires they fight, and the language they use. Lead with that lens in every answer — you already know what this role is about; you don't need to ask.
 
 KNOWLEDGE POLICY — be genuinely useful, not a dead end:
-You have broad general knowledge about ${wsIndustry || 'this industry'}, the ${roleLabel} function, best practices, frameworks, and the kinds of topics, themes and trends that move this field. SHARE IT. When asked about news, trends, "what's happening", or anything industry/role-related, give a substantive, confident answer from your knowledge — relevant trends, what they imply, and what a ${roleLabel} should do about them. Add ONE honest caveat at most ("for live, dated headlines, connect a feed"), then keep being useful. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
+You have broad general knowledge about ${wsIndustry || 'this industry'}, the ${roleLabel} function, best practices, frameworks, and the kinds of topics, themes and trends that move this field. SHARE IT. When asked about news, trends, "what's happening", or anything industry/role-related, give a substantive, confident answer.
+WEB SEARCH: You CAN search the live web. When the user asks for news/latest/online info, a search runs automatically and fresh results appear under "LIVE WEB RESULTS" — use and cite them. NEVER say "I cannot perform live online searches" or "I cannot search online"; that is false. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
 
 ${UNTRUSTED_DATA_NOTICE}
-${agentContext}${companyContext}${memoriesContext}${huntContext}
+${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}
 BLOCK TYPES — use these schemas exactly:
 
 {"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${safeName || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${wsName || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"0 sources indexed — connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"},{"label":"Brain Intelligence","status":"${huntFindings?.length ? 'ok' : 'pending'}","detail":"${huntFindings?.length ? `${huntFindings.length} active findings` : 'No patterns detected yet'}"}]}
@@ -363,7 +411,7 @@ SESSION RESUME — when message is "[SESSION_RESUME]":
 Do NOT repeat the boot block. Return ONE short text block: a warm one-line "welcome back, ${firstName || 'there'}". Then look at the conversation history above and pick up the LAST unresolved thread — if the prior user message was a real question (e.g. about their field, a task, a metric), answer it now using your general knowledge, don't just say "welcome back". Reference it specifically. Keep it tight. End with 3 suggestions that continue that thread.
 
 LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. Direct, warm, and competent — a sharp chief-of-staff for a ${roleLabel}.
-Never: "As an AI", "I don't have access", "I'm just a demo", "I am a brain", visible reasoning.
+Never: "As an AI", "I don't have access", "I'm just a demo", "I am a brain", "I cannot search online", visible reasoning.
 End with exactly 3 specific actionable suggestions tuned to a ${roleLabel}.`;
 }
 
@@ -501,12 +549,31 @@ export default async function handler(req, res) {
 
   const trimmed = combined.length > 16 ? combined.slice(-16) : combined;
 
+  // Live web search: when the latest user message asks for fresh/external info,
+  // fetch results now and ground the answer in them (retrieval augmentation).
+  let webContext = '';
+  if (newMsgNormalized?.role === 'user' && wantsWebSearch(newMsgNormalized.content)) {
+    try {
+      const wsObj = Array.isArray(profile?.workspaces) ? profile.workspaces[0] : profile?.workspaces;
+      const web = await runWebSearch(newMsgNormalized.content, {
+        wsName:      wsObj?.name,
+        wsIndustry:  wsObj?.industry,
+        companyDesc: wsObj?.context?.description,
+      });
+      webContext = buildWebContext(web, { attempted: true });
+      console.log('[chat] web search grounded=%s snippets=%d', !!web?.grounded, web?.snippets?.length || 0);
+    } catch (e) {
+      console.warn('[chat] web search failed:', e.message);
+    }
+  }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
     memories || [],
     agentProfile ?? null,
     huntFindings,
+    webContext,
   );
 
   // Resolve AI provider key
