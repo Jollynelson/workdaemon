@@ -3,30 +3,64 @@
 _Last updated: 2026-06-02 · HEAD `52eec33` on `origin/main` (proactive Company Brain shipped + deployed + verified)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
-(`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
-`project_final_buildspec.md`.
+(`~/.claude/projects/-Users-mac-workdaemon/memory/`) — for the **live Vercel app**
+(most work) start with `project-proactive-brain.md` + `project_security_hardening.md`;
+for the **Modal/Hermes model track** see `project_final_buildspec.md`.
 
 ## What this is
-Per-company AI "brain" platform (WorkDaemon_FINAL_BuildSpec). Each company gets an
-isolated brain that learns from its own usage. **DeepSeek V4** does reasoning
-(hosted API); each company also trains its **own Hermes-3 LoRA** (`wd-{company_id}`)
-on a 48h cycle — agent chat routes to the company's own model when it has one, else
-DeepSeek (hybrid). Free local embeddings (fastembed) for RAG. Self-hosted is the
-committed direction (not DeepSeek-only) — see `decision-self-hosted-brain.md`.
+Per-company AI "brain" platform. Each company gets an isolated **daemon** (the per-user
+agent users chat with) backed by a company-wide **Company Brain** (knowledge graph,
+cross-user patterns, external-news findings) that learns from its own usage. Daemon ≠
+Brain: the daemon is per-user and draws on the shared Brain (see
+`project-daemon-architecture.md`).
 
-## Architecture (3 live Modal apps + Supabase + frontend)
-- `workdaemon-backend` (CPU, scale-to-zero) — FastAPI: agents, chat, RAG, tasks,
-  hunts, integrations. URL: https://nelsonanyanime--workdaemon-backend-fastapi-app.modal.run
-- `workdaemon-serving` (T4, **scale-to-zero**, idle=$0) — serves per-company models.
-  Now exposes `/api/serve/warm` (Modal `.spawn()`, non-blocking) + `/api/serve/ready`
-  (reads the `serving_heartbeat` table — never wakes the GPU).
-- `workdaemon-finetuning` — training: `run_training` (GPU), `run_company_remote`,
-  scheduled `training_cycle` (modal.Cron, 48h).
-- Supabase (Postgres + pgvector) — data, RAG (`memory_chunks`), isolation.
-- Frontend: existing Vite/React app (`src/`), talks to backend via
-  `src/lib/brainApi.js` + `VITE_BRAIN_API_URL`. **Deployed on Vercel via GitHub
-  git-integration: merge to `main` → auto Production deploy at `workdaemon.vercel.app`;
-  branch push → Preview.** (No manual frontend deploy needed.)
+**Two implementation tracks — know which you're touching:**
+1. **LIVE PRODUCT (primary): the Vercel app** — `api/` serverless + `src/` React/Vite +
+   Supabase. This is what users actually use at **workdaemon-prod.vercel.app**, and where
+   ALL recent work ships (security hardening, signup research, the proactive Company
+   Brain). Reasoning runs on a **pluggable per-workspace provider key** (OpenRouter /
+   Anthropic / OpenAI / Google / Mistral / DeepSeek / Azure / Ollama / **Modal**),
+   resolved in `api/chat.js` (`use_case='reasoning'` → workspace `openrouter_key` → env
+   `ANTHROPIC_API_KEY` Sonnet fallback). DeepSeek powers research/scanner synthesis.
+2. **SELF-HOSTED MODEL TRACK (in progress / optional): Modal + per-company Hermes** —
+   the `WorkDaemon_FINAL_BuildSpec` direction: **DeepSeek V4** brain + each company's
+   **own Hermes-3 LoRA** (`wd-{company_id}`, 48h train cycle), self-hosted per-company
+   models being the committed long-term differentiation (`decision-self-hosted-brain.md`).
+   The live app can reach it **only if a workspace configures the `modal` provider** —
+   it is NOT the default daemon path, and per `project_hermes_serving_gap.md` the
+   per-company Hermes serving is not yet wired in as standard. `backend/` + `finetuning/`.
+
+## Architecture
+### Live production stack (Vercel) — what everything recent targets
+- **`api/*` serverless functions** (Node, Vercel): `chat`, `brain`, `inbox`, `tasks`,
+  `overview`, `auth/*`, `workspace/*`, `user/*`. Shared libs in `api/_lib/`
+  (`security`, `supabase`, `research`, `research_actions`).
+- **Supabase** (Postgres + pgvector) — all app data: profiles/workspaces, `daemon_messages`,
+  `daemon_memory`, `brain_interactions`, `hunt_findings`, `inbox_items`, `workspace_api_keys`.
+  Local `.env`'s `DATABASE_URL_UNPOOLED` IS this prod DB (migrations applied via `pg`).
+- **Frontend** (`src/`, React/Vite). `useBrainFetch` calls `VITE_BRAIN_API_URL` if set,
+  else the Vercel `/api/*` routes — **and `VITE_BRAIN_API_URL` is NOT set in prod**, so
+  the live app runs entirely on the Vercel functions (not the Modal backend).
+- **Deploy**: GitHub git-integration → merge to `main` = auto Production deploy at
+  **workdaemon-prod.vercel.app** (the `workdaemon` project is a stale empty duplicate);
+  branch push → Preview. **Hobby plan caps a deployment at 12 serverless functions and
+  `api/` is AT the cap** — new capabilities ship as actions/branches inside existing
+  routes, never new files. `vercel.json` holds the daily brain-scan **cron** + security
+  headers. Env/secrets best set via the Vercel REST API (CLI 54 can't take stdin); env
+  changes need a new deployment (`vercel redeploy <prodUrl>`; CLI `--prod` fails on the
+  165MB local dir).
+
+### Self-hosted per-company model track (Modal) — in progress / optional
+- `workdaemon-backend` (CPU, scale-to-zero) — FastAPI: agents, chat, RAG, tasks, hunts,
+  integrations. URL: https://nelsonanyanime--workdaemon-backend-fastapi-app.modal.run
+- `workdaemon-serving` (T4, **scale-to-zero**, idle=$0) — serves per-company models;
+  `/api/serve/warm` (`.spawn()`) + `/api/serve/ready` (reads `serving_heartbeat`, never
+  wakes the GPU).
+- `workdaemon-finetuning` — `run_training` (GPU), `run_company_remote`, scheduled
+  `training_cycle` (modal.Cron, 48h). Free local embeddings (fastembed) for RAG.
+- Reachable from the live app via the `api/chat.js` `modal` provider (serving base URL +
+  `company_id`); the dated "Instant-response chat" / "Daemon UX" milestones below were on
+  THIS Modal backend, predating the move of active work to the Vercel app.
 
 ## Production-ready for PILOT companies ✅ (6-task program)
 1. ✅ RAG (pgvector, live)         4. ✅ Training on (autonomous 48h)
