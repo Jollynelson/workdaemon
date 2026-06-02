@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { getAccessToken } from '../oauth.js';
-import { findUserById } from './slack.js';
+import { findUserById, sendChannelMessage, channelHistory } from './slack.js';
+import { resolveLLM, callLLM } from '../research.js';
+import { delimitUntrusted } from '../security.js';
 
 // ── Slack Events API ingestion ────────────────────────────────────────────────
 // Slack POSTs each event to our endpoint. We verify the signature over the RAW
@@ -122,6 +124,45 @@ async function handleMessage(db, workspaceId, ev, eventId) {
   }
 }
 
+// When @workdaemon is mentioned, reply in the thread as the company's daemon.
+async function respondToMention(db, workspaceId, ev) {
+  const botToken = await getAccessToken(db, workspaceId, 'slack', 'bot');
+  if (!botToken) return;
+  const text = (ev.text || '').replace(/<@[A-Z0-9]+>/g, '').trim(); // strip the @bot
+  if (!text) return;
+
+  const llm = await resolveLLM(workspaceId, db);
+  if (!llm) return;
+
+  const { data: ws } = await db.from('workspaces')
+    .select('name, industry, location, context').eq('id', workspaceId).single();
+  const company = ws?.name || 'the company';
+
+  // Light grounding: a few recent messages from this channel (untrusted → delimited).
+  let recent = '';
+  try {
+    const msgs = await channelHistory(botToken, ev.channel, { limit: 8 });
+    if (msgs.length) recent = '\nRecent messages in this channel (context):\n'
+      + delimitUntrusted(msgs.reverse().map(m => m.text).join('\n'), 2000);
+  } catch {}
+
+  const sys = `You are WorkDaemon, ${company}'s AI work assistant, replying INSIDE a Slack thread. `
+    + `Be genuinely helpful and concise (1–5 sentences). Use Slack mrkdwn (*bold*, _italic_, • bullets, \`code\`). `
+    + `${ws?.industry ? `${company} is a ${ws.industry} company${ws.location ? ` in ${ws.location}` : ''}. ` : ''}`
+    + `You can answer questions and reason over the conversation. If asked to perform an action that changes things `
+    + `(posting elsewhere, scheduling, creating channels), say what you'd do and that it needs confirmation in the WorkDaemon app for now. `
+    + `Never invent company-internal facts you don't have.`;
+
+  let reply;
+  try {
+    reply = (await callLLM(llm, sys, `${text}${recent}`, { maxTokens: 600 })).trim();
+  } catch (e) { console.error('[slack_events] respond llm error:', e.message); return; }
+  if (!reply) return;
+
+  await sendChannelMessage(botToken, { channel: ev.channel, text: reply, thread_ts: ev.thread_ts || ev.ts })
+    .catch(e => console.error('[slack_events] post reply error:', e.message));
+}
+
 // Entry point — called by the host route after signature verification.
 // Returns { challenge } for url_verification, else processes the event.
 export async function processSlackEvent(db, payload) {
@@ -133,8 +174,12 @@ export async function processSlackEvent(db, payload) {
 
   const ev = payload.event;
   try {
-    if (ev.type === 'message') await handleMessage(db, workspaceId, ev, payload.event_id);
-    else if (ev.type === 'app_mention') await handleMessage(db, workspaceId, ev, payload.event_id);
+    if (ev.type === 'message') {
+      await handleMessage(db, workspaceId, ev, payload.event_id);
+    } else if (ev.type === 'app_mention') {
+      await handleMessage(db, workspaceId, ev, payload.event_id); // store it too
+      await respondToMention(db, workspaceId, ev);                // @workdaemon replies in-thread
+    }
   } catch (e) {
     console.error('[slack_events] process error:', e.message);
   }

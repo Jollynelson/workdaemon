@@ -1,0 +1,80 @@
+# WorkDaemon — Slack app manifest
+# Create the app in one shot: https://api.slack.com/apps → Create New App →
+# "From an app manifest" → pick your workspace → paste this YAML.
+# It pre-configures OAuth scopes, the redirect URL, the Events request URL, the
+# bot user, and App Home — matching our backend exactly (api/_lib/oauth.js +
+# api/_lib/connectors/slack*.js). After creating: Install to Workspace, then copy
+# Client ID / Client Secret / Signing Secret to Vercel env.
+#
+# Order that matters: set SLACK_SIGNING_SECRET in Vercel + redeploy BEFORE Slack
+# verifies the event Request URL (Slack signs the verification request).
+
+display_information:
+  name: WorkDaemon
+  description: Your company's AI daemon in Slack — reads channels in real time, flags what matters, learns from conversations, and acts on your behalf.
+  background_color: "#045abd"
+  long_description: |
+    WorkDaemon is your company's AI brain, connected to Slack.
+
+    Once connected, WorkDaemon can:
+    • Watch your channels in real time and surface what needs your attention — when you're @mentioned, when a key thread heats up, or when a decision is needed.
+    • Answer right inside Slack — @mention WorkDaemon in any thread and it replies with context from your conversation.
+    • Learn from your team's conversations to build company-wide intelligence, so it answers with real context instead of guesses.
+    • Take action on your behalf (with your permission) — post updates, reply in threads, schedule messages, set reminders, manage channels, and more.
+
+    You stay in control: WorkDaemon only accesses the channels it's invited to, every token is encrypted at rest, and every action follows your permission level.
+
+features:
+  bot_user:
+    display_name: WorkDaemon
+    always_online: true
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  redirect_urls:
+    - https://workdaemon-prod.vercel.app/api/oauth
+  scopes:
+    # User token scopes — only what truly needs to act as the user.
+    user:
+      - search:read
+      - users.profile:write
+    # Bot token scopes — the read + action toolset.
+    bot:
+      - app_mentions:read
+      - channels:read
+      - channels:history
+      - channels:manage
+      - groups:read
+      - groups:write
+      - groups:history
+      - im:read
+      - im:write
+      - im:history
+      - mpim:read
+      - mpim:history
+      - chat:write
+      - reactions:read
+      - reactions:write
+      - users:read
+      - users:read.email
+      - team:read
+      - reminders:write
+      - canvases:write
+
+settings:
+  event_subscriptions:
+    request_url: https://workdaemon-prod.vercel.app/api/slack/events
+    bot_events:
+      - app_mention        # @workdaemon → it replies in-thread
+      - message.channels   # public channels the bot is in
+      - message.groups     # private channels the bot is in
+      - message.im         # DMs with the bot
+      - message.mpim       # group DMs the bot is in
+  interactivity:
+    is_enabled: false      # not using buttons/modals yet (add later for in-Slack confirms)
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

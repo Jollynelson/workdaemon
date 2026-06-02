@@ -30,7 +30,7 @@ export const PROVIDERS = {
       'im:read', 'im:write', 'im:history', 'mpim:read', 'mpim:history',
       'chat:write', 'reactions:read', 'reactions:write',
       'users:read', 'users:read.email', 'team:read',
-      'reminders:write', 'canvases:write',
+      'reminders:write', 'canvases:write', 'app_mentions:read',
     ],
     // User scopes — only what truly needs a user token: search, status, profile.
     userScopes: ['search:read', 'users.profile:write'],

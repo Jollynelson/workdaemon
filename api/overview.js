@@ -18,6 +18,9 @@ export default async function handler(req, res) {
     if (payload.type === 'url_verification') {
       return res.status(200).json(await processSlackEvent(adminClient(), payload));
     }
+    // Slack retries on a slow ack — we already process via waitUntil, so skip
+    // retries to avoid double-replying / double-processing.
+    if (req.headers['x-slack-retry-num']) return res.status(200).json({ ok: true });
     // Ack within Slack's 3s window; process in the background (waitUntil keeps
     // the function alive so the work actually completes).
     waitUntil(processSlackEvent(adminClient(), payload).catch(e => console.error('[slack_events]', e.message)));
