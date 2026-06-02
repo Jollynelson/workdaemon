@@ -325,7 +325,7 @@ function buildAgentContext(agentProfile) {
 }
 
 // ── System prompt builder ─────────────────────────────────────────────────────
-function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '') {
+function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '', connectedTools = []) {
   // Identity fields are user-/admin-supplied free text. Sanitize to a single
   // short line each so they cannot smuggle instructions into the system prompt.
   const safeName  = sanitizeForPrompt(profile?.name, 80).replace(/\s+/g, ' ').trim();
@@ -431,6 +431,9 @@ Open with text (or boot at session start). 2–5 blocks max.
 
 ACCESS LEVEL — ${accessLevel.toUpperCase()}: Authorized tools for this user: ${tools.join(', ')}.
 Only reference data from these tools. Never reveal data from unauthorized systems.
+${connectedTools.length
+  ? `CONNECTED INTEGRATIONS (LIVE — real data available now): ${connectedTools.join(', ')}. These ARE connected; use them confidently and never claim they're unconnected or "not set up".`
+  : 'No external tools connected yet — offer to connect them (Integrations page), and meanwhile be useful from general knowledge + web search.'}
 
 PERMISSION: L1=read only | L2=action_confirm then wait | L3=execute then action_done
 
@@ -551,6 +554,17 @@ export default async function handler(req, res) {
     huntFindings = findings || [];
   }
 
+  // Connected integrations → tell the daemon which tools are actually live.
+  let connectedTools = [];
+  if (workspaceId) {
+    const { data: integ } = await db
+      .from('workspace_integrations')
+      .select('provider')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'connected');
+    connectedTools = (integ || []).map(i => i.provider);
+  }
+
   // Load recent DB history for persistent context
   const { data: dbHistory } = await db
     .from('daemon_messages')
@@ -610,6 +624,7 @@ export default async function handler(req, res) {
     agentProfile ?? null,
     huntFindings,
     webContext,
+    connectedTools,
   );
 
   // Resolve AI provider key

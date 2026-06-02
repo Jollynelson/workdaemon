@@ -9,6 +9,7 @@
     { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" }
   ],
   "rewrites": [
+    { "source": "/api/oauth", "destination": "/api/workspace/settings" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

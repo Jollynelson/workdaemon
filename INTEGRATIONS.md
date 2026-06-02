@@ -57,7 +57,7 @@ provisioning with the 🔑 status.
 ### P0 · Launch-critical (the daemon's core company data)
 | App | Category | Auth | OAuth docs | Status |
 |-----|----------|------|-----------|--------|
-| Slack | Comms | OAuth2 | https://api.slack.com/authentication/oauth-v2 | ⬜ |
+| Slack | Comms | OAuth2 | https://api.slack.com/authentication/oauth-v2 | 🔨 code done, needs creds |
 | Gmail | Email | OAuth2 (Google) | https://developers.google.com/gmail/api/auth/scopes | ⬜ |
 | Google Drive | Storage/Docs | OAuth2 (Google) | https://developers.google.com/drive/api/guides/about-auth | ⬜ |
 | Google Calendar | Calendar | OAuth2 (Google) | https://developers.google.com/calendar/api/auth | ⬜ |
@@ -117,10 +117,21 @@ Everything else: [`docs/integrations/CATALOG.md`](docs/integrations/CATALOG.md).
 ---
 
 ## Build order checklist (foundation before connectors)
-- [ ] `workspace_integrations` table (encrypted tokens) + migration
-- [ ] `api/_lib/oauth_providers.js` registry
-- [ ] `GET /api/oauth` (start + callback, state signing, token exchange, refresh)
-- [ ] `api/_lib/connectors/` base (authed fetch + refresh + rate-limit)
-- [ ] Integrations UI: Connect/Disconnect/status (replace the placeholder route)
-- [ ] Daemon wiring: connected tools → `TOOL_PERMISSIONS` reads + L2/L3 actions
-- [ ] First connector end-to-end: **Slack** (P0) as the reference implementation
+- [x] `workspace_integrations` table (encrypted tokens) + migration `migration_workspace_integrations.sql` (applied to prod)
+- [x] Provider registry — `api/_lib/oauth.js` (`PROVIDERS`)
+- [x] `/api/oauth` start + callback (HMAC-signed state, token exchange, encrypted store) — hosted in `api/workspace/settings.js` via a `vercel.json` rewrite (no new function)
+- [x] Connector base — `api/_lib/connectors/slack.js` + `getAccessToken` (decrypt) in oauth.js
+- [x] Integrations UI — Connect/Disconnect/status (`IntegrationsPage`, replaces the placeholder route)
+- [x] Daemon awareness — connected tools injected into the chat system prompt (stops "no tools connected")
+- [ ] Daemon **data ingestion** — Slack reads (channels/history) into daemon context / knowledge graph (next increment)
+- [🔨] First connector end-to-end: **Slack** — code complete; **awaiting Slack app credentials** (see below)
+
+## ▶ Flip Slack live (needs YOU — one-time)
+1. Create a Slack app → https://api.slack.com/apps → "Create New App" (from scratch).
+2. **OAuth & Permissions** → Redirect URLs → add: `https://workdaemon-prod.vercel.app/api/oauth`
+   (and the preview URL if you use it). Save.
+3. **Bot Token Scopes** → add: `channels:read`, `channels:history`, `groups:read`, `users:read`, `team:read`.
+4. Copy **Client ID** and **Client Secret** (Basic Information).
+5. Set them in Vercel env (Production + Preview): `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
+   (tell Claude — it sets them via the Vercel API, like `CRON_SECRET`), then redeploy.
+6. App → **Integrations** → Slack now shows **Connect** → consent → connected. Done → tick Slack in the catalog.

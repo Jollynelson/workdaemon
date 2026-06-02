@@ -1,5 +1,8 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
 import { assertSafeUrl, encryptSecret, decryptSecret, enforceRateLimit, fail } from '../_lib/security.js';
+import {
+  PROVIDERS, providerConfigured, getRedirectUri, signState, buildAuthorizeUrl, handleOAuthCallback,
+} from '../_lib/oauth.js';
 
 // Fetch models from a provider's API (server-side to avoid CORS)
 async function fetchProviderModels(provider, apiKey, endpoint) {
@@ -104,6 +107,12 @@ async function checkAdmin(db, workspaceId, userId) {
 }
 
 export default async function handler(req, res) {
+  // OAuth callback (provider redirect to /api/oauth → rewritten here). No auth
+  // header — trust the HMAC-signed `state`. Handle before requireAuth.
+  if (req.method === 'GET' && req.query.code && req.query.state) {
+    return handleOAuthCallback(req, res, adminClient());
+  }
+
   const user = await requireAuth(req, res);
   if (!user) return;
 
@@ -116,6 +125,20 @@ export default async function handler(req, res) {
 
   // ── GET: list keys (masked) or proxy model fetch ─────────────────────────
   if (req.method === 'GET') {
+    // ?integrations=true — list available providers + this workspace's connections
+    if (req.query.integrations === 'true') {
+      const { data: rows } = await db
+        .from('workspace_integrations')
+        .select('provider, status, external_account, scopes, updated_at')
+        .eq('workspace_id', workspaceId);
+      const byProvider = Object.fromEntries((rows || []).map(r => [r.provider, r]));
+      const providers = Object.entries(PROVIDERS).map(([id, cfg]) => ({
+        id, label: cfg.label, configured: providerConfigured(id),
+        connection: byProvider[id] || null, // {status, external_account, scopes, updated_at} or null
+      }));
+      return res.status(200).json({ providers });
+    }
+
     // ?publishing=true — read the workspace's autonomous-publishing config
     if (req.query.publishing === 'true') {
       const { data: ws } = await db
@@ -172,6 +195,27 @@ export default async function handler(req, res) {
   // ── POST: validate key, save key ─────────────────────────────────────────
   if (req.method === 'POST') {
     const { action, provider, key, endpoint, model, use_case, label, id } = req.body ?? {};
+
+    // ── Integrations OAuth (admin) — handled before the API-key provider checks
+    // so a connector slug like 'slack' isn't rejected by the LLM-provider allowlist.
+    if (action === 'oauth_start' || action === 'oauth_disconnect') {
+      if (!(await checkAdmin(db, workspaceId, user.id))) return res.status(403).json({ error: 'Admin access required' });
+      const p = (req.body?.provider || '').toString();
+      if (!PROVIDERS[p]) return res.status(400).json({ error: 'Unknown integration provider' });
+
+      if (action === 'oauth_disconnect') {
+        const { error } = await db.from('workspace_integrations').delete()
+          .eq('workspace_id', workspaceId).eq('provider', p);
+        if (error) return fail(res, 500, 'Could not disconnect integration', error, 'settings');
+        return res.status(200).json({ ok: true });
+      }
+      // oauth_start → return the provider consent URL (UI redirects to it)
+      if (!providerConfigured(p)) {
+        return res.status(503).json({ error: `${PROVIDERS[p].label} isn't configured yet — app credentials are missing.` });
+      }
+      const state = signState({ workspace_id: workspaceId, user_id: user.id, provider: p });
+      return res.status(200).json({ url: buildAuthorizeUrl(p, { state, redirectUri: getRedirectUri(req) }) });
+    }
 
     // Type + length validation on every supplied field (reject malformed input early).
     const ALLOWED_PROVIDERS = ['openrouter', 'anthropic', 'openai', 'google', 'mistral', 'ollama', 'azure', 'modal', 'deepseek'];

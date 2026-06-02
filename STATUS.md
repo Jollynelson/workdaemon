@@ -129,14 +129,27 @@ _Compact log; deep detail in the linked memory files._
    fixes), a confirm UI in member/settings, and an owner-deletion decision (transfer
    vs. orphan, since SET NULL currently orphans owned workspaces). Code task, not a blocker.
 
-## Integrations (planned — Zapier-breadth, native OAuth)
-Big workstream scoped: native OAuth connectors so any company can connect its tools
-(the daemon reads/acts on real data). Master to-build list = the 9,637-app Zapier
-directory (`docs/integrations/CATALOG.md`, Zapier links stripped — we build each
-against the app's own OAuth). Architecture + priority order (P0 Slack/Google/MS/
-Notion/GitHub/Jira/HubSpot/Salesforce first) + per-app OAuth docs + Definition of Done
-in **`INTEGRATIONS.md`**. Key constraint: one `/api/oauth` route for all providers
-(12-fn Hobby cap). First connector to build: Slack (reference impl). Not started.
+## Integrations — native OAuth connectors (Zapier-breadth)
+Native OAuth connectors so any company connects its tools; daemon reads/acts on real
+data. Master to-build list = 9,637-app directory (`docs/integrations/CATALOG.md`, Zapier
+links stripped). Plan/priority/OAuth-docs/DoD in **`INTEGRATIONS.md`**.
+
+**Foundation BUILT (2026-06-02), deployed:**
+- `workspace_integrations` table — encrypted tokens (`migration_workspace_integrations.sql`, applied).
+- `api/_lib/oauth.js` — provider registry (`PROVIDERS`), HMAC-signed state, code exchange,
+  encrypted upsert (`encryptSecret`), `getAccessToken` (decrypt), `handleOAuthCallback`.
+- OAuth hosted in `api/workspace/settings.js` (NO new function — 12-fn cap): pre-auth
+  callback branch + POST `oauth_start`/`oauth_disconnect` + GET `?integrations=true`;
+  clean `/api/oauth` path via a `vercel.json` rewrite.
+- `api/_lib/connectors/slack.js` — Slack Web API reads (channels/history).
+- `IntegrationsPage` (replaces placeholder route) — Connect/Disconnect/status + banner.
+- chat.js injects connected tools into the daemon prompt (no more "no tools connected").
+- Verified: state sign/verify (+tamper reject), authorize-URL build, config detection.
+
+**Slack: code complete, needs creds.** Create a Slack app, add redirect
+`https://workdaemon-prod.vercel.app/api/oauth` + bot scopes, set `SLACK_CLIENT_ID`/
+`SLACK_CLIENT_SECRET` in Vercel (Prod+Preview) → redeploy → Connect. Steps in INTEGRATIONS.md.
+Next increment: Slack data ingestion into daemon context/knowledge graph.
 
 ## Known gaps (NOT blockers)
 - Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
