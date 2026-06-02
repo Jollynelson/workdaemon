@@ -651,6 +651,29 @@ export default function Onboarding() {
       }
       const body = await res.json().catch(() => ({}));
       if (body.inviteLink) setInviteLink(body.inviteLink);
+
+      // Fire-and-forget background research. Neither call blocks onboarding.
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      // (a) Per-user: research the role → role brief in the daemon's memory.
+      if (data.role) {
+        fetch('/api/user/research-role', {
+          method: 'POST', headers: authHeaders,
+          body: JSON.stringify({ role: data.role }),
+        }).catch(() => null);
+      }
+      // (b) Workspace: research the company, competitors & market → company
+      //     context + proactive competitor findings (the onboarding user is the
+      //     workspace admin, so this is authorised).
+      if (data.company) {
+        fetch('/api/workspace/research-company', {
+          method: 'POST', headers: authHeaders,
+          body: JSON.stringify({ company: data.company, industry: data.industry }),
+        }).catch(() => null);
+      }
+
       return true;
     } catch {
       setSaveErr('Unable to reach the server. Check your connection and try again.');
