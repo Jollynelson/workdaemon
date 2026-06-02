@@ -263,7 +263,7 @@ export default async function handler(req, res) {
         .in('id', userIds);
 
       const { data: agentProfiles } = await db
-        .from('agent_profiles')
+        .from('app_agent_profiles')
         .select('user_id, access_level, permitted_tools, trust_score, interaction_count, last_calibration')
         .eq('workspace_id', workspaceId);
 
@@ -355,7 +355,7 @@ export default async function handler(req, res) {
       if (permitted_tools) update.permitted_tools = permitted_tools.slice(0, 32);
 
       const { error } = await db
-        .from('agent_profiles')
+        .from('app_agent_profiles')
         .upsert({ user_id: target_user_id, workspace_id: workspaceId, ...update }, { onConflict: 'user_id' });
 
       if (error) return fail(res, 500, 'Could not update agent profile', error, 'brain');

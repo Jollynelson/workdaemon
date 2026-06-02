@@ -135,6 +135,21 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       return text;
     }
 
+    case 'deepseek': {
+      const client = new OpenAI({
+        baseURL: (endpoint || 'https://api.deepseek.com').replace(/\/$/, ''),
+        apiKey: api_key,
+      });
+      const r = await client.chat.completions.create({
+        model: model || 'deepseek-chat',
+        max_tokens: 4096,
+        messages: [{ role: 'system', content: sys }, ...messages],
+      });
+      const text = r.choices[0]?.message?.content ?? '';
+      console.log('[chat] deepseek text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
+      return text;
+    }
+
     case 'google': {
       const mdl = model || 'gemini-2.5-flash';
       const r = await fetch(
@@ -509,7 +524,7 @@ export default async function handler(req, res) {
 
   // Load agent profile (access level, trust score, interaction count)
   const { data: agentProfile } = await db
-    .from('agent_profiles')
+    .from('app_agent_profiles')
     .select('access_level, trust_score, interaction_count, permitted_tools')
     .eq('user_id', user.id)
     .single();
@@ -621,10 +636,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // Env fallback when a workspace has no key of its own — mirrors resolveLLM:
+  // DeepSeek first (the intended brain + already set in prod), then Anthropic,
+  // then OpenAI. This is what makes a brand-new workspace's daemon work
+  // out-of-the-box instead of 503-ing until an admin adds a key.
   if (!keyRow) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'No AI provider configured. Add a key in Settings.' });
-    keyRow = { provider: 'anthropic', api_key: apiKey, model: 'claude-sonnet-4-6' };
+    if (process.env.DEEPSEEK_API_KEY) {
+      keyRow = {
+        provider: 'deepseek',
+        api_key:  process.env.DEEPSEEK_API_KEY,
+        endpoint: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+        model:    'deepseek-chat',
+      };
+    } else if (process.env.ANTHROPIC_API_KEY) {
+      keyRow = { provider: 'anthropic', api_key: process.env.ANTHROPIC_API_KEY, model: 'claude-sonnet-4-6' };
+    } else if (process.env.OPENAI_API_KEY) {
+      keyRow = { provider: 'openai', api_key: process.env.OPENAI_API_KEY, model: 'gpt-4o' };
+    } else {
+      return res.status(503).json({ error: 'No AI provider configured. Add a key in Settings.' });
+    }
   }
 
   // Decrypt the stored key at the last moment (no-op for legacy plaintext / env keys).
@@ -696,7 +726,7 @@ export default async function handler(req, res) {
           });
 
           // 5. Increment interaction_count in agent_profile
-          await db.from('agent_profiles').upsert({
+          await db.from('app_agent_profiles').upsert({
             user_id:           user.id,
             workspace_id:      workspaceId,
             interaction_count: (agentProfile?.interaction_count || 0) + 1,

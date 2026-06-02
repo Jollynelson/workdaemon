@@ -64,6 +64,17 @@ Brain: the daemon is per-user and draws on the shared Brain (see
 
 ## Shipped milestones — Vercel app (current focus)
 _Compact log; deep detail in the linked memory files._
+- **Browser QA + two fixes** (06-02) — eyeballed prod end-to-end in a real browser
+  (agent-browser). Surfaced + fixed: **(1)** prod `agent_profiles` was the Modal track's
+  table (`company_id`/`staff_id`, FK→companies/staff), so the app's `user_id`/`access_level`
+  queries silently errored → every user defaulted to `junior` and interaction/trust
+  learning never persisted. Fix: gave the app its own `app_agent_profiles` table
+  (`migration_app_agent_profiles.sql`, applied) and repointed chat.js/brain.js. **(2)**
+  new workspaces 503'd ("No AI provider configured") because chat.js's only env fallback
+  was `ANTHROPIC_API_KEY` (unset in prod). Fix: fallback chain **DeepSeek → Anthropic →
+  OpenAI** (+ added a `deepseek` case to `callProvider`), so a fresh workspace's daemon
+  works out-of-the-box on the already-configured DeepSeek key. Reasoning provider per
+  workspace is still pluggable (`workspace_api_keys` `reasoning` → `openrouter_key` → env).
 - **Proactive Company Brain** (06-02) — daily 07:00 UTC `vercel.json` cron scans each
   company's market (Brave→DeepSeek) → role-targeted `hunt_findings` + auto-drafted social
   posts → inbox delivery + actions (mark-read, "Use draft", inline detail view). Plus
@@ -95,8 +106,10 @@ _Compact log; deep detail in the linked memory files._
    NOTION_/SLACK_/GOOGLE_CLIENT_ID+SECRET + a real ENCRYPTION_KEY.
    See `WHERE_TO_ADD_KEYS.md`. Then tell Claude → it refreshes the Modal secret
    `workdaemon-backend-secret` + redeploys so tools go live.
-2. **Eyeball the deployed app in a browser** — rich-block chat verified via API,
-   not yet visually.
+2. ✅ **DONE (2026-06-02)** — browser-eyeballed prod via agent-browser (throwaway
+   signup, cleaned up): login, full onboarding incl. the auto-detected location field,
+   app shell, Settings → L3 publishing, inbox push + inline detail view all render
+   correctly. Surfaced + fixed two issues — see the Browser-QA milestone above.
 3. Connect a real company's data (POST /api/integrations/connect) → first live
    ingest is the true test of the connectors.
 4. ✅ **DONE (2026-06-02)** — onboarding now captures a "primary market / location"
@@ -122,6 +135,12 @@ _Compact log; deep detail in the linked memory files._
   companies for many-companies-per-GPU economics.
 - RLS policies are no-ops today (isolation via service-role + CompanyDB); see
   `backend/SECURITY.md`.
+- **Shared-DB two-track table collisions** — the Vercel app and the Modal backend share
+  one Postgres. Where a v2 app migration used `create table if not exists` and the Modal
+  table already squatted the name with a different shape, the app silently ran on the
+  wrong schema (hit so far: `daemon_messages`/`daemon_memory`/`brain_interactions`/
+  `hunt_findings` → fixed earlier; `agent_profiles` → fixed via `app_agent_profiles`).
+  When adding app tables, check for a Modal-shaped table of the same name first.
 
 ## Commands
 ```
