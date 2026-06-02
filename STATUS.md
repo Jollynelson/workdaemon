@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-02 · HEAD `56d7096` on `origin/main` (security hardening shipped + deployed + verified)_
+_Last updated: 2026-06-02 · HEAD `52eec33` on `origin/main` (proactive Company Brain shipped + deployed + verified)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
@@ -111,6 +111,58 @@ end-to-end encryption round-trip).
   prod project is **`workdaemon-prod`** (the `workdaemon` project is a stale empty
   duplicate). Preview has NO Supabase/DB creds by design (inert; staging DB declined).
 
+## Proactive Company Brain ✅ (live in prod, 2026-06-02)
+The brain now watches the outside world and acts — scan → reason → route → draft →
+inbox → (optionally) auto-publish. All of it is **global** (runs for every workspace;
+verified findings created for Beta Tenant AND Falcon Technologies), not per-company code.
+Same daemon-prompt session also fixed: real current date injected, dropped the "Company
+Brain" self-identity (it's the per-user **daemon**, drawing on the company-wide Brain;
+"Brain · …" tags reserved for genuine brain-sourced intelligence), role-tailored persona,
+and the `[SESSION_RESUME]` sentinel no longer persists as a user bubble.
+
+- **Daemon live web search** — `api/chat.js` detects fresh-info intent (search/news/
+  latest/online/trending) on the latest user msg → `braveSearchMany` → injects delimited
+  (untrusted) "LIVE WEB RESULTS" into the system prompt; prompt forbids "I cannot search
+  online". Empty results → answer from knowledge, note it. (commit `adf1217`)
+- **External-news scanner** — `scanExternal`/`scanAllWorkspaces` in
+  `api/_lib/research_actions.js` (NOT new routes — api/ is AT the 12-fn Hobby cap). Per
+  workspace: Brave search scoped to industry + `workspaces.location` (past week) →
+  DeepSeek picks MATERIAL developments → deduped `hunt_findings` with `affected_roles`
+  (canonical ROLE_TAGS) + `recommendation` + optional `draft`. (commit `cf07646`)
+- **Trigger** — `GET /api/brain?action=scan_external` guarded by `CRON_SECRET` (branch
+  BEFORE `requireAuth`); **Vercel cron daily 07:00 UTC** (`vercel.json`); `api/brain.js`
+  `maxDuration` 60s. `CRON_SECRET` set via the **Vercel REST API** (CLI 54 can't take
+  stdin for `env add`; sensitive vars unreadable on `pull`) using the CLI auth token at
+  `~/Library/Application Support/com.vercel.cli/auth.json`; env changes need a NEW
+  deployment — empty commits / `vercel --prod` (165MB local dir > 100MB) DON'T work,
+  `vercel redeploy <prodUrl>` does. Verified live: correct secret → `{"ok":true,…}`,
+  wrong → 401.
+- **Auto-draft** — scan prompt also drafts a ready-to-post social asset for
+  marketing-routed content findings → `hunt_findings.draft`. (commit `bfd33ae`)
+- **Role-aware surfacing** — `api/chat.js` `roleToTags(title)` (shared in `research.js`);
+  `buildHuntContext` prioritizes findings routed to the user (CEO sees all), shows drafts,
+  raises them tagged "Brain · …".
+- **Inbox delivery + actions** — scanner pushes `inbox_items` (type 'alert', source
+  'daemon', metadata incl. `draft`) to members whose role matches `affected_roles`; sets
+  `pushed_to_inbox`. `api/inbox.js`: GET shapes rows (unread/time/level/icon/draft); POST
+  marks read/unread. `InboxPage`: click-to-read, MARK ALL READ, **inline detail view**
+  (expand body + role chips + draft card), **"Use draft"** seeds the daemon composer via
+  `sessionStorage` key `wd_daemon_seed`, Copy. (commits `4113f69`, `65a517d`, `8f16182`)
+- **L3 autonomous publishing** — opt-in, triple-gated. `workspaces.auto_publish` +
+  `publish_webhook_url` + `hunt_findings.auto_published`. When on, `scanExternal` POSTs
+  each content draft to the webhook (SSRF-guarded `assertSafeUrl` → Zapier/Make/n8n/Slack
+  → socials), marks `auto_published`, and pushes an "✓ Auto-posted" report (type 'update')
+  instead of a confirm-first draft. Settings → "Autonomous Publishing · Level 3"
+  (`settings.js` `?publishing=true` GET + `update_publishing` POST, admin-only, refuses
+  enable without webhook). Off by default. Verified: real POST to public webhook (payload
+  intact) + SSRF blocks internal/non-https. Not enabled on any real workspace. (commit `52eec33`)
+- **Location** — `workspaces.location` column; auto-detected from Vercel edge geo headers
+  (`security.detectLocation`), exposed via `/api/auth/me`, pre-fills a new Onboarding
+  "primary market" field, persisted by `api/user/setup.js`.
+- **Migrations applied to prod** (via pg over `DATABASE_URL_UNPOOLED`):
+  `migration_workspace_location.sql`, `migration_huntfindings_draft.sql`,
+  `migration_l3_autopublish.sql`. See memory `project-proactive-brain.md`.
+
 ## TO DO NEXT (needs YOU)
 1. **Paste tool OAuth keys** in root `.env` (placeholders ready):
    NOTION_/SLACK_/GOOGLE_CLIENT_ID+SECRET + a real ENCRYPTION_KEY.
@@ -120,10 +172,9 @@ end-to-end encryption round-trip).
    not yet visually.
 3. Connect a real company's data (POST /api/integrations/connect) → first live
    ingest is the true test of the connectors.
-4. **Add a `location` field to onboarding** (TO BE DONE LATER) — `research_company`
-   already infers/accepts `location`, but there's no onboarding step capturing it.
-   Add a location step in `Onboarding.jsx` (+ persist on workspace) so competitor
-   research can be location-aware ("competitors near you"). Code task, not a blocker.
+4. ✅ **DONE (2026-06-02)** — onboarding now captures a "primary market / location"
+   field (auto-detected from IP, user-confirmable) → `workspaces.location`, feeding the
+   proactive scanner's queries. See the Proactive Company Brain section above.
 5. **Delete-a-user from the app UI** (TO BE DONE LATER) — DB side already unblocked:
    `migration_user_delete_fkeys.sql` (commit `fdf6697`, applied to prod) set the four
    dangling `auth.users(id)` FKs (`workspaces.owner_id`, `tasks.assignee_id`,
@@ -153,6 +204,9 @@ cd backend && .venv/bin/python -m pytest -q
 cd backend && .venv/bin/python scripts/dry_run.py
 # apply a migration
 .venv/bin/python backend/scripts/apply_migration.py backend/migrations/00X.sql
+# manually trigger the proactive brain scan (daily cron runs this at 07:00 UTC)
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  "https://workdaemon-prod.vercel.app/api/brain?action=scan_external"
 # redeploy backend (app-stop busts Modal's stale src mount — see modal-mount-cache-gotcha)
 cd backend && /Users/mac/workdaemon/finetuning/.venv/bin/modal app stop workdaemon-backend --yes \
   && /Users/mac/workdaemon/finetuning/.venv/bin/modal deploy deploy/modal_app.py
