@@ -1,5 +1,5 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
-import { fail, enforceRateLimit, parseBody } from '../_lib/security.js';
+import { fail, enforceRateLimit, parseBody, detectLocation } from '../_lib/security.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -17,11 +17,14 @@ export default async function handler(req, res) {
     size:     { type: 'string', max: 40 },
     role:     { type: 'string', max: 120 },
     industry: { type: 'string', max: 120 },
+    location: { type: 'string', max: 120 },
     slug:     { type: 'string', max: 63, pattern: /^[a-z0-9-]+$/i },
   });
   if (!parsed) return;
   const { name, title, company, size, role, industry } = parsed;
   const slug = parsed.slug ? parsed.slug.toLowerCase() : null;
+  // Prefer the value the user confirmed; fall back to edge-detected location.
+  const location = (parsed.location && parsed.location.trim()) || detectLocation(req) || null;
 
   const db = adminClient();
 
@@ -38,7 +41,7 @@ export default async function handler(req, res) {
     // Update existing workspace
     const { data: ws } = await db
       .from('workspaces')
-      .update({ name: company, size, industry })
+      .update({ name: company, size, industry, location })
       .eq('id', existing.workspace_id)
       .select()
       .single();
@@ -47,7 +50,7 @@ export default async function handler(req, res) {
     // Create new workspace
     const { data: ws, error: wsError } = await db
       .from('workspaces')
-      .insert({ name: company, size, industry, owner_id: user.id, slug: slug || null })
+      .insert({ name: company, size, industry, location, owner_id: user.id, slug: slug || null })
       .select()
       .single();
 

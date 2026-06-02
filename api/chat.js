@@ -259,20 +259,53 @@ function buildMemoriesContext(memories) {
   return `\nMEMORIES — apply silently, never announce:\n${delimitUntrusted(lines, 4000)}\n`;
 }
 
-function buildHuntContext(findings) {
+// Map a free-text role/title to the canonical function tags the brain scanner
+// uses for affected_roles, so we can route findings to the right person.
+function roleToTags(role) {
+  const s = (role || '').toLowerCase();
+  const tags = new Set();
+  if (/\b(ceo|founder|chief executive|owner|managing director|\bmd\b)\b/.test(s)) tags.add('ceo');
+  if (/market|brand|content|social|growth|comms|communicat/.test(s))            tags.add('marketing');
+  if (/sales|account exec|business development|\bbd\b|revenue/.test(s))         tags.add('sales');
+  if (/product|\bpm\b|design|ux/.test(s))                                       tags.add('product');
+  if (/engineer|developer|\btech\b|cto|software|data/.test(s))                  tags.add('engineering');
+  if (/\bops\b|operations|coo|logistics|supply/.test(s))                        tags.add('operations');
+  if (/financ|account|cfo|bookkeep/.test(s))                                    tags.add('finance');
+  if (/\bhr\b|people|talent|recruit|human resource/.test(s))                    tags.add('hr');
+  if (/legal|counsel|compliance/.test(s))                                       tags.add('legal');
+  if (/customer success|support|\bcs\b|account manage/.test(s))                 tags.add('customer-success');
+  return [...tags];
+}
+
+function buildHuntContext(findings, userTags = []) {
   if (!findings?.length) return '';
-  const critical = findings.filter(f => f.severity === 'critical');
-  const warnings  = findings.filter(f => f.severity === 'warning');
-  if (!critical.length && !warnings.length) return '';
+  const isCeo = userTags.includes('ceo'); // founders/CEOs see everything
+  const targeted = (f) => {
+    const roles = Array.isArray(f.affected_roles) ? f.affected_roles : [];
+    return roles.length > 0 && roles.some(r => userTags.includes(r));
+  };
+  // Surface findings routed to this user (any severity) plus all critical/warning.
+  const relevant = findings.filter(f =>
+    targeted(f) || isCeo || f.severity === 'critical' || f.severity === 'warning');
+  if (!relevant.length) return '';
+
+  // Order: findings routed to this user first, then by severity.
+  const sev = { critical: 0, warning: 1, info: 2 };
+  relevant.sort((a, b) =>
+    (Number(targeted(b)) - Number(targeted(a))) ||
+    ((sev[a.severity] ?? 3) - (sev[b.severity] ?? 3)));
+
   // hunt_mode / severity are enums (trusted); pattern + recommendation contain
-  // other users' messages and web-derived text → untrusted, so delimit the block.
-  // This is the key CROSS-USER injection vector (one user's message reaches every
-  // member's daemon via findings), so it must never sit in instruction position.
-  const lines = [...critical, ...warnings].slice(0, 5).map(f =>
-    `[${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}] ${f.pattern}`
-    + (f.recommendation ? ` → ${f.recommendation}` : '')
-  ).join('\n');
-  return `\nBRAIN INTELLIGENCE — active hunt findings (${findings.length} total):\n${delimitUntrusted(lines, 4000)}\n`;
+  // web-derived and cross-user text → untrusted, so delimit the block. This is a
+  // cross-user injection vector, so it must never sit in instruction position.
+  const lines = relevant.slice(0, 6).map(f => {
+    const mark = targeted(f) ? ' ⟵ ROUTED TO YOU' : '';
+    return `[${f.hunt_mode.toUpperCase()} · ${f.severity.toUpperCase()}]${mark} ${f.pattern}`
+      + (f.recommendation ? ` → ${f.recommendation}` : '');
+  }).join('\n');
+
+  return `\nBRAIN INTELLIGENCE — findings from the Company Brain (external scans + internal patterns):\n${delimitUntrusted(lines, 4000)}\n`
+    + `Findings marked "⟵ ROUTED TO YOU" were directed to your role by the brain. When one is material, proactively raise the most important early in your reply with its recommended action, as an alert block tagged "Brain · …" (it came from the Company Brain, not you).\n`;
 }
 
 function buildAgentContext(agentProfile) {
@@ -320,9 +353,10 @@ function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, hun
 
   const tools = TOOL_PERMISSIONS[accessLevel] || TOOL_PERMISSIONS.junior;
 
+  const userTags        = roleToTags(title || profile?.role);
   const companyContext  = buildCompanyContext(ws);
   const memoriesContext = buildMemoriesContext(memories);
-  const huntContext     = buildHuntContext(huntFindings);
+  const huntContext     = buildHuntContext(huntFindings, userTags);
   const agentContext    = buildAgentContext(agentProfile);
 
   return `OUTPUT CONTRACT — ABSOLUTE RULE:
@@ -507,11 +541,11 @@ export default async function handler(req, res) {
   if (workspaceId) {
     const { data: findings } = await db
       .from('hunt_findings')
-      .select('hunt_mode, pattern, severity, recommendation, occurrences')
+      .select('hunt_mode, pattern, severity, recommendation, occurrences, affected_roles')
       .eq('workspace_id', workspaceId)
       .eq('resolved', false)
       .order('severity', { ascending: false })
-      .limit(10);
+      .limit(12);
     huntFindings = findings || [];
   }
 

@@ -207,6 +207,20 @@ export function isValidEmail(s) {
   return typeof s === 'string' && s.length <= 254 && EMAIL_RE.test(s);
 }
 
+// Approximate location from Vercel's edge geo headers (no permission prompt).
+// Returns e.g. "Lagos, Lagos, NG" or null. Used to pre-fill / default a
+// workspace's primary market at signup.
+export function detectLocation(req) {
+  const h = req.headers || {};
+  const city    = h['x-vercel-ip-city'] ? decodeURIComponent(h['x-vercel-ip-city']) : '';
+  const region  = h['x-vercel-ip-country-region'] || '';
+  const country = h['x-vercel-ip-country'] || '';
+  const parts = [city, region, country].map(s => String(s).trim()).filter(Boolean);
+  // Drop region when it just duplicates the city (common for city-states).
+  const deduped = parts.filter((p, i) => parts.indexOf(p) === i);
+  return deduped.length ? deduped.join(', ') : null;
+}
+
 // Log the real error server-side; return a generic message to the client so we
 // never leak DB schema, provider internals, or stack traces.
 export function fail(res, status, publicMessage, err, tag = 'api') {

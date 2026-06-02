@@ -227,6 +227,17 @@ function StepWorkspace({ data, setData }) {
           ))}
         </div>
       </div>
+      <div>
+        <label style={labelSt}>Primary market / location</label>
+        <FocusInput
+          placeholder="e.g. Lagos, Nigeria"
+          value={data.location || ''}
+          onChange={e => setData(d => ({ ...d, location: e.target.value }))}
+        />
+        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(255,255,255,0.34)', marginTop: 6 }}>
+          We use this to watch for news, regulation and trends that affect your business. Auto-filled — edit if it's off.
+        </div>
+      </div>
     </div>
   );
 }
@@ -616,6 +627,18 @@ export default function Onboarding() {
     return () => clearTimeout(t);
   }, []);
 
+  // Pre-fill the primary-market field from edge-detected location (no prompt).
+  useEffect(() => {
+    fetch('/api/auth/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.detectedLocation) {
+          setData(prev => (prev.location ? prev : { ...prev, location: d.detectedLocation }));
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
   const canAdvance = () => {
     if (step === 1) return !!data.company?.trim() && data.slugStatus === 'available';
     if (step === 2) return !!(data.role?.trim());
@@ -641,6 +664,7 @@ export default function Onboarding() {
           size:     data.size,
           role:     data.role,
           industry: data.industry,
+          location: data.location,
           slug:     data.slug,
         }),
       });

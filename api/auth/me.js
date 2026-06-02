@@ -1,5 +1,5 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
-import { enforceRateLimit } from '../_lib/security.js';
+import { enforceRateLimit, detectLocation } from '../_lib/security.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
 
   const { data: profile } = await db
     .from('profiles')
-    .select('*, workspaces(id, name, size, industry, invite_code, openrouter_model)')
+    .select('*, workspaces(id, name, size, industry, location, invite_code, openrouter_model)')
     .eq('id', user.id)
     .single();
 
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   if (!workspaces) {
     const { data: member } = await db
       .from('workspace_members')
-      .select('workspace_id, workspaces(id, name, size, industry, invite_code, openrouter_model)')
+      .select('workspace_id, workspaces(id, name, size, industry, location, invite_code, openrouter_model)')
       .eq('user_id', user.id)
       .limit(1)
       .single();
@@ -42,5 +42,7 @@ export default async function handler(req, res) {
     ? { ...profile, workspace_id: workspaceId, workspaces }
     : null;
 
-  return res.status(200).json({ user, profile: enriched });
+  // Auto-detected location from edge geo headers — the client uses this to
+  // pre-fill the onboarding "primary market" field when none is set yet.
+  return res.status(200).json({ user, profile: enriched, detectedLocation: detectLocation(req) });
 }

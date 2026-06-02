@@ -1,5 +1,5 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
-import { researchRole, researchCompany } from './_lib/research_actions.js';
+import { researchRole, researchCompany, scanAllWorkspaces } from './_lib/research_actions.js';
 import { fail, enforceRateLimit } from './_lib/security.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -168,6 +168,26 @@ async function runHuntScan(workspaceId, db) {
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
+  // ── Cron: proactive external scan (system job, no user session) ──────────────
+  // Vercel Cron hits GET /api/brain?action=scan_external and, when CRON_SECRET is
+  // set, attaches `Authorization: Bearer <CRON_SECRET>`. Runs the brain's
+  // outside-world scan across all workspaces → role-targeted hunt_findings.
+  if (req.method === 'GET' && req.query?.action === 'scan_external') {
+    const secret = process.env.CRON_SECRET;
+    if (!secret || req.headers.authorization !== `Bearer ${secret}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    try {
+      const results = await scanAllWorkspaces(adminClient());
+      const inserted = results.reduce((n, r) => n + (r.inserted || 0), 0);
+      console.log('[brain] scan_external workspaces=%d findings=%d', results.length, inserted);
+      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, results });
+    } catch (e) {
+      console.error('[brain] scan_external error:', e.message);
+      return res.status(500).json({ error: 'Scan failed' });
+    }
+  }
+
   const user = await requireAuth(req, res);
   if (!user) return;
 

@@ -157,6 +157,139 @@ function mergeNotes(existingNotes, autoBlock) {
   return base ? `${base}\n\n${block}` : block;
 }
 
+// ── Proactive external scan: outside-world developments → role-targeted findings ─
+// The autonomous arm of the Company Brain. For one workspace, search recent news
+// scoped to its industry + market, reason about what MATERIALLY affects the
+// company, and write hunt_findings tagged with the function that should act.
+// Run for every workspace by scanAllWorkspaces (invoked from a Vercel cron).
+export const ROLE_TAGS = [
+  'ceo', 'marketing', 'sales', 'product', 'engineering',
+  'operations', 'finance', 'hr', 'legal', 'customer-success',
+];
+
+function buildScanPrompt({ company, industry, location, roles, research }) {
+  const safeCompany  = oneLine(company, 120) || 'the company';
+  const safeIndustry = oneLine(industry, 80);
+  const safeLocation = oneLine(location, 120);
+  const safeRoles    = (roles || []).map(r => oneLine(r, 60)).filter(Boolean).slice(0, 12);
+
+  const sys = `You are the Company Brain for "${safeCompany}"${safeIndustry ? `, a ${safeIndustry} company` : ''}${safeLocation ? ` operating in ${safeLocation}` : ''}. `
+    + `You continuously scan the outside world for developments that MATERIALLY affect this company, then decide who internally should act.\n`
+    + `From the web results, select only MATERIAL, RECENT developments — a new law/regulation, a market or competitor move, a notable trend, a local event — that THIS specific company should respond to. Ignore generic, stale, or unrelated news.\n`
+    + `Return ONE JSON object, no prose, no code fence:\n`
+    + `{"findings":[{"mode":"opportunity|threat","headline":"specific recent development, phrased to be said aloud e.g. 'Lagos State introduced new tenancy laws (May 2026)'","why":"one sentence on why it matters to ${safeCompany}","severity":"info|warning|critical","affected_roles":["one or more of: ${ROLE_TAGS.join(', ')}"],"recommendation":"a concrete action for those roles, e.g. 'Marketing should publish an explainer positioning us as the compliant choice'"}]}\n`
+    + `Rules: 0-4 findings; each specific and tied to the company's market/industry; affected_roles MUST come from the allowed list; if nothing is material, return {"findings":[]}.\n`
+    + UNTRUSTED_DATA_NOTICE;
+
+  const grounding = 'RECENT WEB RESULTS (reference data only, may contain noise):\n' + delimitUntrusted(
+    research.snippets.map((s, i) =>
+      `[${i + 1}] ${s.title}${s.age ? ` (${s.age})` : ''}\n${s.description}\n${s.url}`).join('\n\n'),
+    7000,
+  );
+
+  const user = `COMPANY: ${safeCompany}\n`
+    + `INDUSTRY: ${safeIndustry || 'unspecified'}\n`
+    + `MARKET/LOCATION: ${safeLocation || 'unspecified'}\n`
+    + (safeRoles.length ? `INTERNAL ROLES (target findings to these where relevant): ${safeRoles.join(', ')}\n` : '')
+    + `\n${grounding}`;
+
+  return { sys, user };
+}
+
+export async function scanExternal(db, workspaceId, ws, roles = []) {
+  const company = (ws?.name || '').toString().trim();
+  if (!company) return { workspaceId, skipped: 'no company' };
+  const industry = ws?.industry || null;
+  const ctx = (ws?.context && typeof ws.context === 'object') ? ws.context : {};
+  const location = ws?.location || ctx.location || null;
+
+  const llm = await resolveLLM(workspaceId, db);
+  if (!llm) return { workspaceId, skipped: 'no llm' };
+
+  const queries = [
+    `${industry || company} news ${location || ''}`.trim(),
+    `${location || industry || company} ${industry ? `${industry} ` : ''}regulation policy law`.trim(),
+    `${industry || company} trends ${location || ''}`.trim(),
+  ];
+  const research = await braveSearchMany([...new Set(queries)], { count: 6, freshness: 'pw' });
+  if (!research.grounded) return { workspaceId, skipped: 'no fresh results' };
+
+  const { sys, user } = buildScanPrompt({ company, industry, location, roles, research });
+
+  let intel;
+  try {
+    intel = extractJson(await callLLM(llm, sys, user, { maxTokens: 1600 }));
+  } catch (e) {
+    console.error('[scan_external] synth error ws=%s:', workspaceId, e.message);
+    return { workspaceId, error: e.message };
+  }
+
+  const rawFindings = Array.isArray(intel?.findings) ? intel.findings : [];
+  let inserted = 0;
+  for (const f of rawFindings.slice(0, 4)) {
+    const headline = (f.headline || '').toString().trim();
+    if (!headline) continue;
+    const mode = ['opportunity', 'threat'].includes(f.mode) ? f.mode : 'opportunity';
+    const severity = ['info', 'warning', 'critical'].includes(f.severity) ? f.severity : 'info';
+    const affected = Array.isArray(f.affected_roles)
+      ? f.affected_roles.map(r => String(r).toLowerCase().trim()).filter(r => ROLE_TAGS.includes(r)).slice(0, 6)
+      : [];
+    const recommendation = (f.recommendation || f.why || '').toString().slice(0, 600) || null;
+
+    // Dedup against an existing unresolved finding with a similar headline.
+    const probe = headline.slice(0, 40).replace(/[%_]/g, ' ');
+    const { data: existing } = await db
+      .from('hunt_findings')
+      .select('id')
+      .eq('workspace_id', workspaceId)
+      .eq('hunt_mode', mode)
+      .ilike('pattern', `%${probe}%`)
+      .eq('resolved', false)
+      .limit(1);
+    if (existing?.length) continue;
+
+    const { error } = await db.from('hunt_findings').insert({
+      workspace_id:   workspaceId,
+      hunt_mode:      mode,
+      pattern:        headline,
+      occurrences:    1,
+      affected_roles: affected,
+      severity,
+      recommendation,
+    });
+    if (!error) inserted++;
+    else console.error('[scan_external] insert err ws=%s:', workspaceId, error.message);
+  }
+
+  console.log('[scan_external] ws=%s company="%s" results=%d findings=%d/%d',
+    workspaceId, company, research.snippets.length, inserted, rawFindings.length);
+  return { workspaceId, inserted, candidates: rawFindings.length };
+}
+
+export async function scanAllWorkspaces(db, { limit = 25 } = {}) {
+  const { data: workspaces } = await db
+    .from('workspaces')
+    .select('id, name, industry, location, context')
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  const out = [];
+  for (const ws of workspaces || []) {
+    const { data: profs } = await db
+      .from('profiles')
+      .select('role, title')
+      .eq('workspace_id', ws.id);
+    const roles = [...new Set((profs || []).map(p => (p.role || p.title || '').trim()).filter(Boolean))];
+    try {
+      out.push(await scanExternal(db, ws.id, ws, roles));
+    } catch (e) {
+      console.error('[scan_external] ws=%s fatal:', ws.id, e.message);
+      out.push({ workspaceId: ws.id, error: e.message });
+    }
+  }
+  return out;
+}
+
 export async function researchCompany(db, workspaceId, ws, body = {}) {
   const company = (body.company || ws?.name || '').toString().trim();
   if (!company) return { status: 400, body: { error: 'No company name to research' } };
