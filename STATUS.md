@@ -129,6 +129,15 @@ _Compact log; deep detail in the linked memory files._
    fixes), a confirm UI in member/settings, and an owner-deletion decision (transfer
    vs. orphan, since SET NULL currently orphans owned workspaces). Code task, not a blocker.
 
+## Integrations (planned — Zapier-breadth, native OAuth)
+Big workstream scoped: native OAuth connectors so any company can connect its tools
+(the daemon reads/acts on real data). Master to-build list = the 9,637-app Zapier
+directory (`docs/integrations/CATALOG.md`, Zapier links stripped — we build each
+against the app's own OAuth). Architecture + priority order (P0 Slack/Google/MS/
+Notion/GitHub/Jira/HubSpot/Salesforce first) + per-app OAuth docs + Definition of Done
+in **`INTEGRATIONS.md`**. Key constraint: one `/api/oauth` route for all providers
+(12-fn Hobby cap). First connector to build: Slack (reference impl). Not started.
+
 ## Known gaps (NOT blockers)
 - Cold first turn after idle is served by DeepSeek (instant), not the company's Hermes —
   Hermes phases in once warm (~minutes). For Hermes on turn 1 every time, add a
