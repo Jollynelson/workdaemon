@@ -1,4 +1,4 @@
-import { braveSearch, braveSearchMany, resolveLLM, callLLM, extractJson } from './research.js';
+import { braveSearchMany, resolveLLM, callLLM, extractJson } from './research.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Research actions, invoked from api/brain.js as POST actions (research_role,
@@ -53,8 +53,12 @@ export async function researchRole(db, userId, body = {}) {
   const llm = await resolveLLM(workspaceId, db);
   if (!llm) return { status: 503, body: { error: 'No AI provider configured for research.' } };
 
-  const query = `"${role}" responsibilities KPIs tools workflow best practices${industry ? ` in ${industry}` : ''}`;
-  const research = await braveSearch(query, { count: 8 });
+  // Several simple queries beat one long exact-phrase query (quotes returned 0).
+  const queries = [
+    `${role} role responsibilities and KPIs`,
+    `${role} tools workflow best practices${industry ? ` ${industry}` : ''}`,
+  ];
+  const research = await braveSearchMany(queries, { count: 6 });
 
   const { sys, user: userPrompt } = buildRolePrompt({
     role, industry, companyName: ws?.name, size: ws?.size, research,
@@ -193,6 +197,7 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
 
   const rawFindings = Array.isArray(intel.findings) ? intel.findings : [];
   let insertedFindings = 0;
+  let findingsError = null;          // temporary diagnostic — surfaced in response
   for (const f of rawFindings.slice(0, 5)) {
     const headline = (f.headline || '').toString().trim();
     if (!headline) continue;
@@ -220,6 +225,7 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
       recommendation: f.recommendation || null,
     });
     if (!findErr) insertedFindings++;
+    else if (!findingsError) { findingsError = findErr.message; console.error('[research_company] finding insert error:', findErr.message); }
   }
 
   console.log('[research_company] company="%s" grounded=%s competitors=%d findings=%d/%d',
@@ -229,7 +235,7 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
     status: 200,
     body: {
       ok: true, company, web_grounded: research.grounded, sources: research.sources,
-      competitors, findings_created: insertedFindings, intel,
+      competitors, findings_created: insertedFindings, findings_error: findingsError, intel,
     },
   };
 }
