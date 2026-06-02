@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-02 · HEAD `16e26ad` on `origin/main` (signup-time research + competitor intel merged)_
+_Last updated: 2026-06-02 · HEAD `56d7096` on `origin/main` (security hardening shipped + deployed + verified)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — start with
@@ -83,6 +83,33 @@ on the open web (Brave) and synthesises with DeepSeek, so daemons proactively sa
   hunt/competitor alerts had silently never worked in prod. Fixed via pg: created the
   missing tables + added `workspace_id` (+v2 cols) to `hunt_findings`, relaxed legacy
   NOT NULLs. See `project-prod-db-undermigrated.md`.
+
+## Security hardening ✅ (live in prod, 2026-06-02 · PR #6)
+Full OWASP-aligned pass over the **Vercel app** (`api/` + `src/` + `vercel.json`).
+Shared primitives in `api/_lib/security.js`; posture doc `SECURITY.md`. All shipped,
+deployed to `workdaemon-prod`, and verified live (headers, API, browser render,
+end-to-end encryption round-trip).
+- **IDOR/BOLA closed** — no handler trusts client-supplied `user_id`/`workspace_id`;
+  every client row-id scoped by `workspace_id`. Fixed priv-esc: `update_agent` is
+  admin-only + target-member-checked (a user could previously self-set `executive`).
+- **Prompt injection** — user/web/memory content reaching a system prompt (company
+  context, memories, hunt findings, research snippets) wrapped in `«UNTRUSTED_INPUT»`
+  delimiters + notice; end-user msgs stay in user position; identity fields sanitized.
+- **Secrets at rest** — provider API keys AES-256-GCM encrypted (`ENCRYPTION_KEY`);
+  backward-compatible. Migration `scripts/encrypt_api_keys.mjs` **applied** (DB now 0
+  plaintext keys). No hardcoded secrets; client uses only public `VITE_` vars.
+- **SSRF guard** (`assertSafeUrl`) on every user endpoint (ollama/azure/modal + model
+  proxy): https-only, blocks loopback/private/link-local/metadata.
+- **Rate limiting** — every public endpoint, IP+user, graceful 429, distributed via
+  Upstash REST (in-memory fallback). Verified firing in prod.
+- **Input validation** — schema-based `validateBody` (types, length, enum, strict
+  unknown-field reject) on auth/setup/invite/chat/settings/brain.
+- **Headers** in `vercel.json`: CSP (no inline JS), HSTS preload, X-Frame-Options
+  DENY, nosniff, Referrer-Policy, Permissions-Policy, COOP.
+- **Vercel env**: added `ENCRYPTION_KEY` + `UPSTASH_REDIS_REST_URL/TOKEN` to
+  **Production AND Preview** (Preview via REST API, all-branches). The user-facing
+  prod project is **`workdaemon-prod`** (the `workdaemon` project is a stale empty
+  duplicate). Preview has NO Supabase/DB creds by design (inert; staging DB declined).
 
 ## TO DO NEXT (needs YOU)
 1. **Paste tool OAuth keys** in root `.env` (placeholders ready):
