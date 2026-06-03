@@ -524,7 +524,22 @@ export default async function handler(req, res) {
     .eq('id', user.id)
     .single();
 
-  const workspaceId = profile?.workspace_id;
+  // Use workspace_id from profile FK; if null fall back to workspace_members
+  // (same self-heal as /api/auth/me — guards against the FK not being written yet).
+  let workspaceId = profile?.workspace_id ?? null;
+  if (!workspaceId) {
+    const { data: member } = await db
+      .from('workspace_members')
+      .select('workspace_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single();
+    if (member?.workspace_id) {
+      workspaceId = member.workspace_id;
+      // Back-fill so next request is fast.
+      db.from('profiles').update({ workspace_id: workspaceId }).eq('id', user.id).then(() => {});
+    }
+  }
 
   // Load agent profile (access level, trust score, interaction count)
   const { data: agentProfile } = await db

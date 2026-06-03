@@ -774,10 +774,16 @@ function ChatView({ context, onBack, onMenu }) {
     setInput('');
     setThinking(true);
     try {
-      const { blocks, suggestions: nextSugs } = await callDaemonAPI({
-        messages: [...msgs, userMsg],
-        context, apiKey, authToken,
-      });
+      const callParams = { messages: [...msgs, userMsg], context, apiKey, authToken };
+      let result;
+      try {
+        result = await callDaemonAPI(callParams);
+      } catch {
+        // One automatic retry after a short pause for transient errors.
+        await new Promise(r => setTimeout(r, 1200));
+        result = await callDaemonAPI(callParams);
+      }
+      const { blocks, suggestions: nextSugs } = result;
       setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
       setSuggestions(nextSugs || []);
     } catch (e) {
@@ -796,15 +802,19 @@ function ChatView({ context, onBack, onMenu }) {
     startedRef.current = true;
     setThinking(true);
     const sentinel = hadHistoryRef.current ? '[SESSION_RESUME]' : '[SESSION_START]';
-    callDaemonAPI({
-      messages: [...msgs, { role: 'user', text: sentinel }],
-      context, apiKey, authToken,
-    }).then(({ blocks, suggestions: sugs }) => {
-      setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
-      setSuggestions(sugs || []);
-    }).catch(e => {
-      setError(e.message || 'Failed to load Daemon. Try refreshing.');
-    }).finally(() => setThinking(false));
+    const params = { messages: [...msgs, { role: 'user', text: sentinel }], context, apiKey, authToken };
+    callDaemonAPI(params)
+      .then(({ blocks, suggestions: sugs }) => {
+        setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
+        setSuggestions(sugs || []);
+      })
+      .catch(() => {
+        // SESSION_RESUME failures are silent — history is already visible and the
+        // error would confuse users who haven't done anything wrong.
+        if (sentinel === '[SESSION_RESUME]') return;
+        setError('Failed to load Daemon. Try refreshing.');
+      })
+      .finally(() => setThinking(false));
   }, [authToken, historyLoaded]);
 
   const onConfirmAction = useCallback((actionId) => {
