@@ -30,7 +30,7 @@ export const PROVIDERS = {
       'im:read', 'im:write', 'im:history', 'mpim:read', 'mpim:history',
       'chat:write', 'reactions:read', 'reactions:write',
       'users:read', 'users:read.email', 'team:read',
-      'reminders:write', 'canvases:write', 'app_mentions:read',
+      'canvases:write', 'app_mentions:read',
       'pins:read', 'files:read',
     ],
     // User scopes — a staff member's own token, so the Brain reads what THEY can

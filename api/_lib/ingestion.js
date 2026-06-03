@@ -45,9 +45,11 @@ export async function embed(inputs) {
       const d = await r.json();
       return d.embeddings || null;
     }
-    // Hosted OpenAI-shaped APIs (central platform key).
+    // Hosted OpenAI-shaped APIs (central platform key). EMBEDDINGS_OPENAI_BASE_URL
+    // lets you point at ANY OpenAI-compatible embeddings endpoint (Together, Voyage
+    // proxy, a self-hosted vLLM, a future platform) — switching is a pure config flip.
     if (!c.key) return null;
-    const base = c.provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1';
+    const base = process.env.EMBEDDINGS_OPENAI_BASE_URL || (c.provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1');
     const r = await fetch(`${base}/embeddings`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },

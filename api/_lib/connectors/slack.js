@@ -182,7 +182,6 @@ export const editMessage             = (t, { channel, ts, text, blocks }) => sla
 export const deleteMessage           = (t, { channel, ts })               => slackApi(t, 'chat.delete', { channel, ts });
 export const cancelScheduledMessage  = (t, { channel, scheduled_message_id }) => slackApi(t, 'chat.deleteScheduledMessage', { channel, scheduled_message_id });
 export const addReaction             = (t, { channel, ts, name })         => slackApi(t, 'reactions.add', { channel, timestamp: ts, name });
-export const addReminder             = (t, { text, time, user })          => slackApi(t, 'reminders.add', { text, time, user });
 export const createChannel           = (t, { name, is_private = false })  => slackApi(t, 'conversations.create', { name, is_private }).then(d => d.channel);
 export const createPrivateChannel    = (t, { name })                      => createChannel(t, { name, is_private: true });
 export const archiveConversation     = (t, channel)                       => slackApi(t, 'conversations.archive', { channel });
@@ -222,7 +221,6 @@ export const SLACK_TOOLS = {
   delete_message:          { kind: 'bot',  type: 'action', run: (t, a) => deleteMessage(t, a) },
   cancel_scheduled_message:{ kind: 'bot',  type: 'action', run: (t, a) => cancelScheduledMessage(t, a) },
   add_reaction:            { kind: 'bot',  type: 'action', run: (t, a) => addReaction(t, a) },
-  add_reminder:            { kind: 'bot',  type: 'action', run: (t, a) => addReminder(t, a) },
   create_channel:          { kind: 'bot',  type: 'action', run: (t, a) => createChannel(t, a) },
   create_private_channel:  { kind: 'bot',  type: 'action', run: (t, a) => createPrivateChannel(t, a) },
   archive_conversation:    { kind: 'bot',  type: 'action', run: (t, a) => archiveConversation(t, a.channel) },

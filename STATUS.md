@@ -1,6 +1,6 @@
 # WorkDaemon — Status Snapshot
 
-_Last updated: 2026-06-02 · HEAD `52eec33` on `origin/main` (proactive Company Brain shipped + deployed + verified)_
+_Last updated: 2026-06-03 · `origin/main` (full spec-capability build on the live app: cross-daemon, two-tier routing, pattern/hunt engine, knowledge graph + viz, ingestion + pgvector embeddings on Modal, per-staff Slack + access-scoped privacy; Slack install scope-fix)_
 
 Quick re-entry after a restart. For deep detail see Claude memory
 (`~/.claude/projects/-Users-mac-workdaemon/memory/`) — for the **live Vercel app**
@@ -64,6 +64,65 @@ Brain: the daemon is per-user and draws on the shared Brain (see
 
 ## Shipped milestones — Vercel app (current focus)
 _Compact log; deep detail in the linked memory files._
+
+- **Spec-capability build — the 4 specs implemented INTO the live app** (06-03). Decision:
+  build the `docs/specs/*` capabilities **additively into the Vercel+Supabase app**, NOT
+  rebuild to the specs' Python/VPS/Hermes/Neo4j stack; keep the app multi-provider (no
+  forced DeepSeek/Hermes swap). The detailed per-capability scorecard is **`docs/PROGRESS.md`**
+  (read that first). What shipped + verified on prod this session:
+  - **Cross-daemon layer** — daemons assign/accept/flag/broadcast tasks + set availability +
+    resolve events. `api/tasks.js` (cross-daemon actions + `execute_action` write-actions +
+    GET tasks/members/events), `migration_cross_daemon.sql`. `src/pages/Dashboard.jsx`
+    `TasksPage` (DaemonEventCard, AssignComposer, brain-routed badges). Names resolve via
+    public `profiles` (auth.users is NOT PostgREST-embeddable — applies everywhere).
+  - **Two-tier brain routing** — Flash/Pro escalation adapted to multi-provider by model-string
+    swap. `api/_lib/brain_router.js` (`classifyTurn`, `pickTierModels`, `responseIsThin`,
+    `wantsDeep`); wired in `api/chat.js`.
+  - **Pattern detection + nightly deep pass + hunt engine** — `api/brain.js` actions
+    `detect_patterns`/`nightly_pass`/`spawn_task`; `app_detected_patterns` table (the `app_`
+    convention — `detected_patterns` was squatted by the parked Python backend). Patterns
+    inject into chat (exec-only). `migration_detected_patterns.sql`, `migration_task_from_finding.sql`.
+  - **Knowledge graph + graph viz UI** — `buildGraph`/`graphSummary` in `api/brain.js`
+    (`build_graph` action), `migration_knowledge_graph.sql`; `GraphTab` in Dashboard injects
+    a graph context into chat. Web search + role-aware surfacing already live from 06-02.
+  - **Ingestion pipeline + pgvector** — `api/_lib/ingestion.js` (`embed`, `upsertDocuments`,
+    `reindexWorkspace`, access-scoped `retrieveDocuments`). `migration_ingestion.sql`,
+    `migration_pgvector.sql`, `migration_embeddings_dim.sql` (`vector(768)` for nomic).
+    Retrieval falls back to keyword whenever embeddings are absent → KB never breaks.
+  - **Platform-managed embeddings on Modal** — customers connect only a *reasoning* key;
+    embeddings run on OUR infra. `finetuning/modal/embeddings_app.py` (Ollama nomic-embed-text,
+    768-dim, bearer-auth, scale-to-zero). Provider-flexible (`modal`/`ollama`/`openai`/`mistral`
+    + `EMBEDDINGS_OPENAI_BASE_URL` for ANY OpenAI-compatible host). Runbook + platform-switching
+    matrix: **`docs/EMBEDDINGS_MODAL.md`**; env surface in **`.env.example`** (EMBEDDINGS /
+    SENSITIVE blocks). Sensitive-tier reasoning routes to our `modal` provider, not a hosted API.
+    Both surfaces are env-config so a later **VPS move is a redeploy, not a code change**.
+  - **Per-staff Slack + access-scoped privacy** — staff connect their OWN daemon to Slack
+    (per-user user tokens, `slack_user_map`); the Brain knows who-is-who and filters by access.
+    `retrieveDocuments` returns `{visible, restricted}`: a non-member gets a *pointer only*
+    (title + who to ask), NEVER restricted content, so the daemon suggests "reach out to X"
+    or answers minimally instead of oversharing. `migration_doc_access.sql` (visibility +
+    allowed_users), `migration_user_integrations.sql`. Verified at DB level: member sees
+    private #leadership content; non-member gets pointer only.
+  - **Broader Slack ingest + rate-limit backoff** — `_pullViaToken` (users.conversations +
+    history + thread replies + pins + files, member-scoped, 1:1 DMs excluded), merges
+    per-user ∪ bot tokens by channel id; `slackApi()` honors 429/Retry-After (4 attempts).
+  - **Push calibration** — `api/_lib/calibration.js` (`shouldDeliver`, `recordTaskAction`,
+    `engagement` back-off). Only read/acted resets the streak; fresh-unread is neutral.
+    `migration_push_calibration.sql`. Realtime: `migration_realtime.sql` + Sidebar subscription.
+  - **Slack install scope-fix** (06-03, the install-failure screenshot) — public-distribution
+    install was erroring **"Invalid permissions requested."** Two causes, both fixed:
+    (1) `reminders:write` is a **deprecated** Slack scope → removed from `oauth.js`, the
+    manifest, and the dead `add_reminder` tool/`addReminder` fn in the connector; (2) the
+    manifest's configured scopes had drifted from what the OAuth URL requests (missing bot
+    `channels:join`/`pins:read`/`files:read`; user list missing the channel/history/pins/files
+    scopes) — for a *distributed* app any URL scope not in the dashboard = unapproved_scope.
+    `docs/integrations/slack-app-manifest.yml` now mirrors `oauth.js` exactly. **Owner action
+    to finish: update the Slack app's OAuth scopes to match the manifest (or re-import it),
+    then reinstall** — see TO DO NEXT #6.
+  - ⚠️ Verification note: prod is behind Vercel's bot-challenge, so headless-browser QA is
+    blocked — each capability was verified with **DB-level scripts** (real prod DB via
+    `DATABASE_URL_UNPOOLED`), not the browser. Frontend builds clean (vite); all deploys clean.
+
 - **Browser QA + three fixes** (06-02) — eyeballed prod end-to-end in a real browser
   (agent-browser); throwaway signup confirmed the daemon now replies (DeepSeek fallback),
   correct date, role-tailored, "Brain ·" attribution. Surfaced + fixed: **(1)** prod
@@ -128,6 +187,21 @@ _Compact log; deep detail in the linked memory files._
    Admin API (`auth.admin.deleteUser`), admin/self authz (consistent with the IDOR
    fixes), a confirm UI in member/settings, and an owner-deletion decision (transfer
    vs. orphan, since SET NULL currently orphans owned workspaces). Code task, not a blocker.
+6. **Finish the Slack scope-fix install** (06-03) — code + manifest are fixed; the live
+   Slack app config still needs to match. In api.slack.com → your app **A0B7Q4W45NH**:
+   either re-import `docs/integrations/slack-app-manifest.yml`, or in **OAuth & Permissions**
+   set Bot + User token scopes to exactly the manifest's lists (remove `reminders:write`),
+   then **Reinstall** the app. After that the "Invalid permissions requested" install error
+   is gone. Existing connected users should disconnect→reconnect to pick up the broader scopes.
+7. **Deploy + wire Modal embeddings** (optional — KB works on keyword fallback until then):
+   `modal deploy finetuning/modal/embeddings_app.py`, then set `MODAL_EMBEDDINGS_URL` +
+   `MODAL_SERVE_SECRET` (+ `EMBEDDINGS_PROVIDER=modal`) in Vercel and run
+   `POST /api/brain {action:"reindex"}`. Full runbook + platform-switching matrix in
+   `docs/EMBEDDINGS_MODAL.md`; env surface in `.env.example`.
+8. **Privacy-policy disclosure (do later)** — the per-staff Slack model means each user's
+   own token lets the Brain read what THAT user can see; disclose the access-scoped
+   read + need-to-know answering behavior in the privacy policy / onboarding consent
+   (`public/privacy.html`). Carried over from this session's privacy work.
 
 ## Integrations — native OAuth connectors (Zapier-breadth)
 Native OAuth connectors so any company connects its tools; daemon reads/acts on real

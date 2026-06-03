@@ -20,7 +20,7 @@ display_information:
     • Watch your channels in real time and surface what needs your attention — when you're @mentioned, when a key thread heats up, or when a decision is needed.
     • Answer right inside Slack — @mention WorkDaemon in any thread and it replies with context from your conversation.
     • Learn from your team's conversations to build company-wide intelligence, so it answers with real context instead of guesses.
-    • Take action on your behalf (with your permission) — post updates, reply in threads, schedule messages, set reminders, manage channels, and more.
+    • Take action on your behalf (with your permission) — post updates, reply in threads, schedule messages, manage channels, and more.
 
     You stay in control: WorkDaemon only accesses the channels it's invited to, every token is encrypted at rest, and every action follows your permission level.
 
@@ -37,16 +37,28 @@ oauth_config:
   redirect_urls:
     - https://workdaemon-prod.vercel.app/api/oauth
   scopes:
-    # User token scopes — only what truly needs to act as the user.
+    # User token scopes — a staff member's OWN token, so the Brain reads what THEY
+    # can see (incl. private channels they're in) without a bot invite.
+    # MUST match userScopes in api/_lib/oauth.js exactly (distributed app).
     user:
       - search:read
       - users.profile:write
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - mpim:read
+      - mpim:history
+      - pins:read
+      - files:read
     # Bot token scopes — the read + action toolset.
+    # MUST match scopes in api/_lib/oauth.js exactly (distributed app).
     bot:
       - app_mentions:read
       - channels:read
       - channels:history
       - channels:manage
+      - channels:join
       - groups:read
       - groups:write
       - groups:history
@@ -61,8 +73,9 @@ oauth_config:
       - users:read
       - users:read.email
       - team:read
-      - reminders:write
       - canvases:write
+      - pins:read
+      - files:read
 
 settings:
   event_subscriptions:
