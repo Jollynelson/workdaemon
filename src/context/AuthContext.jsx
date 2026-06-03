@@ -10,10 +10,13 @@ const supabase = createClient(
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [token, setToken]     = useState(() => sessionStorage.getItem('wd-token'));
-  const [loading, setLoading] = useState(true);
+  const [user, setUser]             = useState(null);
+  const [profile, setProfile]       = useState(null);
+  const [token, setToken]           = useState(() => sessionStorage.getItem('wd-token'));
+  const [loading, setLoading]       = useState(true);
+  // True once fetchProfile has resolved at least once for the current session.
+  // Lets routing guards distinguish "still fetching" from "fetched, no profile".
+  const [profileReady, setProfileReady] = useState(false);
 
   const fetchProfile = useCallback(async (accessToken) => {
     try {
@@ -24,9 +27,11 @@ export function AuthProvider({ children }) {
         const body = await res.json();
         setUser(body.user);
         setProfile(body.profile);
+        setProfileReady(true);
         return true;
       }
     } catch {}
+    setProfileReady(true);
     return false;
   }, []);
 
@@ -40,6 +45,7 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
     setProfile(null);
+    setProfileReady(false);
   }, []);
 
   // On mount: restore session from storage or Supabase OAuth callback
@@ -70,6 +76,7 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.access_token) {
         setLoading(true);
+        setProfileReady(false);
         storeSession(session.access_token);
         // Prewarm the company GPU model on sign-in (non-blocking).
         brainApi.warm({ token: session.access_token }).catch(() => {});
@@ -94,6 +101,7 @@ export function AuthProvider({ children }) {
     }
     const { user: u, access_token } = await res.json();
     setLoading(true);
+    setProfileReady(false);
     storeSession(access_token);
     setUser(u);
     await fetchProfile(access_token);
@@ -142,7 +150,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, profile, token, loading,
+      user, profile, token, loading, profileReady,
       login, signup, logout,
       loginWithGoogle, loginWithGitHub,
       refreshProfile,
