@@ -46,7 +46,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | **Cross-daemon communication** | ✅ **SHIPPED** | see below |
 | **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
 | **Cross-staff pattern detection (≥3 staff)** | ✅ **SHIPPED** | `api/brain.js` detectPatterns → `app_detected_patterns`; runs on the scan_external cron + manual action |
-| **Activity feed bus + realtime websockets** | ❌ | serverless req/res only; cross-daemon uses polling (chat + inbox) |
+| Realtime push (websockets) | ✅ **SHIPPED** | Supabase Realtime on inbox_items + daemon_events; sidebar Inbox badge ticks live (E2E-verified) |
 | Knowledge graph (Neo4j) | ❌ | not in live stack |
 | Per-company VPS + Hermes provisioning + MCP writer | ❌ | requires the parked Python stack |
 | Push calibration / back-off | ❌ | inbox exists, no calibration |
@@ -125,13 +125,21 @@ manual `POST /api/brain {action:'spawn_task', finding_id}`. Migration `migration
 adds `tasks.source_finding_id`. Verified on Cobalt → SOC 2→Daniel (CTO), Q3 pipeline→Marcus
 (Sales), FASB→Tom (Finance).
 
+## Realtime push — SHIPPED (cross-daemon doc: "notified immediately")
+`migration_realtime.sql` adds `inbox_items` + `daemon_events` to the `supabase_realtime`
+publication. `AuthContext` exports the `supabase` client; `Sidebar` calls
+`supabase.realtime.setAuth(token)` and subscribes to `inbox_items` INSERTs filtered to the
+user (RLS-scoped) → the **Inbox badge increments instantly** when a daemon assigns/flags/
+broadcasts or the Brain routes a task. Graceful: try/catch, no-op on failure, fetch-based
+count still works. E2E-verified headlessly (subscribe as Maya → server insert → push delivered).
+Password logins work because `/api/auth/login` returns a Supabase JWT used for `setAuth`.
+
 ## Suggested next (priority order)
-1. **Realtime push** — Supabase Realtime (additive) for instant cross-daemon/briefing/pattern
-   delivery instead of the current chat+inbox polling.
-2. **Knowledge graph** (FINAL: Neo4j) — people/decisions/projects; biggest unbuilt layer.
-   Could approximate in Postgres (recursive) first.
-3. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
+1. **Knowledge graph** (FINAL: Neo4j) — people/decisions/projects; biggest unbuilt layer.
+   Could approximate in Postgres (recursive) first; surface in Company Brain + daemon prompt.
+2. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
    so the Brain grounds on real company docs (currently Slack + web + interactions).
+3. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.
 
 ## How to run / verify
 ```bash

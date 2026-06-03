@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import DaemonMark from '../brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../../context/ThemeContext.jsx';
-import { useAuth } from '../../context/AuthContext.jsx';
+import { useAuth, supabase } from '../../context/AuthContext.jsx';
 import { brainApi } from '../../lib/brainApi.js';
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
@@ -125,6 +125,25 @@ export default function Sidebar({
     });
     return () => { alive = false; };
   }, [token]);
+
+  // Realtime: bump the Inbox badge the instant a new item lands (a daemon
+  // assignment/flag/broadcast or a brain-routed task) — no polling. RLS scopes
+  // the stream to this user; the websocket is authed with their JWT. Graceful:
+  // if realtime fails the badge still works from the fetch above.
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    let channel;
+    try {
+      supabase.realtime.setAuth(token);
+      channel = supabase
+        .channel(`inbox:${user.id}`)
+        .on('postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${user.id}` },
+          () => setInboxCount(c => c + 1))
+        .subscribe();
+    } catch { /* realtime unavailable — polling/fetch still covers it */ }
+    return () => { try { if (channel) supabase.removeChannel(channel); } catch {} };
+  }, [token, user?.id]);
 
   const displayName = profile?.name || user?.email?.split('@')[0] || '—';
   const displayRole = [profile?.title, profile?.workspaces?.name].filter(Boolean).join(' · ') || 'Workspace member';
