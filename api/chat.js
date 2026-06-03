@@ -570,14 +570,15 @@ export default async function handler(req, res) {
   }
 
   // Connected integrations → tell the daemon which tools are actually live.
+  // Fetch all rows for the workspace and filter in JS (mirrors settings.js approach
+  // which is known to work; chained .eq('status','connected') was returning empty).
   let connectedTools = [];
   if (workspaceId) {
     const { data: integ } = await db
       .from('workspace_integrations')
-      .select('provider')
-      .eq('workspace_id', workspaceId)
-      .eq('status', 'connected');
-    connectedTools = (integ || []).map(i => i.provider);
+      .select('provider, status')
+      .eq('workspace_id', workspaceId);
+    connectedTools = (integ || []).filter(i => i.status === 'connected').map(i => i.provider);
   }
 
   // Recent Slack activity (when Slack is connected) → ground answers about
