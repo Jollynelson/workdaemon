@@ -468,7 +468,7 @@ function BlockActionConfirm({ block, onConfirm, onCancel }) {
         )}
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="wd-btn" style={{ flex: 1, height: 44, fontSize: 9, letterSpacing: '0.1em' }}
-            onClick={() => { onConfirm?.(block.id); setDismissed(true); }}>
+            onClick={() => { onConfirm?.(block.id, block.exec); setDismissed(true); }}>
             CONFIRM — EXECUTE
           </button>
           <button className="wd-btn-ghost" style={{ height: 44, padding: '0 20px', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em' }}
@@ -817,9 +817,29 @@ function ChatView({ context, onBack, onMenu }) {
       .finally(() => setThinking(false));
   }, [authToken, historyLoaded]);
 
-  const onConfirmAction = useCallback((actionId) => {
+  const onConfirmAction = useCallback(async (actionId, exec) => {
+    // If the daemon attached an executable spec (and a tool is connected), run it
+    // for real via the action executor; otherwise fall back to the chat-confirm flow.
+    if (exec?.name) {
+      try {
+        const r = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+          body: JSON.stringify({ action: 'execute_action', name: exec.name, params: exec.params || {} }),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          setMsgs(m => [...m, { role: 'daemon', blocks: [{ type: 'action_done', summary: `✓ Done — ${exec.name} executed.` }] }]);
+          return;
+        }
+        setMsgs(m => [...m, { role: 'daemon', blocks: [{ type: 'alert', level: 'warning', content: d.error || 'Action failed.' }] }]);
+        return;
+      } catch {
+        // network error → fall through to the conversational confirm
+      }
+    }
     send(`CONFIRMED — execute ${actionId}`);
-  }, [send]);
+  }, [send, authToken]);
 
   const onCancelAction = useCallback(() => {
     setSuggestions([]);

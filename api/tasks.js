@@ -2,6 +2,8 @@ import { requireAuth, adminClient } from './_lib/supabase.js';
 import { fail, enforceRateLimit, parseBody } from './_lib/security.js';
 import { assessCapacity, suggestAlternatives } from './_lib/capacity.js';
 import { recordTaskAction } from './_lib/calibration.js';
+import { ACTIONS, meetsLevel } from './_lib/actions.js';
+import { getAccessToken } from './_lib/oauth.js';
 
 // Tasks + Cross-Daemon Communication.
 // GET                → list workspace tasks (with assignee + from-staff)
@@ -266,6 +268,38 @@ export default async function handler(req, res) {
       .eq('id', body.event_id).eq('workspace_id', workspaceId)
       .or(`to_user_id.eq.${user.id},from_user_id.eq.${user.id}`);
     return res.status(200).json({ ok: true });
+  }
+
+  // ── execute_action: the daemon acts on a connected tool (confirmed write) ────
+  if (action === 'execute_action') {
+    const body = parseBody(res, req.body, {
+      action: { type: 'string' }, name: { type: 'string', required: true, max: 64 },
+      params: { type: 'object' }, dry_run: { type: 'boolean' },
+    });
+    if (!body) return;
+    const spec = ACTIONS[body.name];
+    if (!spec) return res.status(400).json({ error: 'Unknown action' });
+
+    const { data: agent } = await db.from('app_agent_profiles').select('access_level').eq('user_id', user.id).single();
+    if (!meetsLevel(agent?.access_level, spec.minLevel))
+      return res.status(403).json({ error: `Your access level can't run "${spec.label}"` });
+
+    const token = await getAccessToken(db, workspaceId, spec.provider);
+    if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
+
+    if (body.dry_run) return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
+    try {
+      const result = await spec.run(token, body.params || {});
+      // Audit + close the loop in the actor's inbox.
+      await db.from('inbox_items').insert({
+        workspace_id: workspaceId, user_id: user.id, type: 'update', source: 'daemon',
+        title: `✓ ${spec.label}`, body: spec.describe(body.params || {}),
+        metadata: { event_type: 'action_done', action: body.name }, read: true, acted_on: true,
+      });
+      return res.status(200).json({ ok: true, result });
+    } catch (e) {
+      return res.status(502).json({ error: `Action failed: ${e.message}` });
+    }
   }
 
   return res.status(400).json({ error: 'Unknown action' });
