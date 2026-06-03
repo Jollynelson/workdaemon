@@ -72,16 +72,16 @@ export function AuthProvider({ children }) {
     }
     init();
 
-    // Listen for OAuth state changes
+    // Listen for OAuth state changes.
+    // NOTE: SIGNED_IN fires on token auto-refresh too — do NOT touch loading/
+    // profileReady here or the dashboard blanks after inactivity. profileReady
+    // handles the initial new-login race via RequireOnboarded already.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.access_token) {
-        setLoading(true);
-        setProfileReady(false);
         storeSession(session.access_token);
         // Prewarm the company GPU model on sign-in (non-blocking).
         brainApi.warm({ token: session.access_token }).catch(() => {});
         await fetchProfile(session.access_token);
-        setLoading(false);
       }
       if (event === 'SIGNED_OUT') clearSession();
     });
