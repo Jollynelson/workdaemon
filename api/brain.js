@@ -166,6 +166,95 @@ async function runHuntScan(workspaceId, db) {
   return { new_findings: newFindings.length, scanned: interactions.length };
 }
 
+// ── Cross-staff pattern detection (FINAL spec §11) ────────────────────────────
+// Cluster the last 30 days of interactions by topic; a topic touched by ≥3
+// DISTINCT staff is a cross-staff pattern. Type it (shared_blocker /
+// cross_team_dependency / repeated_question), write it to detected_patterns, and
+// push it to managers/executives — anonymised: counts + roles, never names
+// (spec §13 asymmetric surfacing).
+const BLOCKER_RE = /\b(block(ed|er)?|stuck|waiting on|can'?t|cannot|unable|broken|fail(s|ed|ing)?|error|delayed|pending|depends on)\b/i;
+
+export async function detectPatterns(workspaceId, db) {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: rows } = await db
+    .from('brain_interactions')
+    .select('user_id, user_role, user_message, created_at')
+    .eq('workspace_id', workspaceId)
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(400);
+  if (!rows?.length) return { patterns: 0, pushed: 0 };
+
+  // Cluster by extracted topic tag (semantic-ish; tags already normalize the message).
+  const clusters = {};
+  for (const r of rows) {
+    const isBlocker = BLOCKER_RE.test(r.user_message || '');
+    for (const tag of extractTopicTags(r.user_message)) {
+      const c = clusters[tag] || (clusters[tag] = { users: new Set(), roles: new Set(), blocker: 0, sample: null });
+      c.users.add(r.user_id);
+      if (r.user_role) c.roles.add(r.user_role);
+      if (isBlocker) c.blocker++;
+      if (!c.sample) c.sample = (r.user_message || '').slice(0, 120);
+    }
+  }
+
+  const candidates = [];
+  for (const [tag, c] of Object.entries(clusters)) {
+    if (c.users.size < 3) continue;            // ≥3 distinct staff (spec threshold)
+    const roles = [...c.roles];
+    const n = c.users.size;
+    let pattern_type, title, detail;
+    if (c.blocker >= 2) {
+      pattern_type = 'shared_blocker';
+      title = `Shared blocker around "${tag}"`;
+      detail = `${n} staff${roles.length > 1 ? ` across ${roles.length} teams` : ''} flagged blockers related to "${tag}" this month. Likely a shared dependency — an unblocking decision or owner would clear several people at once.`;
+    } else if (roles.length >= 2) {
+      pattern_type = 'cross_team_dependency';
+      title = `Cross-team focus on "${tag}"`;
+      detail = `${n} staff across ${roles.length} teams (${roles.join(', ')}) are working "${tag}" in parallel. Worth coordinating to avoid duplicated effort or misalignment.`;
+    } else {
+      pattern_type = 'repeated_question';
+      title = `Repeated questions about "${tag}"`;
+      detail = `${n} staff asked about "${tag}" this month — a knowledge gap worth documenting once, centrally, and surfacing proactively.`;
+    }
+    candidates.push({ tag, pattern_type, title, detail, staff: [...c.users], roles, n,
+      confidence: Math.min(0.95, 0.5 + n * 0.1) });
+  }
+  if (!candidates.length) return { patterns: 0, pushed: 0 };
+
+  // Dedup against still-open patterns.
+  const { data: open } = await db.from('app_detected_patterns')
+    .select('title').eq('workspace_id', workspaceId).eq('status', 'open');
+  const openTitles = new Set((open || []).map(p => p.title));
+  const fresh = candidates.filter(p => !openTitles.has(p.title));
+  if (!fresh.length) return { patterns: 0, pushed: 0 };
+
+  // Push targets: executives (spec §13 — company-wide patterns → executives only).
+  const { data: leaders } = await db.from('app_agent_profiles')
+    .select('user_id, access_level').eq('workspace_id', workspaceId)
+    .eq('access_level', 'executive');
+
+  let pushed = 0;
+  for (const p of fresh) {
+    const { data: row } = await db.from('app_detected_patterns').insert({
+      workspace_id: workspaceId, pattern_type: p.pattern_type, title: p.title, detail: p.detail,
+      evidence: { tag: p.tag, staff_count: p.n, roles: p.roles },
+      staff_involved: p.staff, confidence: p.confidence, status: 'open',
+    }).select().single();
+    for (const l of (leaders || [])) {
+      await db.from('inbox_items').insert({
+        workspace_id: workspaceId, user_id: l.user_id, type: 'alert', source: 'daemon',
+        title: `Brain · Pattern: ${p.title}`,
+        body: p.detail,   // counts + roles only — never individual names
+        metadata: { event_type: 'pattern', pattern_id: row?.id, severity: p.confidence > 0.8 ? 'warning' : 'info' },
+        read: false,
+      });
+      pushed++;
+    }
+  }
+  return { patterns: fresh.length, pushed };
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // ── Cron: proactive external scan (system job, no user session) ──────────────
@@ -178,10 +267,18 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     try {
-      const results = await scanAllWorkspaces(adminClient());
+      const cronDb = adminClient();
+      const results = await scanAllWorkspaces(cronDb);
       const inserted = results.reduce((n, r) => n + (r.inserted || 0), 0);
-      console.log('[brain] scan_external workspaces=%d findings=%d', results.length, inserted);
-      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, results });
+      // Also run cross-staff pattern detection per workspace (spec §11).
+      let patterns = 0;
+      const { data: wss } = await cronDb.from('workspaces').select('id').limit(50);
+      for (const w of (wss || [])) {
+        try { patterns += (await detectPatterns(w.id, cronDb)).patterns || 0; }
+        catch (e) { console.error('[brain] detectPatterns ws=%s:', w.id, e.message); }
+      }
+      console.log('[brain] scan_external workspaces=%d findings=%d patterns=%d', results.length, inserted, patterns);
+      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, patterns, results });
     } catch (e) {
       console.error('[brain] scan_external error:', e.message);
       return res.status(500).json({ error: 'Scan failed' });
@@ -303,6 +400,12 @@ export default async function handler(req, res) {
     const body = req.body ?? {};
 
     // ── Hunt scan ─────────────────────────────────────────────────────────────
+    if (body.action === 'detect_patterns') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const result = await detectPatterns(workspaceId, db);
+      return res.status(200).json({ ok: true, ...result });
+    }
+
     if (body.action === 'hunt_scan') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await runHuntScan(workspaceId, db);

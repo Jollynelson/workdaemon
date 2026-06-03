@@ -56,6 +56,16 @@ its reply on login, and items also appear in **Inbox**. Showcase across logins:
   every other daemon surfaces it, framed through that role's lens.
 - The **Tasks** page now shows assigner → assignee and brain-routed tasks.
 
+## Cross-staff pattern detection (Brain §11) — seeded
+The Brain clusters the last 30 days of staff↔daemon interactions; any topic raised by
+**≥3 different staff** becomes a typed cross-staff pattern, pushed to executives only,
+**anonymised** (counts + roles, never names). Log in as **Maya** or **Daniel** → Inbox
+shows **"Brain · Pattern"** cards: *Shared blocker around "close"* (Close Automation GA
+blocking 4 teams), *Cross-team focus on "audit"* (SOC 2 across Sales/Eng/Finance/CEO),
+*Shared blocker around "ramp"*. Re-runnable: `node scripts/seed_cross_daemon.mjs` seeds the
+recent interactions; the daily brain cron (or `POST /api/brain {action:'detect_patterns'}`)
+generates the patterns.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json

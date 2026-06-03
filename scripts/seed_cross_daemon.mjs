@@ -24,8 +24,39 @@ const inDays = (d) => new Date(now + d * DAY).toISOString().slice(0, 10);
 await db.from('daemon_events').delete().eq('workspace_id', WS);
 await db.from('inbox_items').delete().eq('workspace_id', WS).eq('metadata->>cd_seed', 'true');
 await db.from('tasks').delete().eq('workspace_id', WS).eq('routed_by_brain', true);
+await db.from('app_detected_patterns').delete().eq('workspace_id', WS);
+await db.from('brain_interactions').delete().eq('workspace_id', WS).contains('topic_tags', ['cdseed']);
 await db.from('app_agent_profiles').update({ availability: 'normal', availability_reason: null, availability_until: null }).eq('workspace_id', WS);
 console.log('cleared prior cross-daemon seed');
+
+// ── Recent cross-staff interactions → real material for pattern detection ───────
+// 3 topics, each touched by 3-4 distinct staff within the last ~8 days, so the
+// Brain's detect_patterns finds them (≥3 distinct staff on a shared topic).
+const STAFF_ROLE = { [maya]:'CEO', [daniel]:'CTO / Engineering', [priya]:'Head of Product', [marcus]:'Head of Sales', [sofia]:'Head of Marketing', [aisha]:'Head of People (HR)', [tom]:'Head of Finance' };
+const recent = [
+  // Cluster A — SOC 2 audit (cross-team: Sales, CTO, Finance, CEO) → cross_team_dependency / shared_blocker
+  [marcus, 'Will the SOC 2 audit close before the enterprise deals? Two are blocked waiting on it.', 22],
+  [daniel, 'What evidence does the SOC 2 audit need from engineering and when does the window open?', 30],
+  [tom,    'What audit and SOC 2 compliance costs should I budget for this quarter?', 44],
+  [maya,   'How does the SOC 2 audit timeline affect the board narrative?', 12],
+  // Cluster B — Close Automation multi-entity GA (Product, Eng, Sales, Marketing) → cross_team_dependency
+  [priya,  'What is the GA blocker list for the Close Automation multi-entity module?', 8],
+  [daniel, 'Engineering capacity needed to ship Close Automation multi-entity to GA?', 14],
+  [marcus, 'Which stalled deals does Close Automation GA unblock for sales?', 20],
+  [sofia,  'When can marketing announce the Close Automation GA launch?', 26],
+  // Cluster C — Ramp switch, with blockers (Sales, Marketing, CEO) → shared_blocker
+  [marcus, 'The Ramp migration deals are stuck — blocked on migration specs from product.', 18],
+  [sofia,  "Waiting on the Ramp comparison page sign-off — it's blocking the switch campaign.", 28],
+  [maya,   'Are we still blocked on the Ramp competitive positioning for the raise?', 36],
+];
+for (const [uid, msg, h] of recent) {
+  await db.from('brain_interactions').insert({
+    user_id: uid, workspace_id: WS, user_role: STAFF_ROLE[uid], access_level: uid === maya || uid === daniel ? 'executive' : 'director',
+    user_message: msg, topic_tags: ['cdseed'], session_hour: 9 + (h % 8), message_length: msg.length,
+    suggestion_acted_on: Math.random() < 0.5, created_at: ago(h),
+  });
+}
+console.log('seeded recent cross-staff interactions:', recent.length);
 
 const ev = (e) => db.from('daemon_events').insert({ workspace_id: WS, status: 'pending', created_at: ago(e.h ?? 2), ...e, h: undefined });
 const inbox = (r) => db.from('inbox_items').insert({ workspace_id: WS, source: 'daemon', read: false, created_at: ago(r.h ?? 2), ...r, h: undefined, metadata: { ...(r.metadata || {}), cd_seed: true } });

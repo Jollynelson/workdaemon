@@ -45,7 +45,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | Brain→agent finding routing | 🟡 | prompt-level ("⟵ ROUTED TO YOU") |
 | **Cross-daemon communication** | ✅ **SHIPPED** | see below |
 | **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
-| **Cross-staff pattern detection (≥3 staff)** | ❌ | not built |
+| **Cross-staff pattern detection (≥3 staff)** | ✅ **SHIPPED** | `api/brain.js` detectPatterns → `app_detected_patterns`; runs on the scan_external cron + manual action |
 | **Activity feed bus + realtime websockets** | ❌ | serverless req/res only; cross-daemon uses polling (chat + inbox) |
 | Knowledge graph (Neo4j) | ❌ | not in live stack |
 | Per-company VPS + Hermes provisioning + MCP writer | ❌ | requires the parked Python stack |
@@ -88,12 +88,25 @@ MODEL, not a DeepSeek-only tier). `api/_lib/brain_router.js`:
 **escalate fast→deep when thin**; any routed/deep error **falls back to the workspace's
 configured model** (today's behavior) → demo-safe. Logs `[chat] route depth=.. model=.. escalated=..`.
 
+## Cross-Staff Pattern Detection — SHIPPED
+Implements FINAL §11 + §13 (anonymised surfacing). `api/brain.js` `detectPatterns(workspaceId, db)`:
+clusters last-30-day `brain_interactions` by topic tag; a tag touched by **≥3 distinct
+staff** → a typed pattern (`shared_blocker` / `cross_team_dependency` / `repeated_question`)
+written to **`app_detected_patterns`** (own table — Python backend owns `detected_patterns`
+by company_id; same `app_` convention as app_agent_profiles). Pushes to **executives only**
+(§13: company-wide → executives), **anonymised** (counts + roles, never names; staff ids
+stored but never surfaced). Dedups vs open patterns. Runs on the `scan_external` cron +
+manual `POST /api/brain {action:'detect_patterns'}`. `detectPatterns` is exported for
+scripts. Cobalt seeded → 5 live patterns (Close Automation, SOC 2 audit, Ramp) in Maya &
+Daniel's inbox. NOT YET: injecting patterns into the executive daemon's chat prompt.
+
 ## Suggested next (priority order)
-1. **Cross-staff pattern detection** (≥3 staff semantically similar in 30d → `hunt_findings`
-   + manager push) — uses existing `brain_interactions`.
-3. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`.
-4. **Tasks UI polish / realtime** — websockets need a non-Vercel channel (Supabase Realtime
-   is the additive option if we want true push instead of polling).
+1. **Inject detected_patterns into the executive daemon chat prompt** so the CEO's daemon
+   proactively cites cross-staff patterns (not just Inbox) — small `api/chat.js` add.
+2. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`
+   (has knowledge/performance/waste; add threat/opportunity + a deep nightly pass).
+3. **Realtime** — websockets need a non-Vercel channel (Supabase Realtime is the additive
+   option if we want true push instead of the current chat/inbox polling).
 
 ## How to run / verify
 ```bash
