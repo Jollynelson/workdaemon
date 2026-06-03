@@ -44,7 +44,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | Single hunt scan + findings | 🟡 | `api/brain.js` `runHuntScan`; spec wants **5 modes × 2 tiers + nightly deep pass** |
 | Brain→agent finding routing | 🟡 | prompt-level ("⟵ ROUTED TO YOU") |
 | **Cross-daemon communication** | ✅ **SHIPPED** | see below |
-| **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ❌ | next-biggest spec gap |
+| **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
 | **Cross-staff pattern detection (≥3 staff)** | ❌ | not built |
 | **Activity feed bus + realtime websockets** | ❌ | serverless req/res only; cross-daemon uses polling (chat + inbox) |
 | Knowledge graph (Neo4j) | ❌ | not in live stack |
@@ -73,11 +73,23 @@ talk directly. "Realtime" = surface on next chat/inbox load (doc's stated pollin
   Maya→Priya assignment + Priya→Maya capacity flag; Sofia→Marcus handoff; Aisha
   parental-leave broadcast. Documented in `DEMO.md`.
 
+## Two-Tier Brain Routing — SHIPPED
+Implements FINAL §10 + ChangeSpec §2b, adapted to multi-provider (the lever is the
+MODEL, not a DeepSeek-only tier). `api/_lib/brain_router.js`:
+- `classifyTurn(text)` — heuristic (no LLM): strategic/analytical → `deep`; code/
+  spreadsheet/data → `technical` (complex if refactor/debug/architecture/multi-file);
+  session pings + casual → `fast`.
+- `pickTierModels(keyRow)` — per-provider {fast, deep} pair (deepseek chat→reasoner,
+  google flash→pro, openai 4o-mini→4o, anthropic sonnet→opus); keyRow.model wins as
+  fast; env `BRAIN_FAST_MODEL`/`BRAIN_DEEP_MODEL` override; `BRAIN_TWO_TIER=off` disables.
+  Providers without a known sibling stay single-tier (twoTier=false).
+- `responseIsThin()` — escalation gate (empty / tiny lone text / hedging).
+`api/chat.js`: deep/complex turns call the deep model directly; fast turns call fast and
+**escalate fast→deep when thin**; any routed/deep error **falls back to the workspace's
+configured model** (today's behavior) → demo-safe. Logs `[chat] route depth=.. model=.. escalated=..`.
+
 ## Suggested next (priority order)
-1. **Two-tier brain routing + escalation** (`classify()` → Flash/Pro, low-confidence
-   escalation, technical-task routing) — biggest remaining FINAL-spec capability; additive
-   layer over `api/chat.js`'s provider dispatch, provider-agnostic.
-2. **Cross-staff pattern detection** (≥3 staff semantically similar in 30d → `hunt_findings`
+1. **Cross-staff pattern detection** (≥3 staff semantically similar in 30d → `hunt_findings`
    + manager push) — uses existing `brain_interactions`.
 3. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`.
 4. **Tasks UI polish / realtime** — websockets need a non-Vercel channel (Supabase Realtime

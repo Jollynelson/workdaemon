@@ -5,6 +5,7 @@ import {
   sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
 } from './_lib/security.js';
 import { braveSearchMany, roleToTags } from './_lib/research.js';
+import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -760,8 +761,39 @@ export default async function handler(req, res) {
   const resolvedKey = { ...keyRow, api_key: decryptSecret(keyRow.api_key) };
 
   try {
-    const raw    = await callProvider(resolvedKey, sys, trimmed);
-    const parsed = parseJsonResponse(raw);
+    // ── Two-tier brain routing + escalation (spec §10 / ChangeSpec §2b) ────────
+    // Route shallow turns to the workspace's fast model, deep/complex turns to a
+    // stronger sibling; escalate fast→deep if a fast answer comes back thin.
+    // Any error falls back to the workspace's configured model (today's behavior).
+    const route = classifyTurn(
+      newMsgNormalized?.role === 'user' ? newMsgNormalized.content : '',
+      { connectedTools, msgCount: trimmed.length },
+    );
+    const tiers = pickTierModels(resolvedKey);
+    const goDeep = tiers.twoTier && wantsDeep(route);
+    let usedModel = goDeep ? tiers.deep : tiers.fast;
+    let escalated = false;
+    let parsed;
+    try {
+      parsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, trimmed));
+      // Escalation gate: a fast-tier answer that came back thin → retry on deep.
+      if (tiers.twoTier && !goDeep && responseIsThin(parsed)) {
+        try {
+          const deepParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: tiers.deep }, sys, trimmed));
+          if (!responseIsThin(deepParsed)) { parsed = deepParsed; usedModel = tiers.deep; escalated = true; }
+        } catch { /* keep the fast result */ }
+      }
+    } catch (e) {
+      // Routed model failed → fall back to the workspace's configured model once.
+      if (usedModel !== resolvedKey.model) {
+        parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed));
+        usedModel = resolvedKey.model;
+      } else {
+        throw e;
+      }
+    }
+    console.log('[chat] route depth=%s complexity=%s model=%s escalated=%s',
+      route.depth, route.complexity || '-', usedModel, escalated);
 
     // Fire-and-forget: persist messages + run learning pipeline
     const persist = async () => {
