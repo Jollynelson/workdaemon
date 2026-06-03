@@ -207,6 +207,20 @@ Full runbook: `docs/EMBEDDINGS_MODAL.md`. Sensitive tier routes to Modal serving
 ## Practically unbounded (build on demand, not "finishable")
 - The 9,637-app connector long tail in `docs/integrations/CATALOG.md`.
 
+## Privacy + per-staff Slack (Master §14 / FINAL §13) — SHIPPED
+- **Access-scoped documents**: `workspace_documents.visibility` + `allowed_users`;
+  `retrieveDocuments(userId)` → `{visible, restricted}`; chat.js injects visible as
+  grounding + restricted as **pointers only** (title + members, never content) with a
+  need-to-know policy ("suggest they ask <member>" if material, else answer minimally).
+  Verified: a non-member's query returns a private channel as a pointer; a member sees content.
+- **Per-staff Slack connect**: `user_integrations` (per-`(ws,user)` user token);
+  `oauth_start` now allowed for ANY member (each connects their own daemon), disconnect
+  admin-only. Expanded Slack USER scopes (channels/groups history) so a staff token reads
+  their own channels incl. private. `slack.ingest()` pulls per-user (each member's channels,
+  private scoped to members) ∪ bot ∪ local store, merged by channel id.
+  LIVE caveat: existing Slack connections predate the new user scopes → staff **reconnect**
+  to grant them (and the Slack app config must list the user scopes as requestable).
+
 ## Deliberately NOT built (architecture decision — protects the live demo)
 - Per-company VPS + Hermes-agent-per-staff; Neo4j (→ Postgres graph); Redis pub/sub
   (→ Supabase Realtime + polling); Inngest (→ Vercel cron); DeepSeek-only (→ multi-provider).

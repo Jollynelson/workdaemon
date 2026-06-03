@@ -32,8 +32,14 @@ export const PROVIDERS = {
       'users:read', 'users:read.email', 'team:read',
       'reminders:write', 'canvases:write', 'app_mentions:read',
     ],
-    // User scopes — only what truly needs a user token: search, status, profile.
-    userScopes: ['search:read', 'users.profile:write'],
+    // User scopes — a staff member's own token, so the Brain reads what THEY can
+    // see (incl. private channels) without a bot invite. Read-scoped + search.
+    userScopes: [
+      'search:read', 'users.profile:write',
+      'channels:read', 'channels:history',
+      'groups:read', 'groups:history',          // private channels the user is in
+      'mpim:read', 'mpim:history',
+    ],
     parseToken: (d) => {
       if (d.ok === false) throw new Error(`slack: ${d.error || 'oauth error'}`);
       return {
@@ -263,6 +269,29 @@ export async function getAccessToken(db, workspaceId, provider, kind = 'bot') {
   return enc ? decryptSecret(enc) : null;
 }
 
+// ── Per-staff tokens (each staff connects their own daemon) ──────────────────
+export async function storeUserIntegration(db, { workspaceId, userId, provider, parsed }) {
+  if (!userId || !parsed?.user_token) return;   // nothing to store without a user token
+  const { error } = await db.from('user_integrations').upsert({
+    workspace_id:     workspaceId,
+    user_id:          userId,
+    provider,
+    user_token:       encryptSecret(parsed.user_token),
+    scopes:           parsed.metadata?.user_scopes || [],
+    external_account: parsed.external_account || null,
+    metadata:         { authed_user: parsed.metadata?.authed_user || null },
+    updated_at:       new Date().toISOString(),
+  }, { onConflict: 'workspace_id,user_id,provider' });
+  if (error) console.error('[oauth] storeUserIntegration:', error.message);
+}
+
+// All staff user tokens for a provider (decrypted) — for per-user ingest.
+export async function getUserTokens(db, workspaceId, provider) {
+  const { data } = await db.from('user_integrations')
+    .select('user_id, user_token').eq('workspace_id', workspaceId).eq('provider', provider);
+  return (data || []).filter(r => r.user_token).map(r => ({ userId: r.user_id, token: decryptSecret(r.user_token) }));
+}
+
 // ── The unauthenticated callback (called from settings.js before requireAuth) ─
 function redirect(res, path) { res.setHeader('Location', path); res.statusCode = 302; res.end(); }
 
@@ -276,7 +305,9 @@ export async function handleOAuthCallback(req, res, db) {
   try {
     const parsed = await exchangeCode(provider, code, getRedirectUri(req));
     await storeIntegration(db, { workspaceId: st.workspace_id, provider, parsed, userId: st.user_id });
-    console.log('[oauth] connected provider=%s ws=%s', provider, st.workspace_id);
+    // Also capture the connecting staff member's own user token (per-staff ingest).
+    await storeUserIntegration(db, { workspaceId: st.workspace_id, userId: st.user_id, provider, parsed });
+    console.log('[oauth] connected provider=%s ws=%s user=%s', provider, st.workspace_id, st.user_id);
     return redirect(res, `/app/integrations?connected=${provider}`);
   } catch (e) {
     console.error('[oauth] callback provider=%s error=%s', provider, e.message);

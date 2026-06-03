@@ -199,16 +199,18 @@ export default async function handler(req, res) {
     // ── Integrations OAuth (admin) — handled before the API-key provider checks
     // so a connector slug like 'slack' isn't rejected by the LLM-provider allowlist.
     if (action === 'oauth_start' || action === 'oauth_disconnect') {
-      if (!(await checkAdmin(db, workspaceId, user.id))) return res.status(403).json({ error: 'Admin access required' });
       const p = (req.body?.provider || '').toString();
       if (!PROVIDERS[p]) return res.status(400).json({ error: 'Unknown integration provider' });
 
       if (action === 'oauth_disconnect') {
-        const { error } = await db.from('workspace_integrations').delete()
-          .eq('workspace_id', workspaceId).eq('provider', p);
-        if (error) return fail(res, 500, 'Could not disconnect integration', error, 'settings');
+        // Disconnecting the workspace integration affects everyone → admin only.
+        if (!(await checkAdmin(db, workspaceId, user.id))) return res.status(403).json({ error: 'Admin access required' });
+        await db.from('workspace_integrations').delete().eq('workspace_id', workspaceId).eq('provider', p);
+        await db.from('user_integrations').delete().eq('workspace_id', workspaceId).eq('user_id', user.id).eq('provider', p);
         return res.status(200).json({ ok: true });
       }
+      // oauth_start → ANY staff may connect their OWN daemon (captures their user
+      // token for per-staff ingest). The workspace bot token is re-upserted idempotently.
       // oauth_start → return the provider consent URL (UI redirects to it)
       if (!providerConfigured(p)) {
         return res.status(503).json({ error: `${PROVIDERS[p].label} isn't configured yet — app credentials are missing.` });

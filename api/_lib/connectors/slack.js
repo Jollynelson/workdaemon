@@ -1,4 +1,4 @@
-import { getAccessToken } from '../oauth.js';
+import { getAccessToken, getUserTokens } from '../oauth.js';
 import { upsertDocuments } from '../ingestion.js';
 
 // ── Ingestion: fold Slack activity into the document store ────────────────────
@@ -6,52 +6,66 @@ import { upsertDocuments } from '../ingestion.js';
 // the demo). This folds them into per-channel documents so the daemon can ground
 // answers on conversations via unified retrieval. Reads the local store — no live
 // API token needed (works even when only the webhook feed is configured).
-export async function ingest(db, workspaceId, token) {
-  // Slack user-id → workspace user + name, for tagging private-channel access.
+// Pull the channels a TOKEN can see (user token → that staff's channels incl.
+// private; bot token → channels the bot is in). Private/mpim → scoped to members.
+async function _pullViaToken(token, userOf) {
+  let convos = [];
+  try {
+    convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 100 })).channels || [];
+  } catch { return []; }
+  const out = [];
+  for (const ch of convos) {
+    try {
+      const msgs = await channelHistory(token, ch.id, { limit: 50 });
+      const lines = msgs.reverse().map(m => `${m.user || 'user'}: ${m.text}`);
+      if (!lines.length) continue;
+      let visibility = 'public', allowed = [], names = [];
+      if (ch.is_private || ch.is_mpim) {
+        visibility = 'restricted';
+        const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 200 }).then(d => d.members).catch(() => [])) || [];
+        const mapped = members.map(sid => userOf[sid]).filter(Boolean);
+        allowed = mapped.map(m => m.user_id);
+        names = mapped.map(m => m.real_name).filter(Boolean);
+      }
+      out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names });
+    } catch { /* not_in_channel etc. */ }
+  }
+  return out;
+}
+
+export async function ingest(db, workspaceId, botToken) {
   const { data: umap } = await db.from('slack_user_map').select('slack_user_id, user_id, real_name').eq('workspace_id', workspaceId);
   const userOf = Object.fromEntries((umap || []).map(u => [u.slack_user_id, u]));
 
-  const channels = {};   // name → { lines:[], visibility, allowed_users:[], member_names:[] }
-  const put = (name, vis = 'public', allowed = [], names = []) =>
-    (channels[name] ||= { lines: [], visibility: vis, allowed_users: allowed, member_names: names });
-
-  // 1. Webhook-fed local store (seeded demos + real-time events) → treated as public.
-  const { data: stored } = await db
-    .from('slack_messages').select('channel_name, slack_user, text')
-    .eq('workspace_id', workspaceId).order('created_at', { ascending: true }).limit(400);
-  if (stored?.length) {
-    for (const m of stored) put(m.channel_name || 'channel').lines.push(`${m.slack_user || 'user'}: ${m.text}`);
-  } else if (token) {
-    // 2. Live API pull — public AND private channels the bot can access. Private
-    //    channels become RESTRICTED docs scoped to their members.
-    let list = [];
-    try { list = (await slackApi(token, 'conversations.list', { types: 'public_channel,private_channel', exclude_archived: 'true', limit: 100 })).channels || []; } catch {}
-    for (const ch of list) {
-      try {
-        if (!ch.is_private) await slackApi(token, 'conversations.join', { channel: ch.id }).catch(() => {});
-        const msgs = await channelHistory(token, ch.id, { limit: 50 });
-        const lines = msgs.reverse().map(m => `${m.user || 'user'}: ${m.text}`);
-        if (!lines.length) continue;
-        if (ch.is_private) {
-          const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 200 }).then(d => d.members).catch(() => [])) || [];
-          const mapped = members.map(sid => userOf[sid]).filter(Boolean);
-          const c = put(ch.name || ch.id, 'restricted', mapped.map(m => m.user_id), mapped.map(m => m.real_name).filter(Boolean));
-          c.lines = lines;
-        } else {
-          put(ch.name || ch.id).lines = lines;
-        }
-      } catch { /* not_in_channel — needs a manual /invite */ }
+  // Merge channel docs by stable channel id; union member access across whoever read it.
+  const byId = {};
+  const merge = (parts) => {
+    for (const p of parts) {
+      const k = `channel-${p.id}`;
+      const e = byId[k] ||= { title: `#${p.name} (Slack)`, content: '', visibility: 'public', allowed: new Set(), names: new Set() };
+      if (!e.content) e.content = p.lines.join('\n');
+      if (p.visibility === 'restricted') { e.visibility = 'restricted'; p.allowed.forEach(a => e.allowed.add(a)); p.names.forEach(n => e.names.add(n)); }
     }
+  };
+
+  // 1. Per-staff: each connected staff's OWN token → their channels (incl. private),
+  //    each private channel scoped to its members. This is the "connect your own daemon" path.
+  for (const { token } of await getUserTokens(db, workspaceId, 'slack')) merge(await _pullViaToken(token, userOf));
+  // 2. Workspace bot token → channels the bot is in (public + any it was invited to).
+  if (botToken) merge(await _pullViaToken(botToken, userOf));
+
+  // 3. Fallback: webhook-fed / seeded local store (public), keyed by name.
+  if (!Object.keys(byId).length) {
+    const { data: stored } = await db.from('slack_messages').select('channel_name, slack_user, text').eq('workspace_id', workspaceId).order('created_at', { ascending: true }).limit(400);
+    const byName = {};
+    for (const m of (stored || [])) (byName[m.channel_name || 'channel'] ||= []).push(`${m.slack_user || 'user'}: ${m.text}`);
+    for (const [name, lines] of Object.entries(byName)) byId[`channel-${name}`] = { title: `#${name} (Slack)`, content: lines.join('\n'), visibility: 'public', allowed: new Set(), names: new Set() };
   }
 
-  const docs = Object.entries(channels).map(([ch, c]) => ({
-    external_id: `channel-${ch}`,
-    doc_type: 'channel',
-    title: `#${ch} (Slack)`,
-    content: c.lines.join('\n'),
-    visibility: c.visibility,
-    allowed_users: c.allowed_users,
-    metadata: { channel: ch, messages: c.lines.length, member_names: c.member_names },
+  const docs = Object.entries(byId).map(([eid, e]) => ({
+    external_id: eid, doc_type: 'channel', title: e.title, content: e.content,
+    visibility: e.visibility, allowed_users: [...e.allowed],
+    metadata: { channel: e.title.replace(/^#| \(Slack\)$/g, ''), member_names: [...e.names] },
   }));
   return upsertDocuments(db, workspaceId, 'slack', docs);
 }
