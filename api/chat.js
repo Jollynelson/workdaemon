@@ -636,6 +636,17 @@ export default async function handler(req, res) {
 
   const trimmed = combined.length > 16 ? combined.slice(-16) : combined;
 
+  // Short-circuit: integration status questions get a deterministic answer from
+  // the DB so the LLM can't hallucinate "not connected" when tools are live.
+  const integStatusQ = /\b(is|are|check|show|list|what).{0,30}\b(slack|github|notion|google|integration|tool|connect)/i;
+  if (newMsgNormalized?.role === 'user' && integStatusQ.test(newMsgNormalized.content) && connectedTools.length > 0) {
+    const list = connectedTools.map(t => `**${t.charAt(0).toUpperCase() + t.slice(1)}**`).join(', ');
+    return res.status(200).json({
+      blocks: [{ type: 'text', md: `Yes — ${list} ${connectedTools.length === 1 ? 'is' : 'are'} connected and live. I can query it directly.` }],
+      suggestions: [`What's in #general on Slack?`, `Pull recent Slack activity`, `What messages need my attention?`],
+    });
+  }
+
   // Live web search: when the latest user message asks for fresh/external info,
   // fetch results now and ground the answer in them (retrieval augmentation).
   let webContext = '';
