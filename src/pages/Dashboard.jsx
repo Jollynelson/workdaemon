@@ -993,7 +993,7 @@ function ChatView({ context, onBack, onMenu }) {
 function DaemonPage({ onMenu, onChatChange }) {
   const c = useC();
   const { isMobile } = useViewport();
-  const { profile, loading } = useAuth();
+  const { profile, loading, token } = useAuth();
 
   // Pre-populate from onboarding profile
   const profilePreset = profile?.industry
@@ -1016,9 +1016,10 @@ function DaemonPage({ onMenu, onChatChange }) {
 
   useEffect(() => { onChatChange?.(showChat); }, [showChat]);
 
-  // While auth/profile is still resolving, show nothing (not the context picker) —
-  // otherwise the picker flashes for a split second before the daemon loads.
-  if (loading) {
+  // While auth/profile is still resolving, show nothing (not the context picker).
+  // Also gate on token&&!profile: covers the gap where onAuthStateChange fires SIGNED_IN
+  // after init() already cleared loading, leaving profile null for a frame.
+  if (loading || (token && !profile)) {
     return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.bg }}><Spinner size={20} /></div>;
   }
 
