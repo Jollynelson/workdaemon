@@ -25,7 +25,7 @@ export const PROVIDERS = {
     clientSecretEnv: 'SLACK_CLIENT_SECRET',
     // Bot scopes — full read + action toolset (parity with the connector below).
     scopes: [
-      'channels:read', 'channels:history', 'channels:manage',
+      'channels:read', 'channels:history', 'channels:manage', 'channels:join',
       'groups:read', 'groups:write', 'groups:history',
       'im:read', 'im:write', 'im:history', 'mpim:read', 'mpim:history',
       'chat:write', 'reactions:read', 'reactions:write',

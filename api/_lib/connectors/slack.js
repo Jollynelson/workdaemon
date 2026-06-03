@@ -6,22 +6,40 @@ import { upsertDocuments } from '../ingestion.js';
 // the demo). This folds them into per-channel documents so the daemon can ground
 // answers on conversations via unified retrieval. Reads the local store — no live
 // API token needed (works even when only the webhook feed is configured).
-export async function ingest(db, workspaceId, _token) {
-  const { data: msgs } = await db
+export async function ingest(db, workspaceId, token) {
+  const byChannel = {};   // channel name → ["user: text", …]
+
+  // 1. Prefer the webhook-fed local store (seeded demos + real-time events).
+  const { data: stored } = await db
     .from('slack_messages')
-    .select('channel_name, slack_user, text, created_at')
+    .select('channel_name, slack_user, text')
     .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: true })
     .limit(400);
-  if (!msgs?.length) return { upserted: 0 };
-  const byChannel = {};
-  for (const m of msgs) (byChannel[m.channel_name || 'channel'] ||= []).push(m);
-  const docs = Object.entries(byChannel).map(([ch, list]) => ({
+  if (stored?.length) {
+    for (const m of stored) (byChannel[m.channel_name || 'channel'] ||= []).push(`${m.slack_user || 'user'}: ${m.text}`);
+  } else if (token) {
+    // 2. No local messages → live API pull (bot reads channels it's a member of).
+    const channels = await listChannels(token, { limit: 50 }).catch(() => []);
+    for (const ch of channels) {
+      try {
+        // Best-effort auto-join (needs channels:join scope); a bot can only read
+        // history of channels it's a member of. No-op if already joined; if the
+        // scope is missing, this throws and we fall through to the read attempt.
+        await slackApi(token, 'conversations.join', { channel: ch.id }).catch(() => {});
+        const msgs = await channelHistory(token, ch.id, { limit: 50 });
+        const lines = msgs.reverse().map(m => `${m.user || 'user'}: ${m.text}`);
+        if (lines.length) byChannel[ch.name || ch.id] = lines;
+      } catch { /* not_in_channel etc. — skip; channel needs a manual /invite */ }
+    }
+  }
+
+  const docs = Object.entries(byChannel).map(([ch, lines]) => ({
     external_id: `channel-${ch}`,
     doc_type: 'channel',
     title: `#${ch} (Slack)`,
-    content: list.map(m => `${m.slack_user || 'user'}: ${m.text}`).join('\n'),
-    metadata: { channel: ch, messages: list.length },
+    content: lines.join('\n'),
+    metadata: { channel: ch, messages: lines.length },
   }));
   return upsertDocuments(db, workspaceId, 'slack', docs);
 }
