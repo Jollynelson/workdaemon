@@ -86,12 +86,71 @@ export const PROVIDERS = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GOOGLE_CLIENT_ID',
     clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
-    scopes: ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+    scopes: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
     responseType: 'code',
     authExtra: { access_type: 'offline', prompt: 'consent' },
     parseToken: (d) => {
       if (d.error) throw new Error(`google: ${d.error_description || d.error}`);
       return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  microsoft: {
+    label: 'Microsoft 365',
+    authorizeUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    clientIdEnv: 'MICROSOFT_CLIENT_ID',
+    clientSecretEnv: 'MICROSOFT_CLIENT_SECRET',
+    scopes: ['offline_access', 'User.Read', 'Mail.Read', 'Calendars.Read', 'Files.Read.All'],
+    responseType: 'code',
+    parseToken: (d) => {
+      if (d.error) throw new Error(`microsoft: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  atlassian: {
+    label: 'Jira / Confluence',
+    authorizeUrl: 'https://auth.atlassian.com/authorize',
+    tokenUrl: 'https://auth.atlassian.com/oauth/token',
+    tokenBody: 'json',
+    clientIdEnv: 'ATLASSIAN_CLIENT_ID',
+    clientSecretEnv: 'ATLASSIAN_CLIENT_SECRET',
+    scopes: ['read:jira-work', 'read:jira-user', 'offline_access'],
+    responseType: 'code',
+    authExtra: { audience: 'api.atlassian.com', prompt: 'consent' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`atlassian: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  salesforce: {
+    label: 'Salesforce',
+    authorizeUrl: 'https://login.salesforce.com/services/oauth2/authorize',
+    tokenUrl: 'https://login.salesforce.com/services/oauth2/token',
+    clientIdEnv: 'SALESFORCE_CLIENT_ID',
+    clientSecretEnv: 'SALESFORCE_CLIENT_SECRET',
+    scopes: ['api', 'refresh_token'],
+    responseType: 'code',
+    parseToken: (d) => {
+      if (d.error) throw new Error(`salesforce: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, scopes: [], external_account: null, metadata: { instance_url: d.instance_url } };
+    },
+  },
+  hubspot: {
+    label: 'HubSpot',
+    authorizeUrl: 'https://app.hubspot.com/oauth/authorize',
+    tokenUrl: 'https://api.hubapi.com/oauth/v1/token',
+    clientIdEnv: 'HUBSPOT_CLIENT_ID',
+    clientSecretEnv: 'HUBSPOT_CLIENT_SECRET',
+    scopes: ['crm.objects.contacts.read', 'crm.objects.deals.read'],
+    responseType: 'code',
+    parseToken: (d) => {
+      if (d.error) throw new Error(`hubspot: ${d.message || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: [], external_account: null, metadata: {} };
     },
   },
 };
@@ -156,6 +215,10 @@ export async function exchangeCode(provider, code, redirectUri) {
     headers.Authorization = 'Basic ' + Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString('base64');
     headers['content-type'] = 'application/json';
     body = JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+  } else if (cfg.tokenBody === 'json') {
+    // Atlassian-style: JSON body with client creds inline.
+    headers['content-type'] = 'application/json';
+    body = JSON.stringify({ grant_type: 'authorization_code', client_id: process.env[cfg.clientIdEnv], client_secret: process.env[cfg.clientSecretEnv], code, redirect_uri: redirectUri });
   } else {
     headers['content-type'] = 'application/x-www-form-urlencoded';
     body = new URLSearchParams({
