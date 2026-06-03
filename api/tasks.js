@@ -79,6 +79,15 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false });
 
     if (error) return fail(res, 500, 'Could not load tasks', error, 'tasks');
+
+    // Workspace members (id + name) so the UI can offer an assignee picker.
+    const { data: memberRows } = await db
+      .from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+    const memberIds = (memberRows || []).map(m => m.user_id);
+    const memberNames = await resolveNames(db, memberIds);
+    const members = memberIds.map(id => memberNames[id] || { id, name: null, title: null })
+      .filter(m => m.id !== user.id); // exclude self from the assignee list
+
     // Resolve assignee + from-staff names via profiles (auth.users isn't embeddable).
     const names = await resolveNames(db, (tasks || []).flatMap(t => [t.assignee_id, t.from_user_id]));
     const shaped = (tasks || []).map(t => ({
@@ -86,7 +95,7 @@ export default async function handler(req, res) {
       assignee: names[t.assignee_id] || null,
       from_staff: names[t.from_user_id] || null,
     }));
-    return res.status(200).json({ tasks: shaped });
+    return res.status(200).json({ tasks: shaped, members, me: user.id });
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
