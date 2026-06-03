@@ -32,9 +32,11 @@ function RequireGuest({ children }) {
 // redirected to /onboarding so they complete setup before hitting the daemon.
 function RequireOnboarded({ children }) {
   const { token, loading, profile, profileReady } = useAuth();
-  // Show spinner (never blank) while auth resolves or profile is in-flight.
+  // Fast-path: if auth is resolved and there's no token, go to login immediately
+  // (profileReady never fires for unauthenticated users, so check this first).
+  if (!loading && !token) return <Navigate to="/login" replace />;
+  // Show spinner while auth resolves or profile is in-flight.
   if (loading || !profileReady) return <FullPageSpinner />;
-  if (!token) return <Navigate to="/login" replace />;
   const onboarded = !!(profile?.onboarded || profile?.workspace_id || profile?.workspaces?.id);
   if (!onboarded) return <Navigate to="/onboarding" replace />;
   return children;
