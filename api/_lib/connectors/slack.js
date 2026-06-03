@@ -1,4 +1,30 @@
 import { getAccessToken } from '../oauth.js';
+import { upsertDocuments } from '../ingestion.js';
+
+// ── Ingestion: fold Slack activity into the document store ────────────────────
+// Slack messages arrive via the events webhook into `slack_messages` (seeded for
+// the demo). This folds them into per-channel documents so the daemon can ground
+// answers on conversations via unified retrieval. Reads the local store — no live
+// API token needed (works even when only the webhook feed is configured).
+export async function ingest(db, workspaceId, _token) {
+  const { data: msgs } = await db
+    .from('slack_messages')
+    .select('channel_name, slack_user, text, created_at')
+    .eq('workspace_id', workspaceId)
+    .order('created_at', { ascending: true })
+    .limit(400);
+  if (!msgs?.length) return { upserted: 0 };
+  const byChannel = {};
+  for (const m of msgs) (byChannel[m.channel_name || 'channel'] ||= []).push(m);
+  const docs = Object.entries(byChannel).map(([ch, list]) => ({
+    external_id: `channel-${ch}`,
+    doc_type: 'channel',
+    title: `#${ch} (Slack)`,
+    content: list.map(m => `${m.slack_user || 'user'}: ${m.text}`).join('\n'),
+    metadata: { channel: ch, messages: list.length },
+  }));
+  return upsertDocuments(db, workspaceId, 'slack', docs);
+}
 
 // ── Slack connector — full read + action toolset (parity with Zapier's Slack) ──
 // Most calls use the workspace BOT token; search/status/profile need the USER token.
