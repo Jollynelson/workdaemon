@@ -39,11 +39,29 @@ falls back to `DEEPSEEK_API_KEY`).
 - As **Daniel**, ask *"what's the debate in #engineering?"* → it summarizes the Slack thread, ties it to the SOC 2 finding, and offers an action_confirm.
 - Click **Inbox** (findings + Use draft), **Company Brain**, **Tasks**, **Overview**.
 
+## Cross-Daemon Communication (seeded) — the "operating system" moment
+Implements `workdaemon-cross-daemon-communication.md`: daemons negotiate work
+through the Brain (the `daemon_events` bus + inbox), surfacing to humans only
+when there's a real decision. Each daemon surfaces pending events at the top of
+its reply on login, and items also appear in **Inbox**. Showcase across logins:
+- **Capacity push-back (Scenario 3):** log in as **Maya** → her daemon opens with
+  *"Priya's daemon flagged a capacity risk on the Q4 multi-currency scoping you
+  assigned — she owns the P0 Close Automation GA blocker; suggests holding it
+  until after GA or pulling Daniel in."* Then log in as **Priya** → her daemon
+  shows the same assignment from her side + that she's at high load.
+- **Output→input handoff:** log in as **Marcus** → *"Sofia completed the
+  'switch from Ramp' landing page — it's in your queue: run the Ramp-switch
+  outbound to the 6 stalled deals,"* with Sofia's output as the brief.
+- **Company-wide broadcast:** **Aisha** broadcast the new parental-leave policy →
+  every other daemon surfaces it, framed through that role's lens.
+- The **Tasks** page now shows assigner → assignee and brain-routed tasks.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json
 node scripts/seed_demo.mjs        # workspace + 7 staff + context/history/findings/tasks
 node scripts/seed_slack.mjs       # Slack connected + channels/messages + debate finding
+node scripts/seed_cross_daemon.mjs # cross-daemon: capacity flag, handoff, broadcast (idempotent)
 
 # check what would be removed (no changes)
 node scripts/delete_demo.mjs --dry
