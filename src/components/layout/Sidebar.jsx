@@ -130,23 +130,28 @@ export default function Sidebar({
     return () => { alive = false; };
   }, [token]);
 
-  // Realtime: bump the Inbox badge the instant a new item lands (a daemon
-  // assignment/flag/broadcast or a brain-routed task) — no polling. RLS scopes
-  // the stream to this user; the websocket is authed with their JWT. Graceful:
-  // if realtime fails the badge still works from the fetch above.
+  // Realtime: bump the Inbox badge AND surface a toast the instant a new item
+  // lands (a daemon assignment/flag/broadcast or a brain-routed task) — no polling.
+  // RLS scopes the stream to this user; the websocket is authed with their JWT.
+  // Graceful: if realtime fails the badge still works from the fetch above.
+  const [toast, setToast] = useState(null);
   useEffect(() => {
     if (!token || !user?.id) return;
-    let channel;
+    let channel, timer;
     try {
       supabase.realtime.setAuth(token);
       channel = supabase
         .channel(`inbox:${user.id}`)
         .on('postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${user.id}` },
-          () => setInboxCount(c => c + 1))
+          (payload) => {
+            setInboxCount(c => c + 1);
+            const t = payload?.new?.title;
+            if (t) { setToast(t); clearTimeout(timer); timer = setTimeout(() => setToast(null), 6000); }
+          })
         .subscribe();
     } catch { /* realtime unavailable — polling/fetch still covers it */ }
-    return () => { try { if (channel) supabase.removeChannel(channel); } catch {} };
+    return () => { clearTimeout(timer); try { if (channel) supabase.removeChannel(channel); } catch {} };
   }, [token, user?.id]);
 
   const displayName = profile?.name || user?.email?.split('@')[0] || '—';
@@ -159,6 +164,21 @@ export default function Sidebar({
 
   return (
     <>
+      {/* Realtime toast — a daemon just signalled this user (Brain push / assignment) */}
+      {toast && (
+        <div
+          onClick={() => { setToast(null); navigate('/app/inbox'); }}
+          style={{
+            position: 'fixed', bottom: 20, right: 20, zIndex: 200, maxWidth: 320, cursor: 'pointer',
+            background: isLight ? '#fff' : '#16161c', border: `1px solid ${isLight ? '#e5e3df' : '#2a2a36'}`,
+            borderLeft: '3px solid #4172f5', borderRadius: 10, padding: '12px 14px',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.35)', animation: 'wd-progress 0.25s ease both',
+          }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 4 }}>● DAEMON · LIVE</div>
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: isLight ? '#1a1a1a' : '#e8e8e8', lineHeight: 1.4 }}>{toast}</div>
+        </div>
+      )}
+
       {/* Mobile backdrop */}
       {isMobile && isOpen && (
         <div
