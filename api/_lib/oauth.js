@@ -51,6 +51,49 @@ export const PROVIDERS = {
       };
     },
   },
+
+  // ── P0 connectors from INTEGRATIONS.md — 🔑-ready (need <PROVIDER>_CLIENT_ID/SECRET) ──
+  github: {
+    label: 'GitHub',
+    authorizeUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    clientIdEnv: 'GITHUB_CLIENT_ID',
+    clientSecretEnv: 'GITHUB_CLIENT_SECRET',
+    scopes: ['repo', 'read:org', 'read:user'],
+    parseToken: (d) => {
+      if (d.error) throw new Error(`github: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, scopes: (d.scope || '').split(',').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  notion: {
+    label: 'Notion',
+    authorizeUrl: 'https://api.notion.com/v1/oauth/authorize',
+    tokenUrl: 'https://api.notion.com/v1/oauth/token',
+    tokenAuth: 'basic',                    // Notion: Basic client auth + JSON body
+    clientIdEnv: 'NOTION_CLIENT_ID',
+    clientSecretEnv: 'NOTION_CLIENT_SECRET',
+    scopes: [],
+    responseType: 'code',
+    authExtra: { owner: 'user' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`notion: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, scopes: [], external_account: d.workspace_name || null, metadata: { workspace_id: d.workspace_id, bot_id: d.bot_id } };
+    },
+  },
+  google: {
+    label: 'Google Drive',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    clientIdEnv: 'GOOGLE_CLIENT_ID',
+    clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
+    scopes: ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/userinfo.email'],
+    responseType: 'code',
+    authExtra: { access_type: 'offline', prompt: 'consent' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`google: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
 };
 
 export function providerConfigured(provider) {
@@ -95,29 +138,35 @@ export function buildAuthorizeUrl(provider, { state, redirectUri }) {
     client_id: process.env[cfg.clientIdEnv],
     redirect_uri: redirectUri,
     state,
-    scope: cfg.scopes.join(cfg.scopeSep || ' '),
   });
+  if (cfg.scopes?.length) params.set('scope', cfg.scopes.join(cfg.scopeSep || ' '));
   if (cfg.userScopes?.length) params.set('user_scope', cfg.userScopes.join(cfg.scopeSep || ' '));
   if (cfg.responseType) params.set('response_type', cfg.responseType);
+  for (const [k, v] of Object.entries(cfg.authExtra || {})) params.set(k, v);
   return `${cfg.authorizeUrl}?${params}`;
 }
 
 // ── Exchange the authorization code for tokens ───────────────────────────────
 export async function exchangeCode(provider, code, redirectUri) {
   const cfg = PROVIDERS[provider];
-  const r = await fetch(cfg.tokenUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-    body: new URLSearchParams({
+  const headers = { accept: 'application/json' };
+  let body;
+  if (cfg.tokenAuth === 'basic') {
+    // Notion-style: HTTP Basic client auth + JSON body.
+    headers.Authorization = 'Basic ' + Buffer.from(`${process.env[cfg.clientIdEnv]}:${process.env[cfg.clientSecretEnv]}`).toString('base64');
+    headers['content-type'] = 'application/json';
+    body = JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+  } else {
+    headers['content-type'] = 'application/x-www-form-urlencoded';
+    body = new URLSearchParams({
       client_id: process.env[cfg.clientIdEnv],
       client_secret: process.env[cfg.clientSecretEnv],
-      code,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
-  });
+      code, redirect_uri: redirectUri, grant_type: 'authorization_code',
+    });
+  }
+  const r = await fetch(cfg.tokenUrl, { method: 'POST', headers, body });
   const d = await r.json();
-  if (!r.ok && d.ok === undefined) throw new Error(`token exchange http ${r.status}`);
+  if (!r.ok && d.ok === undefined && !d.access_token) throw new Error(`token exchange http ${r.status}`);
   return cfg.parseToken(d);
 }
 

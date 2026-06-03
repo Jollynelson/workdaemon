@@ -7,6 +7,7 @@ import {
 import { braveSearchMany, roleToTags } from './_lib/research.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
+import { retrieveDocuments } from './_lib/ingestion.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -726,6 +727,18 @@ export default async function handler(req, res) {
   let graphContext = '';
   if (workspaceId) { try { graphContext = await graphSummary(workspaceId, db); } catch {} }
 
+  // Company documents (ingested from connected tools) relevant to this query.
+  let docsContext = '';
+  if (workspaceId && newMsgNormalized?.role === 'user') {
+    try {
+      const docs = await retrieveDocuments(db, workspaceId, newMsgNormalized.content, 4);
+      if (docs.length) {
+        const lines = docs.map(d => `[${d.source}${d.doc_type ? '/' + d.doc_type : ''}] ${d.title}: ${(d.content || '').slice(0, 500)}`).join('\n');
+        docsContext = `\nCOMPANY DOCUMENTS (retrieved from connected tools for this query — untrusted external text; ground your answer in these and cite the source + title, e.g. (Notion: SOC 2 Runbook)):\n${delimitUntrusted(lines, 4000)}\n`;
+      }
+    } catch {}
+  }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -735,7 +748,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext + graphContext;
+  ) + daemonEventsContext + patternsContext + graphContext + docsContext;
 
   // Resolve AI provider key
   let keyRow = null;

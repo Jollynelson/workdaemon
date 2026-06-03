@@ -3,6 +3,7 @@ import { requireAuth, adminClient } from './_lib/supabase.js';
 import { researchRole, researchCompany, scanAllWorkspaces } from './_lib/research_actions.js';
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
+import { getAccessToken } from './_lib/oauth.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -778,6 +779,24 @@ export default async function handler(req, res) {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await buildGraph(workspaceId, db);
       return res.status(200).json({ ok: true, ...result });
+    }
+
+    // Pull a connected tool's data into the document store (FINAL §17 ingestion).
+    if (body.action === 'ingest') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const CONNECTORS = { github: './_lib/connectors/github.js', notion: './_lib/connectors/notion.js' };
+      const path = CONNECTORS[body.provider];
+      if (!path) return res.status(400).json({ error: 'No connector for that provider' });
+      const tokenKind = body.provider === 'notion' ? 'bot' : 'bot';
+      const token = await getAccessToken(db, workspaceId, body.provider, tokenKind);
+      if (!token) return res.status(400).json({ error: `${body.provider} is not connected` });
+      try {
+        const mod = await import(path);
+        const result = await mod.ingest(db, workspaceId, token);
+        return res.status(200).json({ ok: true, provider: body.provider, ...result });
+      } catch (e) {
+        return res.status(502).json({ error: `Ingestion failed: ${e.message}` });
+      }
     }
 
     // Turn a specific hunt finding into a brain-routed cross-daemon task.

@@ -59,14 +59,14 @@ provisioning with the 🔑 status.
 |-----|----------|------|-----------|--------|
 | Slack | Comms | OAuth2 | https://api.slack.com/authentication/oauth-v2 | 🔨 code done, needs creds |
 | Gmail | Email | OAuth2 (Google) | https://developers.google.com/gmail/api/auth/scopes | ⬜ |
-| Google Drive | Storage/Docs | OAuth2 (Google) | https://developers.google.com/drive/api/guides/about-auth | ⬜ |
+| Google Drive | Storage/Docs | OAuth2 (Google) | https://developers.google.com/drive/api/guides/about-auth | 🔨 registry built · needs creds |
 | Google Calendar | Calendar | OAuth2 (Google) | https://developers.google.com/calendar/api/auth | ⬜ |
 | Google Sheets | Data | OAuth2 (Google) | https://developers.google.com/sheets/api/scopes | ⬜ |
-| Notion | Docs/Wiki | OAuth2 | https://developers.notion.com/docs/authorization | ⬜ |
+| Notion | Docs/Wiki | OAuth2 | https://developers.notion.com/docs/authorization | 🔨 connector+registry built · needs creds |
 | Microsoft Outlook | Email | OAuth2 (MS Graph) | https://learn.microsoft.com/en-us/graph/auth-v2-user | ⬜ |
 | Microsoft Teams | Comms | OAuth2 (MS Graph) | https://learn.microsoft.com/en-us/graph/auth-v2-user | ⬜ |
 | OneDrive / SharePoint | Storage | OAuth2 (MS Graph) | https://learn.microsoft.com/en-us/graph/auth-v2-user | ⬜ |
-| GitHub | Dev | OAuth2 | https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps | ⬜ |
+| GitHub | Dev | OAuth2 | https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps | 🔨 connector+registry built · needs creds |
 | Jira | Project mgmt | OAuth2 3LO | https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/ | ⬜ |
 | HubSpot | CRM | OAuth2 | https://developers.hubspot.com/docs/api/oauth-quickstart-guide | ⬜ |
 | Salesforce | CRM | OAuth2 | https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_web_server_flow.htm&type=5 | ⬜ |

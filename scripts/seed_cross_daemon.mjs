@@ -19,6 +19,7 @@ const marcus = U['marcus@cobalt-hq.com'], sofia = U['sofia@cobalt-hq.com'], aish
 const now = Date.now(), DAY = 864e5;
 const ago = (h) => new Date(now - h * 36e5).toISOString();
 const inDays = (d) => new Date(now + d * DAY).toISOString().slice(0, 10);
+const slugKey = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 
 // ── Clean prior cross-daemon seed (safe: only this workspace, only marked rows) ──
 await db.from('daemon_events').delete().eq('workspace_id', WS);
@@ -28,6 +29,7 @@ await db.from('app_detected_patterns').delete().eq('workspace_id', WS);
 await db.from('inbox_items').delete().eq('workspace_id', WS).eq('metadata->>source', 'brain');
 await db.from('tasks').delete().eq('workspace_id', WS).not('source_finding_id', 'is', null);
 await db.from('brain_interactions').delete().eq('workspace_id', WS).contains('topic_tags', ['cdseed']);
+await db.from('workspace_documents').delete().eq('workspace_id', WS).eq('metadata->>cd_seed', 'true');
 await db.from('app_agent_profiles').update({ availability: 'normal', availability_reason: null, availability_until: null }).eq('workspace_id', WS);
 console.log('cleared prior cross-daemon seed');
 
@@ -121,6 +123,23 @@ for (const uid of [maya, daniel, priya, marcus, sofia, tom]) {
   await inbox({ user_id: uid, type: 'update', title: 'Broadcast from Aisha Khan', body: policy, h: 5,
     metadata: { event_type: 'broadcast', from: 'Aisha Khan' } });
 }
+
+// ── Ingested company documents (Notion + GitHub) → daemon grounding ─────────────
+const docs = [
+  ['notion','page','SOC 2 Type II Runbook','SOC 2 Type II evidence collection runbook. Owner: CTO (Daniel). Evidence window opens in 3 weeks. Required: access reviews, change-management logs, vendor risk register, encryption-at-rest proof, incident-response policy. Gates 3 enterprise deals. Auditor: Prescient. Target report date: end of Q3.','https://notion.so/cobalt/soc2-runbook'],
+  ['notion','page','Close Automation — Multi-Entity GA Spec','Close Automation multi-entity view is the top GA blocker. 11 design partners; Vela Health and Brightside Logistics are waiting. Scope: consolidated close across entities, intercompany eliminations, FX. Descoped for v1: canvas export. Owner: Head of Product (Priya).','https://notion.so/cobalt/close-automation-ga'],
+  ['notion','page','Q3 Board Deck — Outline','Sep 18 board meeting. Narrative: capital efficiency + close-automation wedge. Metrics: ARR $3.2M, NRR 119%, CAC payback 11mo, runway 22mo, pipeline 2.3x (target 3x). Asks: approve 2 AE hires, SOC 2 spend. Owner: CEO (Maya) story, Finance (Tom) numbers.','https://notion.so/cobalt/q3-board-deck'],
+  ['notion','page','Ramp Switch Battlecard','Why mid-market finance teams switch from Ramp to Cobalt: close automation (9→7→5 days), hands-on service, no list-price hikes. Ramp raised mid-market list pricing ~12% this week. Proof: Northwind 40% seat expansion. CTA: book a migration call.','https://notion.so/cobalt/ramp-battlecard'],
+  ['github','issue','cobalt-core #842: Card 2.0 ledger cutover timing','Debate: ship the ledger cutover now (James) behind a flag vs wait for SOC 2 evidence freeze (Ada). Risk: cutover during the audit window complicates change-management evidence. Decision pending CTO.','https://github.com/cobalt/cobalt-core/issues/842'],
+  ['github','issue','cobalt-core #889: Multi-entity FX rounding mismatch','Multi-entity consolidation shows a rounding mismatch on intercompany eliminations when entities use different functional currencies. Blocks Close Automation GA. Assigned: platform-eng (open role — 61d time-to-hire).','https://github.com/cobalt/cobalt-core/issues/889'],
+];
+for (const [source, doc_type, title, content, url] of docs) {
+  await db.from('workspace_documents').upsert({
+    workspace_id: WS, source, external_id: slugKey(title), doc_type, title, content, url,
+    metadata: { cd_seed: true }, updated_at: ago(24),
+  }, { onConflict: 'workspace_id,source,external_id' });
+}
+console.log('seeded company documents:', docs.length);
 
 console.log('✓ cross-daemon scenarios seeded:');
 console.log('  • Priya HIGH_LOAD + Maya→Priya assignment + Priya→Maya capacity flag');

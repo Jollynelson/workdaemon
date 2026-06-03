@@ -146,10 +146,27 @@ what's addressing it). Rebuilt in the nightly cron; manual `{action:'build_graph
 deterministic layered SVG (People → own → Tasks → address → Risks; risks show severity +
 affected names; patterns as chips) with a Rebuild button. Pure SVG, no graph library.
 
+## Ingestion connectors — SHIPPED (FINAL §17 / Master §12; see INTEGRATIONS.md)
+Document grounding pipeline + connector framework extended per `INTEGRATIONS.md`.
+- `migration_ingestion.sql`: `workspace_documents` (normalized doc store — the spec's
+  pgvector sink, approximated with keyword retrieval; no vector DB in the live stack).
+- `api/_lib/ingestion.js`: `upsertDocuments` (normalize+dedup) + `retrieveDocuments`
+  (keyword-overlap scoring, title-weighted).
+- `api/_lib/oauth.js`: PROVIDERS registry + **github / notion / google** (added Notion
+  Basic-auth token exchange + Google offline-access to the framework). They show in the
+  Integrations UI; gated by `providerConfigured` until `<PROVIDER>_CLIENT_ID/SECRET` set.
+- `api/_lib/connectors/github.js` + `notion.js`: real `ingest(db, ws, token)`. Run via
+  `POST /api/brain {action:'ingest', provider}` (admin) once connected.
+- `api/chat.js`: retrieves query-relevant docs → injects a "COMPANY DOCUMENTS" grounding
+  block (cite source+title). Verified: SOC 2 query→runbook, GA query→spec+FX issue.
+- Cobalt seeded with 6 docs (Notion runbook/spec/board/battlecard + 2 GitHub issues).
+  LIVE OAuth is creds-gated; the pipeline + grounding work now off ingested/seeded docs.
+
 ## Suggested next (priority order)
-1. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
-   so the Brain grounds on real company docs (currently Slack + web + interactions).
-3. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.
+1. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.
+2. **Deepen connectors** — Drive/Gmail data layers; cron auto-ingest for connected providers;
+   pgvector upgrade for semantic retrieval at scale.
+3. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph.
 
 ## How to run / verify
 ```bash

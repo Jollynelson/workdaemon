@@ -89,6 +89,14 @@ Rebuilt nightly; `POST /api/brain {action:'build_graph'}` to refresh; `GET /api/
 returns the raw nodes/edges. **Visual:** as Maya/Daniel open **Company Brain → GRAPH** to see
 the relationship map (People → own → Tasks → address → Risks, with affected names + pattern chips).
 
+## Document grounding (Brain §17 ingestion) — answers from company docs
+Cobalt has seeded **company documents** (Notion: SOC 2 Runbook, Close Automation GA Spec, Q3
+Board Deck, Ramp Battlecard; GitHub issues: ledger cutover, multi-entity FX bug). Ask any
+daemon *"what does the SOC 2 runbook require?"* or *"how do we pitch against Ramp?"* → it
+retrieves the relevant doc and grounds its answer, **citing the source** (e.g. *(Notion: SOC 2
+Runbook)*). Live connectors (Notion/GitHub/Google) are built and registered — they go live the
+moment `<PROVIDER>_CLIENT_ID/SECRET` are added and a workspace clicks Connect.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json
