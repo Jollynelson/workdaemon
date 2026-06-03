@@ -58,17 +58,25 @@ export async function assessCapacity(db, workspaceId, userId) {
 export async function suggestAlternatives(db, workspaceId, excludeUserId, limit = 3) {
   const { data: members } = await db
     .from('workspace_members')
-    .select('user_id, profiles:user_id(name, title, role)')
+    .select('user_id')
     .eq('workspace_id', workspaceId);
 
   const others = (members || []).filter(m => m.user_id !== excludeUserId);
+  // Resolve names via profiles (auth.users isn't embeddable through PostgREST).
+  const ids = others.map(m => m.user_id);
+  const { data: profs } = ids.length
+    ? await db.from('profiles').select('id, name, title, role').in('id', ids)
+    : { data: [] };
+  const profOf = Object.fromEntries((profs || []).map(p => [p.id, p]));
+
   const assessed = [];
   for (const m of others) {
     const cap = await assessCapacity(db, workspaceId, m.user_id);
+    const p = profOf[m.user_id];
     assessed.push({
       user_id: m.user_id,
-      name: m.profiles?.name || 'Teammate',
-      title: m.profiles?.title || m.profiles?.role || '',
+      name: p?.name || 'Teammate',
+      title: p?.title || p?.role || '',
       ...cap,
     });
   }

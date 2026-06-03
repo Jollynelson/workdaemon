@@ -28,19 +28,30 @@ async function isMember(db, workspaceId, userId) {
   return !!data;
 }
 
+// Resolve {id → {name, title}} via the public profiles table. We can't embed
+// auth.users through PostgREST (auth schema isn't exposed), so join names here.
+async function resolveNames(db, ids) {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  if (!uniq.length) return {};
+  const { data } = await db.from('profiles').select('id, name, title').in('id', uniq);
+  return Object.fromEntries((data || []).map(p => [p.id, { id: p.id, name: p.name, title: p.title }]));
+}
+
 // Pending events tagged to a user: direct (to_user_id = me) + broadcasts (null),
 // excluding ones this user sent.
 async function pendingEvents(db, workspaceId, userId) {
   const { data } = await db
     .from('daemon_events')
-    .select('*, from_staff:from_user_id(id, raw_user_meta_data)')
+    .select('*')
     .eq('workspace_id', workspaceId)
     .eq('status', 'pending')
     .or(`to_user_id.eq.${userId},to_user_id.is.null`)
     .neq('from_user_id', userId)
     .order('created_at', { ascending: false })
     .limit(20);
-  return data || [];
+  const events = data || [];
+  const names = await resolveNames(db, events.map(e => e.from_user_id));
+  return events.map(e => ({ ...e, from_staff: names[e.from_user_id] || null }));
 }
 
 export default async function handler(req, res) {
@@ -63,12 +74,19 @@ export default async function handler(req, res) {
 
     const { data: tasks, error } = await db
       .from('tasks')
-      .select('*, assignee:assignee_id(id, raw_user_meta_data), from_staff:from_user_id(id, raw_user_meta_data)')
+      .select('*')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false });
 
     if (error) return fail(res, 500, 'Could not load tasks', error, 'tasks');
-    return res.status(200).json({ tasks: tasks ?? [] });
+    // Resolve assignee + from-staff names via profiles (auth.users isn't embeddable).
+    const names = await resolveNames(db, (tasks || []).flatMap(t => [t.assignee_id, t.from_user_id]));
+    const shaped = (tasks || []).map(t => ({
+      ...t,
+      assignee: names[t.assignee_id] || null,
+      from_staff: names[t.from_user_id] || null,
+    }));
+    return res.status(200).json({ tasks: shaped });
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
