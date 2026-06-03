@@ -86,7 +86,8 @@ The Brain maintains a relationship map (people ⇄ tasks ⇄ risks ⇄ patterns)
 *"who owns the SOC 2 work and what does it put at risk?"* → the daemon traverses the graph:
 *SOC 2 risk → affects Daniel (CTO) & Maya → being addressed by Daniel's brain-routed task.*
 Rebuilt nightly; `POST /api/brain {action:'build_graph'}` to refresh; `GET /api/brain?tab=graph`
-returns the raw nodes/edges.
+returns the raw nodes/edges. **Visual:** as Maya/Daniel open **Company Brain → GRAPH** to see
+the relationship map (People → own → Tasks → address → Risks, with affected names + pattern chips).
 
 ## Manage the demo
 ```bash

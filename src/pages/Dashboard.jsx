@@ -1677,6 +1677,134 @@ function IntegrationsTab({ c, isMobile }) {
 // BRAIN PAGE — MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Knowledge graph tab — layered relationship map (People → Tasks → Risks) ───
+function GraphTab({ token, c, isMobile }) {
+  const [data, setData] = useState({ nodes: [], edges: [] });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/brain?tab=graph', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setData({ nodes: d.nodes || [], edges: d.edges || [] });
+    } catch {} finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { if (token) load(); }, [token, load]);
+
+  const rebuild = async () => {
+    setBusy(true);
+    try {
+      await fetch('/api/brain', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'build_graph' }) });
+      await load();
+    } catch {} finally { setBusy(false); }
+  };
+
+  const byKey = Object.fromEntries(data.nodes.map(n => [n.node_key, n]));
+  const SEV = { critical: '#ef4444', warning: '#f59e0b', info: c.text4 };
+  const people = data.nodes.filter(n => n.node_type === 'person');
+  const tasks  = data.nodes.filter(n => n.node_type === 'task').slice(0, 10);
+  const risks  = data.nodes.filter(n => n.node_type === 'risk')
+    .sort((a, b) => ({ critical: 0, warning: 1, info: 2 }[a.meta?.severity] ?? 3) - ({ critical: 0, warning: 1, info: 2 }[b.meta?.severity] ?? 3)).slice(0, 10);
+  const patterns = data.nodes.filter(n => n.node_type === 'pattern');
+
+  // Deterministic layout: 3 columns, evenly spaced rows.
+  const COL = { person: 95, task: 430, risk: 765 };
+  const HALF = 76, NODE_H = 34, ROW = 58, TOP = 26;
+  const rows = Math.max(people.length, tasks.length, risks.length, 1);
+  const H = TOP * 2 + (rows - 1) * ROW + NODE_H;
+  const place = (arr) => { const map = {}; const span = (rows - 1) * ROW; arr.forEach((n, i) => { const y = TOP + NODE_H / 2 + (arr.length === 1 ? span / 2 : (span * i) / Math.max(arr.length - 1, 1)); map[n.node_key] = y; }); return map; };
+  const yP = place(people), yT = place(tasks), yR = place(risks);
+  const yOf = k => yP[k] ?? yT[k] ?? yR[k];
+  const xOf = k => COL[byKey[k]?.node_type] ?? 0;
+  const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
+
+  // Only owns (person→task) + addresses (task→risk) as lines; affects shown on the risk node.
+  const flowEdges = data.edges.filter(e => (e.rel === 'owns' || e.rel === 'addresses') && yOf(e.src_key) != null && yOf(e.dst_key) != null);
+  const affectsBy = {}; // risk_key → [person labels]
+  for (const e of data.edges) if (e.rel === 'affects') (affectsBy[e.src_key] ||= []).push(byKey[e.dst_key]?.label);
+
+  const NodeRect = ({ k, fill, stroke, accent }) => {
+    const n = byKey[k]; if (!n) return null;
+    const x = xOf(k), y = yOf(k);
+    return (
+      <g>
+        <rect x={x - HALF} y={y - NODE_H / 2} width={HALF * 2} height={NODE_H} rx={7} fill={fill} stroke={stroke} strokeWidth={1} />
+        {accent && <rect x={x - HALF} y={y - NODE_H / 2} width={3} height={NODE_H} rx={1.5} fill={accent} />}
+        <text x={x - HALF + 10} y={y + 3.5} fontFamily="var(--dmsans)" fontSize={10.5} fill={c.text} >{trunc(n.label, 22)}</text>
+      </g>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.5, margin: 0, maxWidth: 560 }}>
+          The Brain's relationship map — who <strong style={{ color: '#4172f5' }}>owns</strong> what, what those tasks <strong style={{ color: c.text2 }}>address</strong>, and which risks <strong style={{ color: '#ef4444' }}>affect</strong> whom.
+        </p>
+        <button type="button" onClick={rebuild} disabled={busy}
+          style={{ padding: '7px 14px', background: 'none', border: `1px solid ${c.subtleBorder}`, borderRadius: 8, color: c.text2, fontFamily: 'var(--dmsans)', fontSize: 12.5, cursor: busy ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+          {busy ? 'Rebuilding…' : '↻ Rebuild graph'}
+        </button>
+      </div>
+
+      {loading ? (
+        <SkeletonRow height={260} />
+      ) : data.nodes.length === 0 ? (
+        <EmptyState icon="◌" title="Graph not built yet" subtitle="It rebuilds nightly. Click Rebuild graph to generate it now from your team's tasks, findings and patterns." />
+      ) : (
+        <>
+          {/* Column headers */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: 880, margin: '0 auto 4px', padding: '0 4px' }}>
+            {['PEOPLE', 'WORK', 'RISKS'].map(h => (
+              <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', color: c.text4, flex: 1, textAlign: 'center' }}>{h}</span>
+            ))}
+          </div>
+          <div style={{ width: '100%', overflowX: 'auto', border: `1px solid ${c.cardBorder}`, borderRadius: 12, background: c.subtle }}>
+            <svg viewBox={`0 0 860 ${H}`} width="100%" style={{ display: 'block', minWidth: 620 }}>
+              {/* edges */}
+              {flowEdges.map((e, i) => {
+                const x1 = xOf(e.src_key) + HALF, y1 = yOf(e.src_key), x2 = xOf(e.dst_key) - HALF, y2 = yOf(e.dst_key);
+                const mx = (x1 + x2) / 2;
+                return <path key={i} d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`} fill="none" stroke={e.rel === 'owns' ? 'rgba(65,114,245,0.35)' : c.text4} strokeWidth={1.2} opacity={0.7} />;
+              })}
+              {/* nodes */}
+              {people.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke="rgba(65,114,245,0.4)" accent="#4172f5" />)}
+              {tasks.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke={c.subtleBorder} accent={n.meta?.routed_by_brain ? '#4172f5' : c.text4} />)}
+              {risks.map(n => {
+                const sev = SEV[n.meta?.severity] || c.text4;
+                const x = xOf(n.node_key), y = yOf(n.node_key);
+                const aff = (affectsBy[n.node_key] || []).filter(Boolean);
+                return (
+                  <g key={n.node_key}>
+                    <rect x={x - HALF} y={y - NODE_H / 2} width={HALF * 2} height={NODE_H} rx={7} fill={c.bg} stroke={sev} strokeWidth={1} />
+                    <circle cx={x - HALF + 9} cy={y - NODE_H / 2 + 9} r={3} fill={sev} />
+                    <text x={x - HALF + 18} y={y - 1} fontFamily="var(--dmsans)" fontSize={10} fill={c.text}>{trunc(n.label, 20)}</text>
+                    {aff.length > 0 && <text x={x - HALF + 18} y={y + 11} fontFamily="var(--mono)" fontSize={7.5} fill={c.text4}>affects {aff.slice(0, 3).map(a => (a || '').split(' ')[0]).join(', ')}</text>}
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+          {patterns.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', color: c.text4, marginBottom: 8 }}>CROSS-STAFF PATTERNS</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                {patterns.map(p => (
+                  <span key={p.node_key} style={{ fontFamily: 'var(--dmsans)', fontSize: 11.5, color: c.text2, background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 14, padding: '4px 11px' }}>{trunc(p.label, 40)}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <p style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, marginTop: 10 }}>
+            {data.nodes.length} nodes · {data.edges.length} relationships · rebuilt nightly
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BrainPage() {
   const c = useC();
   const { isMobile } = useViewport();
@@ -1686,6 +1814,7 @@ function BrainPage() {
   const TABS = [
     { key: 'overview',      label: 'OVERVIEW' },
     { key: 'patterns',      label: 'PATTERNS' },
+    { key: 'graph',         label: 'GRAPH' },
     { key: 'integrations',  label: 'INTEGRATIONS' },
     { key: 'agents',        label: 'TEAM AGENTS' },
     { key: 'security',      label: 'SECURITY' },
@@ -1730,6 +1859,7 @@ function BrainPage() {
 
         {activeTab === 'overview'     && <CompanyContextForm token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'patterns'     && <HuntTab token={token} c={c} isMobile={isMobile} />}
+        {activeTab === 'graph'        && <GraphTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'integrations' && <IntegrationsTab c={c} isMobile={isMobile} />}
         {activeTab === 'agents'       && <AgentsTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'security'     && (

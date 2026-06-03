@@ -141,12 +141,13 @@ nodes = person/task/risk/pattern; edges = owns / routed / addresses (task→risk
 (risk→person via role match) / involves (pattern→person). `graphSummary()` renders a compact
 "ORG GRAPH" block injected into the daemon prompt (who owns what, which risk affects whom,
 what's addressing it). Rebuilt in the nightly cron; manual `{action:'build_graph'}`;
-`GET /api/brain?tab=graph` returns nodes+edges (for a future viz). Verified on Cobalt → 33
-nodes / 67 edges. NOT YET: a graph visualization in the Company Brain UI (frontend).
+`GET /api/brain?tab=graph` returns nodes+edges. Verified on Cobalt → 33 nodes / 67 edges.
+**Graph viz UI shipped:** Company Brain → **GRAPH** tab (`GraphTab` in Dashboard.jsx) renders a
+deterministic layered SVG (People → own → Tasks → address → Risks; risks show severity +
+affected names; patterns as chips) with a Rebuild button. Pure SVG, no graph library.
 
 ## Suggested next (priority order)
-1. **Graph viz in Company Brain UI** — render `?tab=graph` as a node/edge map (frontend).
-2. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
+1. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
    so the Brain grounds on real company docs (currently Slack + web + interactions).
 3. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.
 
