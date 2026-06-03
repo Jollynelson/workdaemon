@@ -49,7 +49,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | Realtime push (websockets) | ✅ **SHIPPED** | Supabase Realtime on inbox_items + daemon_events; sidebar Inbox badge ticks live (E2E-verified) |
 | Knowledge graph (people/projects/risks) | ✅ **SHIPPED** | Postgres approximation (spec sanctions it); `buildGraph` + injected into daemon prompt |
 | Per-company VPS + Hermes provisioning + MCP writer | ❌ | requires the parked Python stack |
-| Push calibration / back-off | ❌ | inbox exists, no calibration |
+| Push calibration / back-off | ✅ **SHIPPED** | `calibration.js`; backs off proactive pushes a user ignores; engagement stats |
 
 ## Cross-Daemon Communication — SHIPPED (commits 631179f, 44b51b8, 11a37f6, + Tasks UI)
 Implements `workdaemon-cross-daemon-communication.md` in the live stack. The Brain
@@ -162,11 +162,22 @@ Document grounding pipeline + connector framework extended per `INTEGRATIONS.md`
 - Cobalt seeded with 6 docs (Notion runbook/spec/board/battlecard + 2 GitHub issues).
   LIVE OAuth is creds-gated; the pipeline + grounding work now off ingested/seeded docs.
 
+## Push calibration — SHIPPED (Master §10.2 / FINAL push/calibration.py)
+`migration_push_calibration.sql`: `inbox_items.acted_on` + `acted_at`. `api/_lib/calibration.js`:
+- `shouldDeliver(db, userId, category)` — backs off SOFT/proactive categories
+  (pattern/briefing/finding/insight) when a user has an ignore streak ≥4 (unread AND
+  unacted AND >2d old); any read/acted push resets it. Direct/critical (assignment/flag/
+  broadcast) never suppressed.
+- `recordTaskAction` — accept/flag a task marks the source push acted_on (engagement signal).
+- `engagement(db, ws)` — per-category read/act rates (`POST /api/brain {action:'push_stats'}`).
+Wired into the pattern pushes (detectPatterns) + the CEO briefing (nightlyDeepPass). Verified:
+4 ignored → back-off; engagement → resets.
+
 ## Suggested next (priority order)
-1. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.
-2. **Deepen connectors** — Drive/Gmail data layers; cron auto-ingest for connected providers;
+1. **Deepen connectors** — Drive/Gmail data layers; cron auto-ingest for connected providers;
    pgvector upgrade for semantic retrieval at scale.
-3. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph.
+2. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph.
+3. **Polish/UX pass** + a real-browser spot-check of all the frontend pieces shipped this session.
 
 ## How to run / verify
 ```bash

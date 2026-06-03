@@ -4,6 +4,7 @@ import { researchRole, researchCompany, scanAllWorkspaces } from './_lib/researc
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
+import { shouldDeliver, engagement } from './_lib/calibration.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -291,6 +292,9 @@ export async function detectPatterns(workspaceId, db) {
       staff_involved: p.staff, confidence: p.confidence, status: 'open',
     }).select().single();
     for (const l of (leaders || [])) {
+      // Calibration: skip the push for leaders who keep ignoring pattern pushes.
+      const cal = await shouldDeliver(db, l.user_id, 'pattern');
+      if (!cal.deliver) continue;
       await db.from('inbox_items').insert({
         workspace_id: workspaceId, user_id: l.user_id, type: 'alert', source: 'daemon',
         title: `Brain · Pattern: ${p.title}`,
@@ -442,6 +446,8 @@ ${delimitUntrusted(interLines, 12000)}`;
   if (briefing) {
     const { data: execs } = await db.from('app_agent_profiles').select('user_id').eq('workspace_id', workspaceId).eq('access_level', 'executive');
     for (const e of (execs || [])) {
+      const cal = await shouldDeliver(db, e.user_id, 'briefing');
+      if (!cal.deliver) continue;   // back off for execs who ignore the briefing
       await db.from('inbox_items').insert({
         workspace_id: workspaceId, user_id: e.user_id, type: 'update', source: 'daemon',
         title: 'Brain · Morning Briefing', body: briefing,
@@ -779,6 +785,12 @@ export default async function handler(req, res) {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await buildGraph(workspaceId, db);
       return res.status(200).json({ ok: true, ...result });
+    }
+
+    // Push engagement by category (read/act rates) — feeds calibration back-off.
+    if (body.action === 'push_stats') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      return res.status(200).json({ ok: true, engagement: await engagement(db, workspaceId) });
     }
 
     // Pull a connected tool's data into the document store (FINAL §17 ingestion).

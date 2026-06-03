@@ -1,6 +1,7 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { fail, enforceRateLimit, parseBody } from './_lib/security.js';
 import { assessCapacity, suggestAlternatives } from './_lib/capacity.js';
+import { recordTaskAction } from './_lib/calibration.js';
 
 // Tasks + Cross-Daemon Communication.
 // GET                → list workspace tasks (with assignee + from-staff)
@@ -168,6 +169,7 @@ export default async function handler(req, res) {
     if (!task || task.assignee_id !== user.id) return res.status(403).json({ error: 'Not your task' });
 
     await db.from('tasks').update({ status: 'in_progress', updated_at: new Date().toISOString() }).eq('id', task.id);
+    await recordTaskAction(db, user.id, task.id);   // engagement signal for push calibration
     if (task.from_user_id) {
       await db.from('daemon_events').insert({
         workspace_id: workspaceId, from_user_id: user.id, to_user_id: task.from_user_id,
@@ -192,6 +194,7 @@ export default async function handler(req, res) {
     if (!body) return;
     const { data: task } = await db.from('tasks').select('*').eq('id', body.task_id).eq('workspace_id', workspaceId).single();
     if (!task || task.assignee_id !== user.id) return res.status(403).json({ error: 'Not your task' });
+    await recordTaskAction(db, user.id, task.id);   // flagging is also engagement
 
     const capacity = await assessCapacity(db, workspaceId, user.id);
     if (task.from_user_id) {
