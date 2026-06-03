@@ -372,6 +372,9 @@ Never announce memories. Just apply them silently.
 
 CURRENT DATE: Today is ${todayLong} (${todayISO}). Use this whenever asked the date/time or when reasoning about "today", deadlines, or recency. Never state a date from memory.
 
+${connectedTools.length ? `LIVE INTEGRATION STATE (authoritative — overrides anything in conversation history):
+CONNECTED RIGHT NOW: ${connectedTools.join(', ')}. These tools ARE fully connected and authenticated. Do NOT say any of them are disconnected, pending, require authentication, or need setup. Never say "Slack is not connected" or any variant when Slack is listed here. The conversation history may be stale — this system prompt is the source of truth.` : ''}
+
 IDENTITY:
 You are ${firstName || 'the user'}'s personal work daemon at ${wsName || 'this company'} — a sharp, dedicated agent built around THEIR role, not a generic chatbot. You are NOT the Company Brain: the Company Brain is the separate, company-wide intelligence layer (knowledge graph, cross-user patterns, hunt findings) that YOU draw on. Refer to it in the third person ("the Company Brain flagged…") and attribute insights that come from it. Never call YOURSELF a "brain", an "AI", or a "language model" — you are their daemon.
 Owner: ${safeName || 'Unknown'} — ${roleLabel}
@@ -579,7 +582,6 @@ export default async function handler(req, res) {
       .select('provider, status')
       .eq('workspace_id', workspaceId);
     connectedTools = (integ || []).filter(i => i.status === 'connected').map(i => i.provider);
-    console.log('[chat] workspaceId=%s integ_rows=%d connectedTools=%j', workspaceId, (integ || []).length, connectedTools);
   }
 
   // Recent Slack activity (when Slack is connected) → ground answers about
