@@ -77,6 +77,8 @@ export async function upsertDocuments(db, workspaceId, source, docs) {
     url: d.url || null,
     author: d.author || null,
     metadata: d.metadata || {},
+    visibility: d.visibility || 'public',
+    allowed_users: d.allowed_users || [],
     updated_at: new Date().toISOString(),
   }));
   if (!rows.length) return { upserted: 0 };
@@ -108,28 +110,40 @@ export async function reindexWorkspace(db, workspaceId) {
   return { reindexed: docs.length, embedded };
 }
 
-// Retrieve the documents most relevant to a query (keyword overlap on title+content).
-// Returns [{ source, title, content, url, score }]. Empty when nothing matches.
-export async function retrieveDocuments(db, workspaceId, query, limit = 4) {
-  // Prefer semantic (pgvector) retrieval; fall back to keyword.
-  const qv = await embed([query]);
-  if (qv?.[0]) {
-    const { data } = await db.rpc('match_documents', { p_workspace: workspaceId, p_embedding: vecLiteral(qv[0]), p_count: limit });
-    if (data?.length) return data.map(d => ({ ...d, score: d.similarity }));
-  }
+// Retrieve documents relevant to a query, ACCESS-SCOPED to the asker.
+// Returns { visible, restricted }:
+//   visible    — full docs the asker may see (public, or restricted & they're a member)
+//   restricted — relevant docs they may NOT see → pointers only (title + members),
+//                NEVER content, so the daemon can suggest "ask <member>" without leaking.
+export async function retrieveDocuments(db, workspaceId, query, userId, limit = 4) {
+  const canSee = (d) => d.visibility !== 'restricted' || (userId && (d.allowed_users || []).includes(userId));
+  const pointer = (d) => ({ title: d.title, source: d.source, channel: d.metadata?.channel || null, members: d.metadata?.member_names || [] });
+
   const terms = keywords(query, 12);
-  if (!terms.length) return [];
+  if (!terms.length) return { visible: [], restricted: [] };
   const { data: docs } = await db
     .from('workspace_documents')
-    .select('source, doc_type, title, content, url')
+    .select('source, doc_type, title, content, url, visibility, allowed_users, metadata')
     .eq('workspace_id', workspaceId)
-    .limit(200);
-  if (!docs?.length) return [];
+    .limit(300);
+  if (!docs?.length) return { visible: [], restricted: [] };
+
   const scored = docs.map(d => {
     const hay = `${d.title || ''} ${d.content || ''}`.toLowerCase();
     let score = 0;
-    for (const t of terms) if (hay.includes(t)) score += hay.indexOf(t) < (d.title || '').length ? 2 : 1; // title hits weigh more
+    for (const t of terms) if (hay.includes(t)) score += hay.indexOf(t) < (d.title || '').length ? 2 : 1;
     return { ...d, score };
   }).filter(d => d.score > 0).sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit);
+
+  let visible = scored.filter(canSee).slice(0, limit);
+  const restricted = scored.filter(d => !canSee(d)).slice(0, 3).map(pointer);
+
+  // If embeddings are live, re-rank the VISIBLE set semantically (RPC already
+  // filters by p_user, so it only returns docs the asker may see).
+  const qv = await embed([query]);
+  if (qv?.[0]) {
+    const { data } = await db.rpc('match_documents', { p_workspace: workspaceId, p_embedding: vecLiteral(qv[0]), p_user: userId, p_count: limit });
+    if (data?.length) visible = data.map(d => ({ ...d, score: d.similarity }));
+  }
+  return { visible, restricted };
 }
