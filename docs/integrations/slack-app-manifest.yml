@@ -34,7 +34,11 @@ features:
     messages_tab_read_only_enabled: false
 
 oauth_config:
+  # BOTH hosts must be registered: the redirect_uri is derived from the request host
+  # (api/_lib/oauth.js getRedirectUri), so a user on the custom domain sends the
+  # app.workdaemon.com callback and a user on the vercel.app host sends that one.
   redirect_urls:
+    - https://app.workdaemon.com/api/oauth
     - https://workdaemon-prod.vercel.app/api/oauth
   scopes:
     # User token scopes — a staff member's OWN token, so the Brain reads what THEY
@@ -79,7 +83,9 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: https://workdaemon-prod.vercel.app/api/slack/events
+    # Single server-side URL (Slack posts here regardless of which host users browse);
+    # the primary custom domain. vercel.app also serves /api/slack/events as a fallback.
+    request_url: https://app.workdaemon.com/api/slack/events
     bot_events:
       - app_mention        # @workdaemon → it replies in-thread
       - message.channels   # public channels the bot is in
