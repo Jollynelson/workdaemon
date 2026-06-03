@@ -190,10 +190,19 @@ Wired into the pattern pushes (detectPatterns) + the CEO briefing (nightlyDeepPa
   key. (Verified fallback; vector path activates with a real OPENAI_API_KEY.)
 - **Realtime toast** + Inbox-badge fix.
 
+## Embeddings = platform-managed (customers bring ONLY a reasoning key)
+`embed()` is provider-flexible and configured once via env (not per-customer):
+default **Modal** (Ollama `nomic-embed-text`, 768-dim) — `finetuning/modal/embeddings_app.py`
+(`modal deploy`), wired by `MODAL_EMBEDDINGS_URL` + `MODAL_SERVE_SECRET`. DB column is
+`vector(768)`. `{action:'reindex'}` re-embeds on switch. Falls back to keyword if absent.
+Full runbook: `docs/EMBEDDINGS_MODAL.md`. Sensitive tier routes to Modal serving (existing
+`modal` provider). → No per-customer embedding key; nothing leaves to a 3rd-party embedder.
+
 ## Creds the owner must provide to make the above LIVE (not code — config)
+- **Embeddings**: `modal deploy finetuning/modal/embeddings_app.py` → set `EMBEDDINGS_PROVIDER=modal`,
+  `MODAL_EMBEDDINGS_URL`, `MODAL_SERVE_SECRET`; then `{action:'reindex'}`.
 - OAuth apps per connector: `<PROVIDER>_CLIENT_ID` / `<PROVIDER>_CLIENT_SECRET`
   (SLACK already set; GITHUB/NOTION/GOOGLE/MICROSOFT/ATLASSIAN/SALESFORCE/HUBSPOT pending).
-- `OPENAI_API_KEY` (real) to switch document retrieval from keyword → pgvector semantic.
 
 ## Practically unbounded (build on demand, not "finishable")
 - The 9,637-app connector long tail in `docs/integrations/CATALOG.md`.

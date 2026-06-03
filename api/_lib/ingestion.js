@@ -35,7 +35,8 @@ export async function embed(inputs) {
     // Our infra: Modal-served Ollama embeddings. Contract: {embeddings:[[...],…]}.
     if (c.provider === 'modal' || c.provider === 'ollama') {
       if (!c.url) return null;
-      const r = await fetch(`${c.url}/api/serve/embeddings`, {
+      // c.url is the full embeddings endpoint (Modal web endpoint or proxy route).
+      const r = await fetch(c.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: `Bearer ${c.key}` } : {}) },
         body: JSON.stringify({ model: c.model, input: inputs.map(cap) }),
