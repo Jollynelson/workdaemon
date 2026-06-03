@@ -179,11 +179,28 @@ Wired into the pattern pushes (detectPatterns) + the CEO briefing (nightlyDeepPa
 - `api/brain.js`: ingest action uses the registry; **nightly cron auto-ingests** every
   connected provider's data into `workspace_documents` (FINAL §17 polling). All creds-gated.
 
-## Suggested next (priority order)
-1. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph (registry +
-   data layers; Atlassian/MS/Salesforce each cover several apps via one OAuth app).
-2. **pgvector upgrade** — semantic retrieval for `workspace_documents` at scale (today: keyword).
-3. **Gmail/Calendar connectors** (Google client already configured — add scopes + data layers).
+## Bucket A — COMPLETE (this session)
+- **Connector breadth**: Slack + Google (Drive/Gmail/Calendar) + Microsoft (Outlook) +
+  Atlassian (Jira) + Salesforce + HubSpot + Notion + GitHub — all registered with valid
+  authorize URLs + ingest data layers; manual `{action:'ingest'}` + nightly auto-ingest.
+- **Write-actions** (`api/_lib/actions.js` + `execute_action`): daemon proposes `exec` on
+  action_confirm → confirm runs it (slack.post/react), permission-gated + audited.
+- **pgvector** (`migration_pgvector.sql` + `ingestion.js`): embedding column + `match_documents`
+  RPC + embed-on-ingest + vector-first retrieval; **falls back to keyword** when no embedding
+  key. (Verified fallback; vector path activates with a real OPENAI_API_KEY.)
+- **Realtime toast** + Inbox-badge fix.
+
+## Creds the owner must provide to make the above LIVE (not code — config)
+- OAuth apps per connector: `<PROVIDER>_CLIENT_ID` / `<PROVIDER>_CLIENT_SECRET`
+  (SLACK already set; GITHUB/NOTION/GOOGLE/MICROSOFT/ATLASSIAN/SALESFORCE/HUBSPOT pending).
+- `OPENAI_API_KEY` (real) to switch document retrieval from keyword → pgvector semantic.
+
+## Practically unbounded (build on demand, not "finishable")
+- The 9,637-app connector long tail in `docs/integrations/CATALOG.md`.
+
+## Deliberately NOT built (architecture decision — protects the live demo)
+- Per-company VPS + Hermes-agent-per-staff; Neo4j (→ Postgres graph); Redis pub/sub
+  (→ Supabase Realtime + polling); Inngest (→ Vercel cron); DeepSeek-only (→ multi-provider).
 
 ## How to run / verify
 ```bash

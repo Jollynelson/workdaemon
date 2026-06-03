@@ -5,6 +5,26 @@
 
 const STOP = new Set(['the','a','an','is','are','was','were','be','been','have','has','had','do','does','did','will','would','could','should','can','may','might','what','where','when','how','why','who','which','that','this','these','those','for','and','but','or','nor','yet','so','if','while','with','at','by','from','to','in','on','about','just','my','our','your','their','its','we','they','you','he','she','it','i','need','want','help','know','tell','show','find','our','about']);
 
+// ── Embeddings (pgvector semantic retrieval; keyword fallback when absent) ────
+const EMBED_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
+const vecLiteral = (arr) => '[' + arr.join(',') + ']';
+
+// Embed an array of strings → array of vectors (or null if no key / failure).
+export async function embed(inputs) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key || !inputs?.length) return null;
+  try {
+    const r = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: EMBED_MODEL, input: inputs.map(s => String(s).slice(0, 8000)) }),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return (d.data || []).sort((a, b) => a.index - b.index).map(x => x.embedding);
+  } catch { return null; }
+}
+
 export function keywords(text, max = 10) {
   return [...new Set(String(text || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
     .filter(w => w.length > 3 && !STOP.has(w)))].slice(0, max);
@@ -26,14 +46,23 @@ export async function upsertDocuments(db, workspaceId, source, docs) {
     updated_at: new Date().toISOString(),
   }));
   if (!rows.length) return { upserted: 0 };
+  // Embed for semantic retrieval (best-effort; rows still upsert without it).
+  const vecs = await embed(rows.map(r => `${r.title}\n${r.content}`));
+  if (vecs && vecs.length === rows.length) rows.forEach((r, i) => { r.embedding = vecLiteral(vecs[i]); });
   const { error } = await db.from('workspace_documents').upsert(rows, { onConflict: 'workspace_id,source,external_id' });
   if (error) throw new Error(error.message);
-  return { upserted: rows.length };
+  return { upserted: rows.length, embedded: !!vecs };
 }
 
 // Retrieve the documents most relevant to a query (keyword overlap on title+content).
 // Returns [{ source, title, content, url, score }]. Empty when nothing matches.
 export async function retrieveDocuments(db, workspaceId, query, limit = 4) {
+  // Prefer semantic (pgvector) retrieval; fall back to keyword.
+  const qv = await embed([query]);
+  if (qv?.[0]) {
+    const { data } = await db.rpc('match_documents', { p_workspace: workspaceId, p_embedding: vecLiteral(qv[0]), p_count: limit });
+    if (data?.length) return data.map(d => ({ ...d, score: d.similarity }));
+  }
   const terms = keywords(query, 12);
   if (!terms.length) return [];
   const { data: docs } = await db
