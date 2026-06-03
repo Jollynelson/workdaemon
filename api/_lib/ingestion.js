@@ -5,19 +5,52 @@
 
 const STOP = new Set(['the','a','an','is','are','was','were','be','been','have','has','had','do','does','did','will','would','could','should','can','may','might','what','where','when','how','why','who','which','that','this','these','those','for','and','but','or','nor','yet','so','if','while','with','at','by','from','to','in','on','about','just','my','our','your','their','its','we','they','you','he','she','it','i','need','want','help','know','tell','show','find','our','about']);
 
-// ── Embeddings (pgvector semantic retrieval; keyword fallback when absent) ────
-const EMBED_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
+// ── Embeddings — PLATFORM-managed (customers bring only a reasoning key) ──────
+// Embeddings run on OUR infra (Modal-served Ollama) or our own central key — set
+// once via env, shared by every workspace. Returns vectors, or null → the caller
+// falls back to keyword retrieval (so the KB always works).
+//   EMBEDDINGS_PROVIDER  modal | ollama | openai | mistral  (default: modal if a
+//                        Modal/Ollama URL is set, else openai)
+//   MODAL_EMBEDDINGS_URL  Modal serving base (…/api/serve/embeddings)
+//   MODAL_SERVE_SECRET    bearer for the Modal serving app
+//   EMBEDDINGS_MODEL      default 'nomic-embed-text' (768-dim) for modal/ollama
+const cap = (s) => String(s).slice(0, 8000);
 const vecLiteral = (arr) => '[' + arr.join(',') + ']';
 
-// Embed an array of strings → array of vectors (or null if no key / failure).
+function embedConfig() {
+  const url = process.env.MODAL_EMBEDDINGS_URL || process.env.EMBEDDINGS_BASE_URL || '';
+  const provider = process.env.EMBEDDINGS_PROVIDER || (url ? 'modal' : 'openai');
+  return {
+    provider,
+    url: url.replace(/\/$/, ''),
+    key: process.env.MODAL_SERVE_SECRET || process.env.EMBEDDINGS_API_KEY || process.env.OPENAI_API_KEY || '',
+    model: process.env.EMBEDDINGS_MODEL || (provider === 'openai' ? 'text-embedding-3-small' : 'nomic-embed-text'),
+  };
+}
+
 export async function embed(inputs) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key || !inputs?.length) return null;
+  if (!inputs?.length) return null;
+  const c = embedConfig();
   try {
-    const r = await fetch('https://api.openai.com/v1/embeddings', {
+    // Our infra: Modal-served Ollama embeddings. Contract: {embeddings:[[...],…]}.
+    if (c.provider === 'modal' || c.provider === 'ollama') {
+      if (!c.url) return null;
+      const r = await fetch(`${c.url}/api/serve/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: `Bearer ${c.key}` } : {}) },
+        body: JSON.stringify({ model: c.model, input: inputs.map(cap) }),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.embeddings || null;
+    }
+    // Hosted OpenAI-shaped APIs (central platform key).
+    if (!c.key) return null;
+    const base = c.provider === 'mistral' ? 'https://api.mistral.ai/v1' : 'https://api.openai.com/v1';
+    const r = await fetch(`${base}/embeddings`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input: inputs.map(s => String(s).slice(0, 8000)) }),
+      headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: c.model, input: inputs.map(cap) }),
     });
     if (!r.ok) return null;
     const d = await r.json();
@@ -52,6 +85,26 @@ export async function upsertDocuments(db, workspaceId, source, docs) {
   const { error } = await db.from('workspace_documents').upsert(rows, { onConflict: 'workspace_id,source,external_id' });
   if (error) throw new Error(error.message);
   return { upserted: rows.length, embedded: !!vecs };
+}
+
+// Re-embed every document in a workspace (the "switching providers re-indexes"
+// background job). Best-effort; no-op cleanly when embeddings are unavailable.
+export async function reindexWorkspace(db, workspaceId) {
+  const { data: docs } = await db
+    .from('workspace_documents').select('id, title, content').eq('workspace_id', workspaceId);
+  if (!docs?.length) return { reindexed: 0, embedded: false };
+  let embedded = 0;
+  const BATCH = 32;
+  for (let i = 0; i < docs.length; i += BATCH) {
+    const chunk = docs.slice(i, i + BATCH);
+    const vecs = await embed(chunk.map(d => `${d.title}\n${d.content}`));
+    if (!vecs || vecs.length !== chunk.length) continue;
+    for (let j = 0; j < chunk.length; j++) {
+      const { error } = await db.from('workspace_documents').update({ embedding: vecLiteral(vecs[j]) }).eq('id', chunk[j].id);
+      if (!error) embedded++;
+    }
+  }
+  return { reindexed: docs.length, embedded };
 }
 
 // Retrieve the documents most relevant to a query (keyword overlap on title+content).

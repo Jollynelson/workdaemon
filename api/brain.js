@@ -6,6 +6,7 @@ import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
+import { reindexWorkspace } from './_lib/ingestion.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -796,6 +797,13 @@ export default async function handler(req, res) {
     if (body.action === 'build_graph') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await buildGraph(workspaceId, db);
+      return res.status(200).json({ ok: true, ...result });
+    }
+
+    // Re-embed all documents (run after switching the embedding provider).
+    if (body.action === 'reindex') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const result = await reindexWorkspace(db, workspaceId);
       return res.status(200).json({ ok: true, ...result });
     }
 
