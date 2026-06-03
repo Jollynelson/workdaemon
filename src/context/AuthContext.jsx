@@ -69,10 +69,12 @@ export function AuthProvider({ children }) {
     // Listen for OAuth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.access_token) {
+        setLoading(true);
         storeSession(session.access_token);
         // Prewarm the company GPU model on sign-in (non-blocking).
         brainApi.warm({ token: session.access_token }).catch(() => {});
         await fetchProfile(session.access_token);
+        setLoading(false);
       }
       if (event === 'SIGNED_OUT') clearSession();
     });
@@ -91,9 +93,11 @@ export function AuthProvider({ children }) {
       throw new Error(error || 'Login failed');
     }
     const { user: u, access_token } = await res.json();
+    setLoading(true);
     storeSession(access_token);
     setUser(u);
     await fetchProfile(access_token);
+    setLoading(false);
   }, [storeSession, fetchProfile]);
 
   const signup = useCallback(async (email, password) => {
