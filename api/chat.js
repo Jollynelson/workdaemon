@@ -579,6 +579,7 @@ export default async function handler(req, res) {
       .select('provider, status')
       .eq('workspace_id', workspaceId);
     connectedTools = (integ || []).filter(i => i.status === 'connected').map(i => i.provider);
+    console.log('[chat] workspaceId=%s integ_rows=%d connectedTools=%j', workspaceId, (integ || []).length, connectedTools);
   }
 
   // Recent Slack activity (when Slack is connected) → ground answers about
