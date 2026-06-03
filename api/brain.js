@@ -514,6 +514,95 @@ export async function routeTaskFromFinding(workspaceId, db, finding) {
   return { ok: true, task_id: task.id, owner };
 }
 
+// ── Company knowledge graph (FINAL §3 — Postgres approximation) ───────────────
+// People, work (tasks), risks (findings), patterns — connected by ownership and
+// impact. Rebuilt deterministically from the live relational data; gives the
+// daemon traversable "who owns what / what affects whom" context.
+const G_STOP = new Set(['head', 'of', 'the', 'lead', 'and', 'co-founder', 'chief', 'director', 'manager']);
+const gRoleWords = r => String(r || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 2 && !G_STOP.has(t));
+const gRoleMatch = (personRole, wanted) => { const a = gRoleWords(personRole), b = gRoleWords(wanted); return a.some(x => b.includes(x)); };
+
+export async function buildGraph(workspaceId, db) {
+  const { data: members } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const ids = (members || []).map(m => m.user_id);
+  const { data: profs } = ids.length ? await db.from('profiles').select('id, name, title, role').in('id', ids) : { data: [] };
+  const [{ data: tasks }, { data: finds }, { data: pats }] = await Promise.all([
+    db.from('tasks').select('id, title, status, priority, assignee_id, from_user_id, source_finding_id, routed_by_brain').eq('workspace_id', workspaceId).neq('status', 'cancelled').limit(60),
+    db.from('hunt_findings').select('id, pattern, severity, affected_roles').eq('workspace_id', workspaceId).eq('resolved', false).limit(20),
+    db.from('app_detected_patterns').select('id, title, staff_involved').eq('workspace_id', workspaceId).eq('status', 'open').limit(12),
+  ]);
+
+  const nodes = [], edges = [];
+  const node = (node_key, node_type, label, meta = {}) => nodes.push({ workspace_id: workspaceId, node_key, node_type, label: String(label).slice(0, 120), meta });
+  const edge = (src_key, dst_key, rel, meta = {}) => edges.push({ workspace_id: workspaceId, src_key, dst_key, rel, meta });
+
+  const roster = (profs || []).map(p => ({ id: p.id, name: p.name || p.title || 'Staff', role: p.role || p.title || '' }));
+  for (const p of roster) node(`person:${p.id}`, 'person', p.name, { role: p.role });
+
+  for (const t of (tasks || [])) {
+    node(`task:${t.id}`, 'task', t.title, { status: t.status, priority: t.priority, routed_by_brain: !!t.routed_by_brain });
+    if (t.assignee_id) edge(`person:${t.assignee_id}`, `task:${t.id}`, 'owns');
+    if (t.from_user_id) edge(`person:${t.from_user_id}`, `task:${t.id}`, 'routed');
+    if (t.source_finding_id) edge(`task:${t.id}`, `risk:${t.source_finding_id}`, 'addresses');
+  }
+  for (const f of (finds || [])) {
+    const title = (f.pattern || 'Risk').split(' — ')[0];
+    node(`risk:${f.id}`, 'risk', title, { severity: f.severity });
+    for (const role of (f.affected_roles || [])) {
+      for (const p of roster) if (gRoleMatch(p.role, role)) edge(`risk:${f.id}`, `person:${p.id}`, 'affects');
+    }
+  }
+  for (const pat of (pats || [])) {
+    node(`pattern:${pat.id}`, 'pattern', pat.title, {});
+    for (const uid of (pat.staff_involved || [])) if (roster.find(r => r.id === uid)) edge(`pattern:${pat.id}`, `person:${uid}`, 'involves');
+  }
+
+  // Rebuild (delete + insert) for idempotency.
+  await db.from('app_graph_edges').delete().eq('workspace_id', workspaceId);
+  await db.from('app_graph_nodes').delete().eq('workspace_id', workspaceId);
+  // Dedup nodes by key.
+  const seen = new Set();
+  const uniqNodes = nodes.filter(n => (seen.has(n.node_key) ? false : seen.add(n.node_key)));
+  if (uniqNodes.length) await db.from('app_graph_nodes').insert(uniqNodes);
+  // Dedup edges by (src,dst,rel).
+  const eseen = new Set();
+  const uniqEdges = edges.filter(e => { const k = `${e.src_key}|${e.dst_key}|${e.rel}`; return eseen.has(k) ? false : eseen.add(k); });
+  if (uniqEdges.length) await db.from('app_graph_edges').insert(uniqEdges);
+
+  return { nodes: uniqNodes.length, edges: uniqEdges.length };
+}
+
+// Compact, traversal-derived summary for the daemon prompt (ownership + risk impact).
+export async function graphSummary(workspaceId, db) {
+  const [{ data: nodes }, { data: edges }] = await Promise.all([
+    db.from('app_graph_nodes').select('node_key, node_type, label, meta').eq('workspace_id', workspaceId),
+    db.from('app_graph_edges').select('src_key, dst_key, rel').eq('workspace_id', workspaceId),
+  ]);
+  if (!nodes?.length || !edges?.length) return '';
+  const label = Object.fromEntries(nodes.map(n => [n.node_key, n.label]));
+  const lines = [];
+
+  // Ownership: person owns [tasks]
+  const ownsBy = {};
+  for (const e of edges) if (e.rel === 'owns') (ownsBy[e.src_key] ||= []).push(label[e.dst_key]);
+  for (const [pk, ts] of Object.entries(ownsBy).slice(0, 8)) {
+    lines.push(`${label[pk]} owns: ${ts.slice(0, 4).join('; ')}${ts.length > 4 ? ` (+${ts.length - 4})` : ''}`);
+  }
+  // Risk impact: risk affects [people]; addressed by [task]
+  const affects = {}, addressedBy = {};
+  for (const e of edges) {
+    if (e.rel === 'affects') (affects[e.src_key] ||= []).push(label[e.dst_key]);
+    if (e.rel === 'addresses') addressedBy[e.dst_key] = label[e.src_key];
+  }
+  for (const rk of Object.keys({ ...affects, ...addressedBy }).filter(k => k.startsWith('risk:')).slice(0, 6)) {
+    const aff = (affects[rk] || []).slice(0, 3).join(', ');
+    const addr = addressedBy[rk];
+    lines.push(`Risk "${label[rk]}"${aff ? ` affects ${aff}` : ''}${addr ? `; being addressed by "${addr}"` : ' — no owner yet'}`);
+  }
+  if (!lines.length) return '';
+  return `\nORG GRAPH (the Company Brain's relationship map — who owns what, what's at risk and who it touches; use it to answer org/ownership questions and connect dots):\n${lines.join('\n')}\n`;
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // ── Cron: proactive external scan (system job, no user session) ──────────────
@@ -538,6 +627,9 @@ export default async function handler(req, res) {
         // Nightly deep pass (the 7am cron is the "CEO morning briefing" slot).
         try { deepFindings += (await nightlyDeepPass(w.id, cronDb)).findings || 0; }
         catch (e) { console.error('[brain] nightlyDeepPass ws=%s:', w.id, e.message); }
+        // Rebuild the knowledge graph after findings/patterns/tasks settle.
+        try { await buildGraph(w.id, cronDb); }
+        catch (e) { console.error('[brain] buildGraph ws=%s:', w.id, e.message); }
       }
       console.log('[brain] scan_external workspaces=%d findings=%d patterns=%d deep=%d', results.length, inserted, patterns, deepFindings);
       return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, patterns, deepFindings, results });
@@ -572,6 +664,14 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
 
     // ── Hunt findings ─────────────────────────────────────────────────────────
+    if (tab === 'graph') {
+      const [{ data: nodes }, { data: edges }] = await Promise.all([
+        db.from('app_graph_nodes').select('node_key, node_type, label, meta').eq('workspace_id', workspaceId),
+        db.from('app_graph_edges').select('src_key, dst_key, rel').eq('workspace_id', workspaceId),
+      ]);
+      return res.status(200).json({ nodes: nodes || [], edges: edges || [] });
+    }
+
     if (tab === 'hunt') {
       const { data: findings } = await db
         .from('hunt_findings')
@@ -671,6 +771,12 @@ export default async function handler(req, res) {
     if (body.action === 'nightly_pass') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await nightlyDeepPass(workspaceId, db);
+      return res.status(200).json({ ok: true, ...result });
+    }
+
+    if (body.action === 'build_graph') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const result = await buildGraph(workspaceId, db);
       return res.status(200).json({ ok: true, ...result });
     }
 

@@ -47,7 +47,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
 | **Cross-staff pattern detection (≥3 staff)** | ✅ **SHIPPED** | `api/brain.js` detectPatterns → `app_detected_patterns`; runs on the scan_external cron + manual action |
 | Realtime push (websockets) | ✅ **SHIPPED** | Supabase Realtime on inbox_items + daemon_events; sidebar Inbox badge ticks live (E2E-verified) |
-| Knowledge graph (Neo4j) | ❌ | not in live stack |
+| Knowledge graph (people/projects/risks) | ✅ **SHIPPED** | Postgres approximation (spec sanctions it); `buildGraph` + injected into daemon prompt |
 | Per-company VPS + Hermes provisioning + MCP writer | ❌ | requires the parked Python stack |
 | Push calibration / back-off | ❌ | inbox exists, no calibration |
 
@@ -134,9 +134,18 @@ broadcasts or the Brain routes a task. Graceful: try/catch, no-op on failure, fe
 count still works. E2E-verified headlessly (subscribe as Maya → server insert → push delivered).
 Password logins work because `/api/auth/login` returns a Supabase JWT used for `setAuth`.
 
+## Knowledge graph — SHIPPED (FINAL §3: "Neo4j or Postgres recursive")
+Postgres approximation. `migration_knowledge_graph.sql`: `app_graph_nodes` + `app_graph_edges`.
+`api/brain.js` `buildGraph(workspaceId, db)` rebuilds deterministically from relational data:
+nodes = person/task/risk/pattern; edges = owns / routed / addresses (task→risk) / affects
+(risk→person via role match) / involves (pattern→person). `graphSummary()` renders a compact
+"ORG GRAPH" block injected into the daemon prompt (who owns what, which risk affects whom,
+what's addressing it). Rebuilt in the nightly cron; manual `{action:'build_graph'}`;
+`GET /api/brain?tab=graph` returns nodes+edges (for a future viz). Verified on Cobalt → 33
+nodes / 67 edges. NOT YET: a graph visualization in the Company Brain UI (frontend).
+
 ## Suggested next (priority order)
-1. **Knowledge graph** (FINAL: Neo4j) — people/decisions/projects; biggest unbuilt layer.
-   Could approximate in Postgres (recursive) first; surface in Company Brain + daemon prompt.
+1. **Graph viz in Company Brain UI** — render `?tab=graph` as a node/edge map (frontend).
 2. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
    so the Brain grounds on real company docs (currently Slack + web + interactions).
 3. **Push calibration / back-off** (Master §10.2) — track acted_on, back off ignored push types.

@@ -81,6 +81,13 @@ renewal…"** (Accept / Flag a capacity risk); **Marcus (Sales)** gets the Q3-pi
 **Tom (Finance)** the FASB one. The Tasks board shows **"⤷ ROUTED BY BRAIN · Company Brain →
 {owner}"**. This closes the loop: hunt → finding → routed task → the owner's daemon surfaces it.
 
+## Knowledge graph (Brain §3) — connect-the-dots
+The Brain maintains a relationship map (people ⇄ tasks ⇄ risks ⇄ patterns). Ask **Maya**
+*"who owns the SOC 2 work and what does it put at risk?"* → the daemon traverses the graph:
+*SOC 2 risk → affects Daniel (CTO) & Maya → being addressed by Daniel's brain-routed task.*
+Rebuilt nightly; `POST /api/brain {action:'build_graph'}` to refresh; `GET /api/brain?tab=graph`
+returns the raw nodes/edges.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json

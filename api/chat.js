@@ -6,6 +6,7 @@ import {
 } from './_lib/security.js';
 import { braveSearchMany, roleToTags } from './_lib/research.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
+import { graphSummary } from './brain.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -721,6 +722,10 @@ export default async function handler(req, res) {
     patternsContext = `\nCROSS-STAFF PATTERNS (the Company Brain detected these across ≥3 staff — company-wide intelligence; when one is material to the user's question, raise the most important proactively as an alert block tagged "Brain · Pattern", attribute it to the Company Brain, and recommend an action. These are aggregate signals — NEVER name or single out an individual):\n${delimitUntrusted(lines, 3000)}\n`;
   }
 
+  // Org knowledge graph (who owns what, what's at risk and who it touches).
+  let graphContext = '';
+  if (workspaceId) { try { graphContext = await graphSummary(workspaceId, db); } catch {} }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -730,7 +735,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext;
+  ) + daemonEventsContext + patternsContext + graphContext;
 
   // Resolve AI provider key
   let keyRow = null;
