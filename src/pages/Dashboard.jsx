@@ -993,7 +993,7 @@ function ChatView({ context, onBack, onMenu }) {
 function DaemonPage({ onMenu, onChatChange }) {
   const c = useC();
   const { isMobile } = useViewport();
-  const { profile } = useAuth();
+  const { profile, loading } = useAuth();
 
   // Pre-populate from onboarding profile
   const profilePreset = profile?.industry
@@ -1008,16 +1008,21 @@ function DaemonPage({ onMenu, onChatChange }) {
   const [selectedRole, setSelectedRole]     = useState(profileRole);
   const [company, setCompany]               = useState(profileCompany);
 
-  // Skip picker for onboarded users OR anyone in a workspace (invited members)
+  // Skip picker for onboarded users OR anyone in a workspace (invited members).
+  // `launched` is only the guest path (someone with no profile picks a context).
   const hasProfile = !!(profile?.onboarded || profile?.workspace_id || profile?.workspaces?.id);
-  const [started, setStarted]               = useState(hasProfile);
+  const [launched, setLaunched]             = useState(false);
+  const showChat = hasProfile || launched; // derived → no async flash / one-frame gap
 
-  // Sync started when profile loads asynchronously after mount
-  useEffect(() => { if (hasProfile) setStarted(true); }, [hasProfile]);
+  useEffect(() => { onChatChange?.(showChat); }, [showChat]);
 
-  useEffect(() => { onChatChange?.(started); }, [started]);
+  // While auth/profile is still resolving, show nothing (not the context picker) —
+  // otherwise the picker flashes for a split second before the daemon loads.
+  if (loading) {
+    return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.bg }}><Spinner size={20} /></div>;
+  }
 
-  if (started) {
+  if (showChat) {
     const chatContext = {
       name: profile?.name || null,
       title: profile?.title || profile?.role || selectedRole?.label || null,
@@ -1031,7 +1036,7 @@ function DaemonPage({ onMenu, onChatChange }) {
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ChatView
           context={chatContext}
-          onBack={hasProfile ? null : () => setStarted(false)}
+          onBack={hasProfile ? null : () => setLaunched(false)}
           onMenu={onMenu}
         />
       </div>
@@ -1088,7 +1093,7 @@ function DaemonPage({ onMenu, onChatChange }) {
           ))}
         </div>
 
-        <button className="wd-btn" onClick={() => setStarted(true)} style={{ width: '100%' }}>
+        <button className="wd-btn" onClick={() => setLaunched(true)} style={{ width: '100%' }}>
           LAUNCH {selectedRole.label.toUpperCase()} DAEMON  →
         </button>
       </div>
