@@ -573,6 +573,20 @@ export default async function handler(req, res) {
     huntFindings = findings || [];
   }
 
+  // Cross-staff patterns (FINAL §11/§13): company-wide intelligence surfaced to
+  // EXECUTIVES only, anonymised (the detail field is counts + roles, never names).
+  let detectedPatterns = [];
+  if (workspaceId && agentProfile?.access_level === 'executive') {
+    const { data: pats } = await db
+      .from('app_detected_patterns')
+      .select('pattern_type, title, detail, confidence')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'open')
+      .order('confidence', { ascending: false })
+      .limit(6);
+    detectedPatterns = pats || [];
+  }
+
   // Connected integrations → tell the daemon which tools are actually live.
   // Fetch all rows for the workspace and filter in JS (mirrors settings.js approach
   // which is known to work; chained .eq('status','connected') was returning empty).
@@ -700,6 +714,13 @@ export default async function handler(req, res) {
     }
   }
 
+  // Cross-staff patterns block (executives only) — anonymised, attributed to the Brain.
+  let patternsContext = '';
+  if (detectedPatterns.length) {
+    const lines = detectedPatterns.map(p => `• [${p.pattern_type}] ${p.title} — ${p.detail}`).join('\n');
+    patternsContext = `\nCROSS-STAFF PATTERNS (the Company Brain detected these across ≥3 staff — company-wide intelligence; when one is material to the user's question, raise the most important proactively as an alert block tagged "Brain · Pattern", attribute it to the Company Brain, and recommend an action. These are aggregate signals — NEVER name or single out an individual):\n${delimitUntrusted(lines, 3000)}\n`;
+  }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -709,7 +730,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext;
+  ) + daemonEventsContext + patternsContext;
 
   // Resolve AI provider key
   let keyRow = null;

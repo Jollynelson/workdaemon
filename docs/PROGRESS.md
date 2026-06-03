@@ -98,12 +98,13 @@ by company_id; same `app_` convention as app_agent_profiles). Pushes to **execut
 stored but never surfaced). Dedups vs open patterns. Runs on the `scan_external` cron +
 manual `POST /api/brain {action:'detect_patterns'}`. `detectPatterns` is exported for
 scripts. Cobalt seeded → 5 live patterns (Close Automation, SOC 2 audit, Ramp) in Maya &
-Daniel's inbox. NOT YET: injecting patterns into the executive daemon's chat prompt.
+Daniel's inbox. **Also injected into the executive daemon's chat prompt** (`api/chat.js`):
+open `app_detected_patterns` are loaded for `access_level==='executive'` and appended as a
+"CROSS-STAFF PATTERNS" block (anonymised) so the CEO's daemon raises them proactively, tagged
+"Brain · Pattern". Non-execs never see them.
 
 ## Suggested next (priority order)
-1. **Inject detected_patterns into the executive daemon chat prompt** so the CEO's daemon
-   proactively cites cross-staff patterns (not just Inbox) — small `api/chat.js` add.
-2. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`
+1. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`
    (has knowledge/performance/waste; add threat/opportunity + a deep nightly pass).
 3. **Realtime** — websockets need a non-Vercel channel (Supabase Realtime is the additive
    option if we want true push instead of the current chat/inbox polling).
