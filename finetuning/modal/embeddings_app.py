@@ -27,12 +27,13 @@ import subprocess
 import time
 
 import modal
+from fastapi import Request  # annotate so FastAPI injects the Request (not a query param)
 
 EMBED_MODEL = os.environ.get("EMBEDDINGS_MODEL", "nomic-embed-text")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("curl")
+    .apt_install("curl", "zstd")  # ollama's installer now extracts with zstd
     .run_commands("curl -fsSL https://ollama.com/install.sh | sh")
     .pip_install("fastapi[standard]>=0.111.0", "httpx>=0.27.0")
 )
@@ -73,7 +74,7 @@ def _ensure_ollama_and_model() -> None:
 )
 @modal.concurrent(max_inputs=8)
 @modal.fastapi_endpoint(method="POST")
-def embeddings(item: dict, request):
+def embeddings(item: dict, request: Request):
     import httpx
     from fastapi import HTTPException
 
