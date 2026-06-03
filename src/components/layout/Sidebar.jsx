@@ -115,13 +115,17 @@ export default function Sidebar({
   useEffect(() => {
     if (!token) { setTaskCount(0); setInboxCount(0); return; }
     let alive = true;
-    Promise.allSettled([brainApi.tasks({ token }), brainApi.pushes({ token })]).then(([t, p]) => {
+    Promise.allSettled([
+      brainApi.tasks({ token }),
+      fetch('/api/inbox', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+    ]).then(([t, p]) => {
       if (!alive) return;
       if (t.status === 'fulfilled') {
         const open = (t.value.tasks || []).filter(x => !['done', 'completed', 'cancelled'].includes(x.status));
         setTaskCount(open.length);
       }
-      if (p.status === 'fulfilled') setInboxCount((p.value.pushes || []).length);
+      // Initial unread count from the real inbox (realtime bumps this live below).
+      if (p.status === 'fulfilled') setInboxCount((p.value.items || []).filter(i => i.unread).length);
     });
     return () => { alive = false; };
   }, [token]);
