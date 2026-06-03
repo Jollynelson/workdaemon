@@ -208,6 +208,22 @@ _Compact log; deep detail in the linked memory files._
    own token lets the Brain read what THAT user can see; disclose the access-scoped
    read + need-to-know answering behavior in the privacy policy / onboarding consent
    (`public/privacy.html`). Carried over from this session's privacy work.
+9. **▶ RESUME HERE (2026-06-05) — validate the Gemma 4 12B base swap.** Code is committed
+   (`eefd4f3`): `finetuning/src/config.py` base_model = `unsloth/gemma-4-12b-it`, GPU L4,
+   torch 2.7.0/cu124, unsloth latest. NOT yet run. To validate the install pins + the full
+   train→GGUF→Ollama→gate cycle, kick a single-company test train on Modal:
+   ```
+   cd finetuning
+   .venv/bin/modal deploy modal_app.py          # rebuilds the image with the new pins
+   .venv/bin/python scripts/run_one_company.py   # one seeded company → ~1–2h on L4 ($)
+   ```
+   If the image build breaks on the pins: fall back to Unsloth's version-agnostic install
+   (`pip install unsloth unsloth_zoo`, drop the explicit torch pin) or match Unsloth's Gemma 4
+   docs (https://unsloth.ai/docs/models/gemma-4/train). Watch for: chat-template/EOS in the
+   exported GGUF, and OOM (drop max_seq_length 8192→4096 or batch→1, or gpu="A10G").
+   ⚠️ This is the **sidelined self-hosted track** — even after validation, per-company models
+   still aren't wired into the live daemon (`api/chat.js` `modal` provider unused; serving GPU
+   in `finetuning/modal/serve_app.py` still T4). Memory: `project-base-model-upgrade-deferred`.
 
 ## Integrations — native OAuth connectors (Zapier-breadth)
 Native OAuth connectors so any company connects its tools; daemon reads/acts on real
