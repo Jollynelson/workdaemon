@@ -193,11 +193,17 @@ _Compact log; deep detail in the linked memory files._
    set Bot + User token scopes to exactly the manifest's lists (remove `reminders:write`),
    then **Reinstall** the app. After that the "Invalid permissions requested" install error
    is gone. Existing connected users should disconnect→reconnect to pick up the broader scopes.
-7. **Deploy + wire Modal embeddings** (optional — KB works on keyword fallback until then):
-   `modal deploy finetuning/modal/embeddings_app.py`, then set `MODAL_EMBEDDINGS_URL` +
-   `MODAL_SERVE_SECRET` (+ `EMBEDDINGS_PROVIDER=modal`) in Vercel and run
-   `POST /api/brain {action:"reindex"}`. Full runbook + platform-switching matrix in
-   `docs/EMBEDDINGS_MODAL.md`; env surface in `.env.example`.
+7. ✅ **DONE (2026-06-04)** — Modal embeddings deployed + wired + reindexed. App
+   `workdaemon-embeddings` live at `https://nelsonanyanime--workdaemon-embeddings-embeddings.modal.run`
+   (Ollama nomic-embed-text, **dim 768**, bearer-auth, scale-to-zero). Deploy needed two
+   fixes: `zstd` in the image (ollama's installer extracts `.tar.zst`) and a `request: Request`
+   annotation (FastAPI was treating it as a query param → 422); both committed (`fc1f176`).
+   `EMBEDDINGS_PROVIDER=modal` / `MODAL_EMBEDDINGS_URL` / `MODAL_SERVE_SECRET` set in Vercel
+   **Production** (Preview not set — CLI piping flaked; non-critical, previews keyword-fallback).
+   Reindexed all docs via `scripts/reindex_embeddings.mjs`: **17/17 documents embedded**
+   (Beta Tenant 4, Cobalt 13). Verified semantic re-rank fires (engineering query → #engineering
+   @ 0.672 cosine). New ingests auto-embed going forward. Runbook + switching matrix:
+   `docs/EMBEDDINGS_MODAL.md`.
 8. **Privacy-policy disclosure (do later)** — the per-staff Slack model means each user's
    own token lets the Brain read what THAT user can see; disclose the access-scoped
    read + need-to-know answering behavior in the privacy policy / onboarding consent
