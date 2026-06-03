@@ -59,7 +59,7 @@ provisioning with the 🔑 status.
 |-----|----------|------|-----------|--------|
 | Slack | Comms | OAuth2 | https://api.slack.com/authentication/oauth-v2 | 🔨 code done, needs creds |
 | Gmail | Email | OAuth2 (Google) | https://developers.google.com/gmail/api/auth/scopes | ⬜ |
-| Google Drive | Storage/Docs | OAuth2 (Google) | https://developers.google.com/drive/api/guides/about-auth | 🔨 registry built · needs creds |
+| Google Drive | Storage/Docs | OAuth2 (Google) | https://developers.google.com/drive/api/guides/about-auth | 🔨 connector+registry built · needs creds |
 | Google Calendar | Calendar | OAuth2 (Google) | https://developers.google.com/calendar/api/auth | ⬜ |
 | Google Sheets | Data | OAuth2 (Google) | https://developers.google.com/sheets/api/scopes | ⬜ |
 | Notion | Docs/Wiki | OAuth2 | https://developers.notion.com/docs/authorization | 🔨 connector+registry built · needs creds |

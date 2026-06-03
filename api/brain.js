@@ -5,6 +5,7 @@ import { fail, enforceRateLimit, decryptSecret, delimitUntrusted } from './_lib/
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
+import { CONNECTORS } from './_lib/connectors/index.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -634,6 +635,17 @@ export default async function handler(req, res) {
         // Nightly deep pass (the 7am cron is the "CEO morning briefing" slot).
         try { deepFindings += (await nightlyDeepPass(w.id, cronDb)).findings || 0; }
         catch (e) { console.error('[brain] nightlyDeepPass ws=%s:', w.id, e.message); }
+        // Auto-ingest connected tools into the document store (FINAL §17 polling).
+        try {
+          const { data: integ } = await cronDb.from('workspace_integrations')
+            .select('provider').eq('workspace_id', w.id).eq('status', 'connected');
+          for (const it of (integ || [])) {
+            const conn = CONNECTORS[it.provider];
+            if (!conn) continue;
+            const tok = await getAccessToken(cronDb, w.id, it.provider);
+            if (tok) { try { await conn.ingest(cronDb, w.id, tok); } catch (e) { console.error('[brain] ingest %s ws=%s:', it.provider, w.id, e.message); } }
+          }
+        } catch (e) { console.error('[brain] auto-ingest ws=%s:', w.id, e.message); }
         // Rebuild the knowledge graph after findings/patterns/tasks settle.
         try { await buildGraph(w.id, cronDb); }
         catch (e) { console.error('[brain] buildGraph ws=%s:', w.id, e.message); }
@@ -796,15 +808,12 @@ export default async function handler(req, res) {
     // Pull a connected tool's data into the document store (FINAL §17 ingestion).
     if (body.action === 'ingest') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
-      const CONNECTORS = { github: './_lib/connectors/github.js', notion: './_lib/connectors/notion.js' };
-      const path = CONNECTORS[body.provider];
-      if (!path) return res.status(400).json({ error: 'No connector for that provider' });
-      const tokenKind = body.provider === 'notion' ? 'bot' : 'bot';
-      const token = await getAccessToken(db, workspaceId, body.provider, tokenKind);
+      const conn = CONNECTORS[body.provider];
+      if (!conn) return res.status(400).json({ error: 'No connector for that provider' });
+      const token = await getAccessToken(db, workspaceId, body.provider);
       if (!token) return res.status(400).json({ error: `${body.provider} is not connected` });
       try {
-        const mod = await import(path);
-        const result = await mod.ingest(db, workspaceId, token);
+        const result = await conn.ingest(db, workspaceId, token);
         return res.status(200).json({ ok: true, provider: body.provider, ...result });
       } catch (e) {
         return res.status(502).json({ error: `Ingestion failed: ${e.message}` });

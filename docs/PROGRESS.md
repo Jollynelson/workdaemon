@@ -173,11 +173,17 @@ Document grounding pipeline + connector framework extended per `INTEGRATIONS.md`
 Wired into the pattern pushes (detectPatterns) + the CEO briefing (nightlyDeepPass). Verified:
 4 ignored → back-off; engagement → resets.
 
+## Connectors — deepened
+- `api/_lib/connectors/index.js`: shared `CONNECTORS` registry (github / notion / google).
+- `connectors/gdrive.js`: Google Drive — lists recent files, exports Google Docs to text.
+- `api/brain.js`: ingest action uses the registry; **nightly cron auto-ingests** every
+  connected provider's data into `workspace_documents` (FINAL §17 polling). All creds-gated.
+
 ## Suggested next (priority order)
-1. **Deepen connectors** — Drive/Gmail data layers; cron auto-ingest for connected providers;
-   pgvector upgrade for semantic retrieval at scale.
-2. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph.
-3. **Polish/UX pass** + a real-browser spot-check of all the frontend pieces shipped this session.
+1. **More P0 connectors** (INTEGRATIONS.md): Jira, HubSpot, Salesforce, MS Graph (registry +
+   data layers; Atlassian/MS/Salesforce each cover several apps via one OAuth app).
+2. **pgvector upgrade** — semantic retrieval for `workspace_documents` at scale (today: keyword).
+3. **Gmail/Calendar connectors** (Google client already configured — add scopes + data layers).
 
 ## How to run / verify
 ```bash
