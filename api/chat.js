@@ -701,8 +701,8 @@ export default async function handler(req, res) {
       const { data: senders } = await db.from('profiles').select('id, name, title').in('id', senderIds);
       const nameOf = Object.fromEntries((senders || []).map(s => [s.id, s.name || s.title || 'A teammate']));
       const lines = events.map(e => {
-        const who = nameOf[e.from_user_id] || 'A teammate';
         const p = e.payload || {};
+        const who = p.source === 'brain' ? 'The Company Brain' : (nameOf[e.from_user_id] || 'A teammate');
         if (e.type === 'assignment') return `• ${who} assigned you "${p.title}" (${p.priority || 'P2'}).${p.brief ? ' Brief: ' + p.brief : ''}`;
         if (e.type === 'flag')       return `• ${who}'s daemon flagged a capacity risk on "${p.title}": ${p.reason}${p.suggestion ? ' — suggests: ' + p.suggestion : ''}`;
         if (e.type === 'accepted')   return `• ${who}'s daemon accepted "${p.title}".`;

@@ -420,7 +420,20 @@ ${delimitUntrusted(interLines, 12000)}`;
       recommendation: String(f.recommendation || '').slice(0, 600),
     });
   }
-  if (rows.length) await db.from('hunt_findings').insert(rows);
+  let inserted = [];
+  if (rows.length) {
+    const { data } = await db.from('hunt_findings').insert(rows).select('id, hunt_mode, pattern, severity, recommendation, affected_roles');
+    inserted = data || [];
+  }
+
+  // Brain-initiated routing (FINAL §9.1 Flow 3): turn the most urgent findings
+  // into pre-drafted tasks routed to the role owner. Cap to avoid flooding.
+  let routed = 0;
+  const urgent = inserted.filter(f => f.severity === 'critical').slice(0, 2);
+  for (const f of urgent) {
+    try { if ((await routeTaskFromFinding(workspaceId, db, f)).ok) routed++; }
+    catch (e) { console.error('[brain] routeTaskFromFinding:', e.message); }
+  }
 
   // CEO morning briefing → executives' inbox (golden scenario #3).
   let briefed = 0;
@@ -436,7 +449,69 @@ ${delimitUntrusted(interLines, 12000)}`;
       briefed++;
     }
   }
-  return { findings: rows.length, briefed };
+  return { findings: rows.length, briefed, routed };
+}
+
+// ── Hunt finding → cross-daemon task (FINAL §9.1 Flow 3) ──────────────────────
+// The Brain turns a finding into a pre-drafted task routed to the role owner via
+// the cross-daemon layer (tasks + daemon_events + inbox). That person's daemon
+// surfaces it on next chat; they Accept or Flag. Closes the hunt→action loop.
+
+const SEV_PRIORITY = { critical: 'P0', warning: 'P1', info: 'P2' };
+
+// Match a finding's affected role to a workspace member (fuzzy on role words);
+// fall back to an executive so a finding is never orphaned.
+async function resolveRoleOwner(workspaceId, db, affectedRoles) {
+  // Fetch members, then profiles directly (auth.users isn't embeddable via PostgREST).
+  const { data: members } = await db
+    .from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const ids = (members || []).map(m => m.user_id);
+  const { data: profs } = ids.length
+    ? await db.from('profiles').select('id, role, title').in('id', ids) : { data: [] };
+  const roster = (profs || []).map(p => ({ id: p.id, role: (p.role || p.title || '').toLowerCase() }));
+  const wanted = (affectedRoles || []).map(r => String(r).toLowerCase());
+  const STOP = new Set(['head', 'of', 'the', 'lead', 'and', '/', 'co-founder', 'chief']);
+  const words = w => w.split(/[^a-z0-9]+/).filter(t => t.length > 2 && !STOP.has(t));
+  for (const want of wanted) {
+    const wt = words(want);
+    const hit = roster.find(p => { const pt = words(p.role); return pt.some(x => wt.includes(x)); });
+    if (hit) return hit.id;
+  }
+  const { data: exec } = await db.from('app_agent_profiles')
+    .select('user_id').eq('workspace_id', workspaceId).eq('access_level', 'executive').limit(1).single();
+  return exec?.user_id || null;
+}
+
+export async function routeTaskFromFinding(workspaceId, db, finding) {
+  if (!finding?.id) return { ok: false, reason: 'no-finding' };
+  // Dedup: one task per finding.
+  const { data: dup } = await db.from('tasks').select('id').eq('workspace_id', workspaceId).eq('source_finding_id', finding.id).limit(1);
+  if (dup?.length) return { ok: false, reason: 'exists', task_id: dup[0].id };
+
+  const owner = await resolveRoleOwner(workspaceId, db, finding.affected_roles);
+  if (!owner) return { ok: false, reason: 'no-owner' };
+
+  const title = (finding.pattern || 'Brain finding').split(' — ')[0].slice(0, 160);
+  const brief = `From the Company Brain (${finding.hunt_mode} hunt): ${finding.pattern}\n\nRecommended: ${finding.recommendation || 'Review and act.'}`;
+  const priority = SEV_PRIORITY[finding.severity] || 'P2';
+
+  const { data: task, error } = await db.from('tasks').insert({
+    workspace_id: workspaceId, title: `Act on: ${title}`, description: finding.recommendation || null,
+    brief, status: 'todo', priority, assignee_id: owner, from_user_id: null,
+    routed_by_brain: true, source_finding_id: finding.id,
+  }).select().single();
+  if (error) return { ok: false, reason: error.message };
+
+  await db.from('daemon_events').insert({
+    workspace_id: workspaceId, from_user_id: null, to_user_id: owner, type: 'assignment', task_id: task.id,
+    payload: { title: task.title, priority, brief, source: 'brain' },
+  });
+  await db.from('inbox_items').insert({
+    workspace_id: workspaceId, user_id: owner, type: 'task', source: 'daemon',
+    title: `The Company Brain routed you: ${task.title}`,
+    body: brief, metadata: { task_id: task.id, event_type: 'assignment', priority, source: 'brain', finding_id: finding.id }, read: false,
+  });
+  return { ok: true, task_id: task.id, owner };
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -597,6 +672,17 @@ export default async function handler(req, res) {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await nightlyDeepPass(workspaceId, db);
       return res.status(200).json({ ok: true, ...result });
+    }
+
+    // Turn a specific hunt finding into a brain-routed cross-daemon task.
+    if (body.action === 'spawn_task') {
+      if (!body.finding_id) return res.status(400).json({ error: 'finding_id required' });
+      const { data: finding } = await db.from('hunt_findings')
+        .select('id, hunt_mode, pattern, severity, recommendation, affected_roles')
+        .eq('id', body.finding_id).eq('workspace_id', workspaceId).single();
+      if (!finding) return res.status(404).json({ error: 'Finding not found' });
+      const result = await routeTaskFromFinding(workspaceId, db, finding);
+      return res.status(200).json(result);
     }
 
     if (body.action === 'hunt_scan') {

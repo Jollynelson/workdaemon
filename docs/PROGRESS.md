@@ -42,7 +42,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | Web search (retrieval augmentation) | ✅ | Brave; `api/chat.js` |
 | Slack ingestion + grounding | ✅ | `slack_messages`; demo only |
 | Hunt engine: 5 modes × 2 tiers + nightly deep pass | ✅ **SHIPPED** | `runHuntScan` (5 heuristic modes) + `nightlyDeepPass` (deep-model, whole-company) |
-| Brain→agent finding routing | 🟡 | prompt-level ("⟵ ROUTED TO YOU") |
+| Brain→agent finding routing / finding→task (Flow 3) | ✅ **SHIPPED** | `routeTaskFromFinding`: finding → brain-routed cross-daemon task to the role owner |
 | **Cross-daemon communication** | ✅ **SHIPPED** | see below |
 | **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
 | **Cross-staff pattern detection (≥3 staff)** | ✅ **SHIPPED** | `api/brain.js` detectPatterns → `app_detected_patterns`; runs on the scan_external cron + manual action |
@@ -114,13 +114,24 @@ open `app_detected_patterns` are loaded for `access_level==='executive'` and app
   Best-effort. Runs in the 7am `scan_external` cron + manual `{action:'nightly_pass'}`.
   Verified live on Cobalt → 6 findings + briefing.
 
+## Hunt finding → cross-daemon task — SHIPPED (FINAL §9.1 Flow 3)
+`api/brain.js` `routeTaskFromFinding(workspaceId, db, finding)`: resolves the finding's
+affected role to a workspace member (fuzzy role-word match; executive fallback), creates a
+**brain-routed task** (`from_user_id=null`, `routed_by_brain=true`, `source_finding_id` for
+dedup) + a `daemon_events` assignment (`payload.source='brain'`) + an inbox push. The owner's
+daemon surfaces it as **"The Company Brain routed you: …"** (chat injection + Tasks UI both
+label brain-sourced work). Auto-runs for the top ≤2 **critical** findings in `nightlyDeepPass`;
+manual `POST /api/brain {action:'spawn_task', finding_id}`. Migration `migration_task_from_finding.sql`
+adds `tasks.source_finding_id`. Verified on Cobalt → SOC 2→Daniel (CTO), Q3 pipeline→Marcus
+(Sales), FASB→Tom (Finance).
+
 ## Suggested next (priority order)
 1. **Realtime push** — Supabase Realtime (additive) for instant cross-daemon/briefing/pattern
    delivery instead of the current chat+inbox polling.
 2. **Knowledge graph** (FINAL: Neo4j) — people/decisions/projects; biggest unbuilt layer.
-   Could approximate in Postgres first.
-3. **Hunt finding → cross-daemon task** — a finding auto-spawns a brain-routed task, tying the
-   hunt engine to the cross-daemon layer.
+   Could approximate in Postgres (recursive) first.
+3. **Ingestion connectors** (FINAL §17 / Master §12) — Notion/Drive/GitHub → vector store,
+   so the Brain grounds on real company docs (currently Slack + web + interactions).
 
 ## How to run / verify
 ```bash

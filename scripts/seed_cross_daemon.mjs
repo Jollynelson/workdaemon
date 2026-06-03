@@ -25,6 +25,8 @@ await db.from('daemon_events').delete().eq('workspace_id', WS);
 await db.from('inbox_items').delete().eq('workspace_id', WS).eq('metadata->>cd_seed', 'true');
 await db.from('tasks').delete().eq('workspace_id', WS).eq('routed_by_brain', true);
 await db.from('app_detected_patterns').delete().eq('workspace_id', WS);
+await db.from('inbox_items').delete().eq('workspace_id', WS).eq('metadata->>source', 'brain');
+await db.from('tasks').delete().eq('workspace_id', WS).not('source_finding_id', 'is', null);
 await db.from('brain_interactions').delete().eq('workspace_id', WS).contains('topic_tags', ['cdseed']);
 await db.from('app_agent_profiles').update({ availability: 'normal', availability_reason: null, availability_until: null }).eq('workspace_id', WS);
 console.log('cleared prior cross-daemon seed');

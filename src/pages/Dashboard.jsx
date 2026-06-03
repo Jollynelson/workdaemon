@@ -1787,9 +1787,9 @@ function TaskCard({ task }) {
         <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 5, background: ps.bg, border: `1px solid ${ps.border}`, color: ps.color, fontFamily: 'var(--mono)', letterSpacing: '0.06em', flexShrink: 0, marginTop: 2 }}>{task.priority}</span>
         <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.45 }}>{task.title}</span>
       </div>
-      {task.routed_by_brain && from && (
+      {task.routed_by_brain && (
         <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#4172f5', letterSpacing: '0.04em', marginBottom: 8 }}>
-          ⤷ ROUTED BY BRAIN · {from} → {assignee || '—'}
+          ⤷ ROUTED BY BRAIN · {from || 'Company Brain'} → {assignee || '—'}
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1831,8 +1831,8 @@ function DaemonEventCard({ ev, onAccept, onFlag, onResolve, busy }) {
   const [flagging, setFlagging] = useState(false);
   const [reason, setReason] = useState('');
   const [suggestion, setSuggestion] = useState('');
-  const who = ev.from_staff?.name || 'A teammate';
   const p = ev.payload || {};
+  const who = p.source === 'brain' ? 'The Company Brain' : (ev.from_staff?.name || 'A teammate');
   const META = {
     assignment: { accent: '#4172f5', tag: 'ASSIGNMENT', title: `${who} assigned you "${p.title}"`, body: p.brief },
     flag:       { accent: '#ef4444', tag: 'CAPACITY FLAG', title: `${who}'s daemon flagged a capacity risk: "${p.title}"`, body: [p.reason, p.suggestion && `Suggested: ${p.suggestion}`].filter(Boolean).join('\n\n') },

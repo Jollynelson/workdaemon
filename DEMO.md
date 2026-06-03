@@ -74,6 +74,13 @@ the audit window, unblock the Ramp-switch campaign to close the $4M gap"*), and 
 shows fresh findings across threat / performance / opportunity / waste / knowledge. Re-run:
 `POST /api/brain {action:'nightly_pass'}` (admin) or it fires on the 7am cron.
 
+## Hunt finding → cross-daemon task (Brain §9.1 Flow 3) — the closed loop
+Critical findings auto-become **brain-routed tasks** sent to the role owner. Log in as
+**Daniel (CTO)** → his daemon/Tasks show **"The Company Brain routed you: Act on SOC 2 Type II
+renewal…"** (Accept / Flag a capacity risk); **Marcus (Sales)** gets the Q3-pipeline task;
+**Tom (Finance)** the FASB one. The Tasks board shows **"⤷ ROUTED BY BRAIN · Company Brain →
+{owner}"**. This closes the loop: hunt → finding → routed task → the owner's daemon surfaces it.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json
