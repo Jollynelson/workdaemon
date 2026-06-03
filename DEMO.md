@@ -66,6 +66,14 @@ blocking 4 teams), *Cross-team focus on "audit"* (SOC 2 across Sales/Eng/Finance
 recent interactions; the daily brain cron (or `POST /api/brain {action:'detect_patterns'}`)
 generates the patterns.
 
+## Nightly deep pass — CEO morning briefing (Brain §12, golden scenario)
+Once a day the Brain runs **all five hunt modes in one deep-model call** (`deepseek-reasoner`)
+over the whole company → ranked findings + a CEO briefing. Log in as **Maya** → Inbox shows
+**"Brain · Morning Briefing"** (e.g. *"start SOC 2 evidence collection now, freeze Card 2.0 to
+the audit window, unblock the Ramp-switch campaign to close the $4M gap"*), and **Company Brain**
+shows fresh findings across threat / performance / opportunity / waste / knowledge. Re-run:
+`POST /api/brain {action:'nightly_pass'}` (admin) or it fires on the 7am cron.
+
 ## Manage the demo
 ```bash
 # (re)create from scratch — also (re)generates demo_cobalt_ids.json

@@ -41,7 +41,7 @@ no forced DeepSeek-only or self-hosted-Hermes swap. See memory `project-cross-da
 | Daemon memory / learned prefs | ✅ | `daemon_memory` |
 | Web search (retrieval augmentation) | ✅ | Brave; `api/chat.js` |
 | Slack ingestion + grounding | ✅ | `slack_messages`; demo only |
-| Single hunt scan + findings | 🟡 | `api/brain.js` `runHuntScan`; spec wants **5 modes × 2 tiers + nightly deep pass** |
+| Hunt engine: 5 modes × 2 tiers + nightly deep pass | ✅ **SHIPPED** | `runHuntScan` (5 heuristic modes) + `nightlyDeepPass` (deep-model, whole-company) |
 | Brain→agent finding routing | 🟡 | prompt-level ("⟵ ROUTED TO YOU") |
 | **Cross-daemon communication** | ✅ **SHIPPED** | see below |
 | **Two-tier brain routing (Flash→Pro escalation, technical routing)** | ✅ **SHIPPED** | `api/_lib/brain_router.js` + `api/chat.js`; provider-agnostic, see below |
@@ -103,11 +103,24 @@ open `app_detected_patterns` are loaded for `access_level==='executive'` and app
 "CROSS-STAFF PATTERNS" block (anonymised) so the CEO's daemon raises them proactively, tagged
 "Brain · Pattern". Non-execs never see them.
 
+## Hunt Engine — SHIPPED (FINAL §12 / ChangeSpec §3)
+- **Fast tier (`runHuntScan`, heuristic):** all 5 modes — knowledge/performance/waste
+  (existing) + **threat** (churn/security/financial/people, role-targeted) + **opportunity**
+  (expansion/upsell). Manual `POST /api/brain {action:'hunt_scan'}`.
+- **Deep tier (`nightlyDeepPass`, LLM):** company context + interactions + open findings +
+  patterns + tasks → ONE deep-model call (`deepseek-reasoner` via `pickTierModels`) → ranked
+  `hunt_findings` across all 5 modes + a **CEO morning briefing** to executives (golden
+  scenario #3). OpenAI-compatible providers only; others skip LLM (heuristic still runs).
+  Best-effort. Runs in the 7am `scan_external` cron + manual `{action:'nightly_pass'}`.
+  Verified live on Cobalt → 6 findings + briefing.
+
 ## Suggested next (priority order)
-1. **Full 5-mode hunt engine + nightly deep pass** — expand `api/brain.js` `runHuntScan`
-   (has knowledge/performance/waste; add threat/opportunity + a deep nightly pass).
-3. **Realtime** — websockets need a non-Vercel channel (Supabase Realtime is the additive
-   option if we want true push instead of the current chat/inbox polling).
+1. **Realtime push** — Supabase Realtime (additive) for instant cross-daemon/briefing/pattern
+   delivery instead of the current chat+inbox polling.
+2. **Knowledge graph** (FINAL: Neo4j) — people/decisions/projects; biggest unbuilt layer.
+   Could approximate in Postgres first.
+3. **Hunt finding → cross-daemon task** — a finding auto-spawns a brain-routed task, tying the
+   hunt engine to the cross-daemon layer.
 
 ## How to run / verify
 ```bash
