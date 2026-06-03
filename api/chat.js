@@ -665,6 +665,40 @@ export default async function handler(req, res) {
     }
   }
 
+  // Cross-daemon events: assignments, capacity flags, acceptances, broadcasts
+  // and availability signals from OTHER staff's daemons that this user hasn't
+  // resolved yet. The daemon surfaces them proactively, at the top of its reply
+  // (workdaemon-cross-daemon-communication.md — "queues it at the top of their
+  // next context").
+  let daemonEventsContext = '';
+  if (workspaceId) {
+    const { data: events } = await db
+      .from('daemon_events')
+      .select('type, payload, from_user_id, created_at')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'pending')
+      .or(`to_user_id.eq.${user.id},to_user_id.is.null`)
+      .neq('from_user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (events?.length) {
+      const senderIds = [...new Set(events.map(e => e.from_user_id).filter(Boolean))];
+      const { data: senders } = await db.from('profiles').select('id, name, title').in('id', senderIds);
+      const nameOf = Object.fromEntries((senders || []).map(s => [s.id, s.name || s.title || 'A teammate']));
+      const lines = events.map(e => {
+        const who = nameOf[e.from_user_id] || 'A teammate';
+        const p = e.payload || {};
+        if (e.type === 'assignment') return `• ${who} assigned you "${p.title}" (${p.priority || 'P2'}).${p.brief ? ' Brief: ' + p.brief : ''}`;
+        if (e.type === 'flag')       return `• ${who}'s daemon flagged a capacity risk on "${p.title}": ${p.reason}${p.suggestion ? ' — suggests: ' + p.suggestion : ''}`;
+        if (e.type === 'accepted')   return `• ${who}'s daemon accepted "${p.title}".`;
+        if (e.type === 'broadcast')  return `• Company broadcast from ${who}: ${p.message}`;
+        if (e.type === 'availability') return `• ${who} is now ${p.availability}${p.reason ? ' (' + p.reason + ')' : ''}.`;
+        return `• ${who}: ${e.type}`;
+      });
+      daemonEventsContext = `\nCROSS-DAEMON EVENTS (other staff's daemons signalled YOUR daemon — surface the important ones near the top of your reply with the recommended next step; for an assignment, offer to accept or flag a capacity risk; for a capacity flag, offer options like extend/reassign/reduce scope):\n${delimitUntrusted(lines.join('\n'), 3000)}\n`;
+    }
+  }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -674,7 +708,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  );
+  ) + daemonEventsContext;
 
   // Resolve AI provider key
   let keyRow = null;
