@@ -1,5 +1,5 @@
 """
-Unsloth QLoRA training loop — runs inside Modal on a T4 GPU.
+Unsloth QLoRA training loop — runs inside Modal on an L4 GPU (Gemma 4 12B base).
 
 Uses the standard HuggingFace Trainer (not SFTTrainer) to avoid trl's EOS token
 validation, which fails because the Unsloth model repo ships the wrong eos_token
@@ -61,12 +61,13 @@ def train_adapter(
     )
 
     # ── 3. Load tokenizer ─────────────────────────────────────────────────────
-    # Hermes-3 uses ChatML format (<|im_start|> / <|im_end|>).
-    # The Unsloth Hermes-3 repo ships correct token IDs — no override needed.
-    # If switching back to Meta-Llama, restore: eos_token="<|eot_id|>" (id 128009).
+    # Gemma 4 uses <start_of_turn>/<end_of_turn> turns (eos = <end_of_turn>) and
+    # ships its chat_template as a single string, so apply_chat_template below
+    # produces Gemma format with no override. Gemma's tokenizer already defines a
+    # <pad> token, so the fallback below is a no-op for it (kept for other bases).
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token   # Hermes-3: pad = eos = <|im_end|>
+        tokenizer.pad_token = tokenizer.eos_token
 
     # ── 4. Load and tokenize dataset ──────────────────────────────────────────
     logger.info("Loading dataset from %s ...", dataset_path)
@@ -130,18 +131,18 @@ def train_adapter(
 
     # ── 7. Export merged GGUF for Ollama serving ──────────────────────────────
     # Unsloth merges the adapter into the base model and quantizes to GGUF in
-    # one step. q4_k_m gives good quality at ~5GB — fits comfortably on T4.
+    # one step. q4_k_m on a 12B is ~7GB — fits the L4 and serves fine on Ollama.
     # Ollama's ADAPTER directive requires GGUF format; exporting here avoids
     # a separate conversion step outside the GPU container.
     gguf_dir = f"/tmp/{company_id}-gguf"
     os.makedirs(gguf_dir, exist_ok=True)
 
-    # Hermes-3 ships tokenizer.chat_template as a DICT of named templates
-    # ({"default": ..., "tool_use": ...}), unlike Llama-3.1 which ships a single
-    # string. Unsloth's GGUF exporter (fix_tokenizer_bos_token) calls
-    # `.replace(" ", "")` on it and crashes on a dict. Coerce to the single
-    # 'default' template string — the same one apply_chat_template used during
-    # training — so the exported GGUF embeds a consistent ChatML template.
+    # Gemma 4 ships chat_template as a single string, so the coercion below is a
+    # no-op for it. It's retained as a safety net: some Unsloth repos (e.g. the old
+    # Hermes-3 base) ship chat_template as a DICT/LIST of named templates, and
+    # Unsloth's GGUF exporter (fix_tokenizer_bos_token) calls `.replace(" ", "")`
+    # on it and crashes on a non-string. Coerce to the single 'default' string —
+    # the same one apply_chat_template used during training.
     _ct = getattr(tokenizer, "chat_template", None)
     if isinstance(_ct, dict):
         tokenizer.chat_template = _ct.get("default") or next(iter(_ct.values()))

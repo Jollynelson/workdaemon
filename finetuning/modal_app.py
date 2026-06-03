@@ -31,15 +31,21 @@ image = (
         "git clone --depth 1 https://github.com/ggerganov/llama.cpp /root/.unsloth/llama.cpp",
         "cd /root/.unsloth/llama.cpp && cmake -B build && cmake --build build --config Release -j$(nproc)",
     )
-    # Layer 3: torch with CUDA (must precede Unsloth)
+    # Layer 3: torch with CUDA (must precede Unsloth).
+    # Bumped 2026-06-04 for Gemma 4 support — the old torch 2.3.1/cu121 +
+    # unsloth[cu121-torch231] pins predate Gemma 4's arch. ⚠️ VALIDATE these pins
+    # with a real `modal deploy` + test train; a 1-day-old release's dep matrix
+    # can shift. If the build breaks, fall back to Unsloth's version-agnostic
+    # install (`pip install unsloth unsloth_zoo`, no extra tag) which auto-resolves
+    # a compatible torch, or pin to whatever Unsloth's Gemma 4 docs recommend.
     .pip_install(
-        "torch==2.3.1",
-        index_url="https://download.pytorch.org/whl/cu121",
+        "torch==2.7.0",
+        index_url="https://download.pytorch.org/whl/cu124",
     )
-    # Layer 4: Unsloth + training deps
+    # Layer 4: Unsloth (latest — Gemma 4 support landed at release) + training deps
     .pip_install(
-        "unsloth[cu121-torch231]",
-        extra_index_url="https://unsloth.ai/installing",
+        "unsloth",
+        "unsloth_zoo",
     )
     .pip_install(
         "trl>=0.8.0",
@@ -62,7 +68,8 @@ app = modal.App("workdaemon-finetuning")
 
 @app.function(
     image=image,
-    gpu="T4",               # 16GB VRAM; fits Llama 3.1 8B 4-bit at max_seq_length=2048
+    gpu="L4",               # 24GB VRAM — 12B QLoRA won't fit T4's 16GB at 8192 seq;
+                            # L4 (Ada, bf16) is the cheap fit. Bump to A10G if OOM.
     timeout=60 * 60 * 3,   # 3h hard cap — typical run is ~1–2h
     secrets=[modal.Secret.from_name("workdaemon-secrets")],
 )

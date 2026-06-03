@@ -16,6 +16,7 @@ HYPERPARAMS: dict = {
     "lr_scheduler_type": "linear",
     "optim": "adamw_8bit",
     "seed": 3407,
-    # T4 OOM fallback: set per_device_train_batch_size=1 and
-    # gradient_accumulation_steps=8, or switch gpu="A10G" in modal_app.py.
+    # L4 (Gemma 4 12B) OOM fallback: set per_device_train_batch_size=1 and
+    # gradient_accumulation_steps=8, drop max_seq_length to 4096, or switch
+    # gpu="A10G" in modal_app.py.
 }

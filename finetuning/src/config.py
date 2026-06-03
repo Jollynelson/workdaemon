@@ -24,10 +24,15 @@ class Settings(BaseSettings):
     hf_token: str = Field(validation_alias="HF_TOKEN")
     hf_org: str = Field(default="workdaemon", validation_alias="HF_ORG")
 
-    # ── Model — Hermes-3 (agentic + tool-calling native) ─────────────────────
-    # NOTE: Changed from Meta-Llama. Hermes-3 understands <tool_call> natively.
+    # ── Model — Gemma 4 12B (Apache-2.0, agentic tool-use + reasoning mode) ────
+    # Upgraded 2026-06-04 from Hermes-3-8B. Unsloth re-hosts the weights ungated
+    # (no Google license-acceptance step), and FastLanguageModel quantizes to
+    # 4-bit on load (load_in_4bit=True), same QLoRA flow as before. Gemma uses
+    # <start_of_turn>/<end_of_turn> formatting — handled automatically because
+    # train.py drives formatting off the tokenizer's own chat_template.
+    # Override per-deploy with BASE_MODEL (e.g. an unsloth *-bnb-4bit variant).
     base_model: str = Field(
-        default="unsloth/Hermes-3-Llama-3.1-8B-bnb-4bit",
+        default="unsloth/gemma-4-12b-it",
         validation_alias="BASE_MODEL",
     )
 
