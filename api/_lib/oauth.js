@@ -31,6 +31,7 @@ export const PROVIDERS = {
       'chat:write', 'reactions:read', 'reactions:write',
       'users:read', 'users:read.email', 'team:read',
       'reminders:write', 'canvases:write', 'app_mentions:read',
+      'pins:read', 'files:read',
     ],
     // User scopes — a staff member's own token, so the Brain reads what THEY can
     // see (incl. private channels) without a bot invite. Read-scoped + search.
@@ -39,6 +40,7 @@ export const PROVIDERS = {
       'channels:read', 'channels:history',
       'groups:read', 'groups:history',          // private channels the user is in
       'mpim:read', 'mpim:history',
+      'pins:read', 'files:read',
     ],
     parseToken: (d) => {
       if (d.ok === false) throw new Error(`slack: ${d.error || 'oauth error'}`);

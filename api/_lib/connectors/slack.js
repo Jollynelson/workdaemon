@@ -11,23 +11,48 @@ import { upsertDocuments } from '../ingestion.js';
 async function _pullViaToken(token, userOf) {
   let convos = [];
   try {
+    // Channels + group DMs the token can see. 1:1 DMs ('im') are deliberately
+    // EXCLUDED — personal DMs don't belong in the shared company brain.
     convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 100 })).channels || [];
   } catch { return []; }
   const out = [];
   for (const ch of convos) {
     try {
-      const msgs = await channelHistory(token, ch.id, { limit: 50 });
-      const lines = msgs.reverse().map(m => `${m.user || 'user'}: ${m.text}`);
-      if (!lines.length) continue;
-      let visibility = 'public', allowed = [], names = [];
+      const msgs = await channelHistory(token, ch.id, { limit: 100 });
+      if (!msgs.length) continue;
+      const lines = msgs.slice().reverse().map(m => `${m.user || 'user'}: ${m.text}`);
+
+      // Thread replies — pull the top few threaded messages so decisions buried in
+      // threads are captured (same visibility as the channel).
+      try {
+        const threaded = msgs.filter(m => m.reply_count || m.thread_ts).slice(0, 5);
+        for (const t of threaded) {
+          const replies = await slackApi(token, 'conversations.replies', { channel: ch.id, ts: t.thread_ts || t.ts, limit: 20 })
+            .then(d => d.messages || []).catch(() => []);
+          for (const rm of replies.slice(1)) if (rm.text) lines.push(`  ↳ ${rm.user || 'user'}: ${rm.text}`);
+        }
+      } catch {}
+      // Pinned messages.
+      try {
+        const pins = await slackApi(token, 'pins.list', { channel: ch.id }).then(d => d.items || []).catch(() => []);
+        for (const p of pins) if (p.message?.text) lines.push(`📌 pinned: ${p.message.text}`);
+      } catch {}
+      // File titles shared in the channel.
+      try {
+        const files = await slackApi(token, 'files.list', { channel: ch.id, count: 20 }).then(d => d.files || []).catch(() => []);
+        const names = files.map(f => f.title || f.name).filter(Boolean);
+        if (names.length) lines.push(`Files: ${names.join(', ')}`);
+      } catch {}
+
+      let visibility = 'public', allowed = [], memberNames = [];
       if (ch.is_private || ch.is_mpim) {
         visibility = 'restricted';
         const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 200 }).then(d => d.members).catch(() => [])) || [];
         const mapped = members.map(sid => userOf[sid]).filter(Boolean);
         allowed = mapped.map(m => m.user_id);
-        names = mapped.map(m => m.real_name).filter(Boolean);
+        memberNames = mapped.map(m => m.real_name).filter(Boolean);
       }
-      out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names });
+      out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names: memberNames });
     } catch { /* not_in_channel etc. */ }
   }
   return out;
@@ -83,10 +108,22 @@ async function slackApi(token, method, params = {}, { json = false } = {}) {
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) flat[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
     body = new URLSearchParams(flat);
   }
-  const r = await fetch(`https://slack.com/api/${method}`, { method: 'POST', headers, body });
-  const d = await r.json();
-  if (!d.ok) throw new Error(`slack ${method}: ${d.error}`);
-  return d;
+  // Retry on rate-limit (429 → honour Retry-After) and transient 5xx, with backoff.
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(`https://slack.com/api/${method}`, { method: 'POST', headers, body });
+    if ((r.status === 429 || r.status >= 500) && attempt < 4) {
+      const retryAfter = Number(r.headers.get('retry-after')) || (2 ** attempt);  // seconds
+      await new Promise(res => setTimeout(res, Math.min(retryAfter, 30) * 1000));
+      continue;
+    }
+    const d = await r.json();
+    if (!d.ok) {
+      // Slack can also signal rate-limit in the body — back off and retry.
+      if (d.error === 'ratelimited' && attempt < 4) { await new Promise(res => setTimeout(res, (2 ** attempt) * 1000)); continue; }
+      throw new Error(`slack ${method}: ${d.error}`);
+    }
+    return d;
+  }
 }
 
 // ── Reads (bot token) ─────────────────────────────────────────────────────────

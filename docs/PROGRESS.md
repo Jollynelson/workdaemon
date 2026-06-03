@@ -221,6 +221,13 @@ Full runbook: `docs/EMBEDDINGS_MODAL.md`. Sensitive tier routes to Modal serving
   LIVE caveat: existing Slack connections predate the new user scopes → staff **reconnect**
   to grant them (and the Slack app config must list the user scopes as requestable).
 
+## TODO — privacy policy (do later)
+- [ ] **Onboarding/privacy disclosure**: add a clear line that connecting a tool (Slack,
+  etc.) feeds that data into the Company Brain, and that the Brain reads what each
+  connected staff member can see (incl. their private channels), surfaced on a
+  need-to-know basis. Required before broad rollout (spec §14 consent). Add to the
+  product privacy policy + the onboarding "Connect tools" step.
+
 ## Deliberately NOT built (architecture decision — protects the live demo)
 - Per-company VPS + Hermes-agent-per-staff; Neo4j (→ Postgres graph); Redis pub/sub
   (→ Supabase Realtime + polling); Inngest (→ Vercel cron); DeepSeek-only (→ multi-provider).
