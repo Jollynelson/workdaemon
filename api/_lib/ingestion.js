@@ -28,6 +28,13 @@ function embedConfig() {
   };
 }
 
+// Hard timeout for embedding calls. A cold/unresponsive endpoint (e.g. a
+// scale-to-zero Modal embeddings app failing to boot) MUST NOT block the caller:
+// on the chat path, retrieveDocuments falls back to keyword search when embed()
+// returns null, but only if embed() actually returns — a fetch with no timeout
+// hangs forever and freezes the whole daemon turn. Fail fast → keyword fallback.
+const EMBED_TIMEOUT_MS = Number(process.env.EMBED_TIMEOUT_MS || 8000);
+
 export async function embed(inputs) {
   if (!inputs?.length) return null;
   const c = embedConfig();
@@ -40,6 +47,7 @@ export async function embed(inputs) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: `Bearer ${c.key}` } : {}) },
         body: JSON.stringify({ model: c.model, input: inputs.map(cap) }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!r.ok) return null;
       const d = await r.json();
@@ -54,6 +62,7 @@ export async function embed(inputs) {
       method: 'POST',
       headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: c.model, input: inputs.map(cap) }),
+      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });
     if (!r.ok) return null;
     const d = await r.json();

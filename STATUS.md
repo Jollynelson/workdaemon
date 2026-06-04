@@ -65,6 +65,21 @@ Brain: the daemon is per-user and draws on the shared Brain (see
 ## Shipped milestones — Vercel app (current focus)
 _Compact log; deep detail in the linked memory files._
 
+- **Daemon latency fix — chat was HANGING, not just slow** (06-04). Live `POST /api/chat`
+  never returned (120s+, HTTP 000) for EVERY workspace incl. the Cobalt demo. Root cause:
+  `api/_lib/ingestion.js` `embed()` did a `fetch` with **no timeout**, and the Modal
+  embeddings endpoint (`workdaemon-embeddings`, scale-to-zero) was failing to cold-start
+  (hangs 90s+). Every user turn → `retrieveDocuments` → `embed()` → hung forever; the
+  surrounding try/catch can't catch a hang. Fixes: (1) `embed()` now uses
+  `AbortSignal.timeout(EMBED_TIMEOUT_MS=8000)` on both fetches → on a dead endpoint it
+  returns null → keyword-search fallback (daemon responds). (2) **Parallelized** the
+  serial context-gathering DB queries in `chat.js` (agent_profile/memory/hunt_findings/
+  integrations/history in one `Promise.all`; graph + docs in another) — cuts pre-LLM
+  latency. (3) `vercel.json` `api/chat.js` `maxDuration: 45` as a backstop so nothing can
+  hang indefinitely again. ⚠️ Separately: the `workdaemon-embeddings` Modal app is still
+  broken (cold-start hang) — daemon no longer depends on it, but semantic retrieval is on
+  keyword fallback until that app is fixed/redeployed. Also noticed: root `.env` had a
+  typo'd `NEXT_PUBLIC_SUPABASE_ANON_KEY==` (double `=`); harmless (prod uses Vercel env).
 - **Spec-capability build — the 4 specs implemented INTO the live app** (06-03). Decision:
   build the `docs/specs/*` capabilities **additively into the Vercel+Supabase app**, NOT
   rebuild to the specs' Python/VPS/Hermes/Neo4j stack; keep the app multi-provider (no
