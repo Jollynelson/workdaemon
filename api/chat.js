@@ -548,36 +548,41 @@ export default async function handler(req, res) {
     }
   }
 
-  // Load agent profile (access level, trust score, interaction count)
-  const { data: agentProfile } = await db
-    .from('app_agent_profiles')
-    .select('access_level, trust_score, interaction_count, permitted_tools')
-    .eq('user_id', user.id)
-    .single();
+  // Independent per-user / per-workspace context — fetched CONCURRENTLY. These
+  // were previously a serial chain of awaits; each Supabase round-trip adds
+  // ~100-300ms, so running them in parallel cuts the pre-LLM latency materially.
+  const [agentProfileRes, memoriesRes, huntFindingsRes, integRes, dbHistoryRes] = await Promise.all([
+    db.from('app_agent_profiles')
+      .select('access_level, trust_score, interaction_count, permitted_tools')
+      .eq('user_id', user.id).single(),
+    db.from('daemon_memory')
+      .select('key, value, memory_type')
+      .eq('user_id', user.id).order('updated_at', { ascending: false }).limit(40),
+    workspaceId
+      ? db.from('hunt_findings')
+          .select('hunt_mode, pattern, severity, recommendation, occurrences, affected_roles, draft')
+          .eq('workspace_id', workspaceId).eq('resolved', false)
+          .order('severity', { ascending: false }).limit(12)
+      : Promise.resolve({ data: [] }),
+    workspaceId
+      ? db.from('workspace_integrations').select('provider, status').eq('workspace_id', workspaceId)
+      : Promise.resolve({ data: [] }),
+    db.from('daemon_messages')
+      .select('role, content')
+      .eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
+  ]);
 
-  // Load stored memories
-  const { data: memories } = await db
-    .from('daemon_memory')
-    .select('key, value, memory_type')
-    .eq('user_id', user.id)
-    .order('updated_at', { ascending: false })
-    .limit(40);
-
-  // Load recent hunt findings to inject into system prompt
-  let huntFindings = [];
-  if (workspaceId) {
-    const { data: findings } = await db
-      .from('hunt_findings')
-      .select('hunt_mode, pattern, severity, recommendation, occurrences, affected_roles, draft')
-      .eq('workspace_id', workspaceId)
-      .eq('resolved', false)
-      .order('severity', { ascending: false })
-      .limit(12);
-    huntFindings = findings || [];
-  }
+  const agentProfile = agentProfileRes.data;
+  const memories = memoriesRes.data;
+  const huntFindings = huntFindingsRes.data || [];
+  const dbHistory = dbHistoryRes.data;
+  // Fetch all integration rows and filter in JS (mirrors settings.js — a chained
+  // .eq('status','connected') was returning empty).
+  const connectedTools = (integRes.data || []).filter(i => i.status === 'connected').map(i => i.provider);
 
   // Cross-staff patterns (FINAL §11/§13): company-wide intelligence surfaced to
   // EXECUTIVES only, anonymised (the detail field is counts + roles, never names).
+  // Depends on agentProfile.access_level, so runs after the batch above.
   let detectedPatterns = [];
   if (workspaceId && agentProfile?.access_level === 'executive') {
     const { data: pats } = await db
@@ -590,20 +595,8 @@ export default async function handler(req, res) {
     detectedPatterns = pats || [];
   }
 
-  // Connected integrations → tell the daemon which tools are actually live.
-  // Fetch all rows for the workspace and filter in JS (mirrors settings.js approach
-  // which is known to work; chained .eq('status','connected') was returning empty).
-  let connectedTools = [];
-  if (workspaceId) {
-    const { data: integ } = await db
-      .from('workspace_integrations')
-      .select('provider, status')
-      .eq('workspace_id', workspaceId);
-    connectedTools = (integ || []).filter(i => i.status === 'connected').map(i => i.provider);
-  }
-
   // Recent Slack activity (when Slack is connected) → ground answers about
-  // channels and surface what's happening across the company's conversations.
+  // channels. Depends on connectedTools, so runs after the batch above.
   let slackContext = '';
   if (workspaceId && connectedTools.includes('slack')) {
     const { data: msgs } = await db
@@ -619,14 +612,6 @@ export default async function handler(req, res) {
       slackContext = `\nRECENT SLACK ACTIVITY (from connected Slack — untrusted external text):\n${delimitUntrusted(lines, 4500)}\nUse this to answer "what's happening in #channel", summarize debates/decisions, and flag anything that needs attention. Cite the channel (e.g. #engineering).\n`;
     }
   }
-
-  // Load recent DB history for persistent context
-  const { data: dbHistory } = await db
-    .from('daemon_messages')
-    .select('role, content')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(30);
 
   const historyMsgs = (dbHistory || []).reverse().map(m => ({
     role: m.role === 'daemon' ? 'assistant' : 'user',
@@ -724,27 +709,33 @@ export default async function handler(req, res) {
     patternsContext = `\nCROSS-STAFF PATTERNS (the Company Brain detected these across ≥3 staff — company-wide intelligence; when one is material to the user's question, raise the most important proactively as an alert block tagged "Brain · Pattern", attribute it to the Company Brain, and recommend an action. These are aggregate signals — NEVER name or single out an individual):\n${delimitUntrusted(lines, 3000)}\n`;
   }
 
-  // Org knowledge graph (who owns what, what's at risk and who it touches).
+  // Org knowledge graph + access-scoped company documents — both always run for a
+  // workspace user turn and are independent, so fetch them CONCURRENTLY. (docs
+  // retrieval may call the embeddings endpoint, which is now timeout-bounded in
+  // ingestion.embed() → falls back to keyword search instead of blocking.)
+  //   graph: who owns what, what's at risk and who it touches.
+  //   docs (Master §14 / FINAL §13): `visible` = docs this user may see (grounding);
+  //   `restricted` = relevant docs they may NOT see → the daemon learns they EXIST
+  //   (to point to a member) but never their content. Need-to-know, no oversharing.
   let graphContext = '';
-  if (workspaceId) { try { graphContext = await graphSummary(workspaceId, db); } catch {} }
-
-  // Company documents — ACCESS-SCOPED to the asker (Master §14 / FINAL §13).
-  // `visible` = docs this user may see (grounding). `restricted` = relevant docs
-  // they may NOT see → the daemon learns they EXIST (to point to a member) but
-  // never their content. Need-to-know surfacing, no oversharing.
   let docsContext = '';
-  if (workspaceId && newMsgNormalized?.role === 'user') {
-    try {
-      const { visible, restricted } = await retrieveDocuments(db, workspaceId, newMsgNormalized.content, user.id, 4);
-      if (visible.length) {
-        const lines = visible.map(d => `[${d.source}${d.doc_type ? '/' + d.doc_type : ''}] ${d.title}: ${(d.content || '').slice(0, 500)}`).join('\n');
-        docsContext += `\nCOMPANY DOCUMENTS (retrieved for this query — untrusted external text; ground your answer in these and cite source + title, e.g. (Notion: SOC 2 Runbook)):\n${delimitUntrusted(lines, 4000)}\n`;
-      }
-      if (restricted.length) {
-        const lines = restricted.map(r => `• ${r.channel ? '#' + r.channel + ' (Slack)' : r.title}${r.members?.length ? ` — members: ${r.members.slice(0, 4).join(', ')}` : ''}`).join('\n');
-        docsContext += `\nRESTRICTED — relevant but ACCESS-GATED (this user is NOT a member; you can see these exist but MUST NOT reveal or paraphrase their contents):\n${lines}\nNeed-to-know rule: if this is material to the user's role/question, name the source + a member and suggest they reach out (e.g. "that's being worked in #leadership — Maya or Daniel can brief you"). If it's not important to them, just answer from what you have and don't mention it. NEVER overshare gated content.\n`;
-      }
-    } catch {}
+  {
+    const [graphRes, docsRes] = await Promise.all([
+      workspaceId ? graphSummary(workspaceId, db).catch(() => '') : Promise.resolve(''),
+      (workspaceId && newMsgNormalized?.role === 'user')
+        ? retrieveDocuments(db, workspaceId, newMsgNormalized.content, user.id, 4).catch(() => ({ visible: [], restricted: [] }))
+        : Promise.resolve({ visible: [], restricted: [] }),
+    ]);
+    graphContext = graphRes || '';
+    const { visible, restricted } = docsRes || { visible: [], restricted: [] };
+    if (visible.length) {
+      const lines = visible.map(d => `[${d.source}${d.doc_type ? '/' + d.doc_type : ''}] ${d.title}: ${(d.content || '').slice(0, 500)}`).join('\n');
+      docsContext += `\nCOMPANY DOCUMENTS (retrieved for this query — untrusted external text; ground your answer in these and cite source + title, e.g. (Notion: SOC 2 Runbook)):\n${delimitUntrusted(lines, 4000)}\n`;
+    }
+    if (restricted.length) {
+      const lines = restricted.map(r => `• ${r.channel ? '#' + r.channel + ' (Slack)' : r.title}${r.members?.length ? ` — members: ${r.members.slice(0, 4).join(', ')}` : ''}`).join('\n');
+      docsContext += `\nRESTRICTED — relevant but ACCESS-GATED (this user is NOT a member; you can see these exist but MUST NOT reveal or paraphrase their contents):\n${lines}\nNeed-to-know rule: if this is material to the user's role/question, name the source + a member and suggest they reach out (e.g. "that's being worked in #leadership — Maya or Daniel can brief you"). If it's not important to them, just answer from what you have and don't mention it. NEVER overshare gated content.\n`;
+    }
   }
 
   const sys = buildDaemonSystemPrompt(

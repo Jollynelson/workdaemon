@@ -3,7 +3,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/brain.js": { "maxDuration": 60 }
+    "api/brain.js": { "maxDuration": 60 },
+    "api/chat.js": { "maxDuration": 45 }
   },
   "crons": [
     { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" }
