@@ -84,7 +84,13 @@ _Compact log; deep detail in the linked memory files._
   hung 120s+ → 200 in ~12s (broken-embeddings build) → ~5s warm expected now. Shipped via
   PR #8 (hang fix) + a follow-up commit (embeddings redeploy + 7s timeout). Also noticed:
   root `.env` has a typo'd `NEXT_PUBLIC_SUPABASE_ANON_KEY==` (double `=`); harmless (prod
-  uses Vercel env). Memory: `project-daemon-latency-embeddings`.
+  uses Vercel env). (5) **Routing speed fix** (`api/_lib/brain_router.js` `wantsDeep`): the
+  deep tier is `deepseek-v4-pro` (`BRAIN_DEEP_MODEL`) which measured **~18s @4096** vs
+  `deepseek-v4-flash` **~4.5s**. Strategic/"deep" turns were going STRAIGHT to v4-pro
+  (skipping the fast attempt). Now only genuinely complex *technical* turns short-circuit
+  to deep; strategic turns go **fast-first and escalate only if the answer is thin**
+  (`responseIsThin`) — common case ~4× faster, quality safety-net intact. Reversible;
+  `BRAIN_TWO_TIER=off` forces fast-only. Memory: `project-daemon-latency-embeddings`.
 - **Spec-capability build — the 4 specs implemented INTO the live app** (06-03). Decision:
   build the `docs/specs/*` capabilities **additively into the Vercel+Supabase app**, NOT
   rebuild to the specs' Python/VPS/Hermes/Neo4j stack; keep the app multi-provider (no
