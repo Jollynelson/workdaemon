@@ -64,7 +64,13 @@ export function responseIsThin(parsed) {
   return false;
 }
 
-// True when this turn should go straight to the deep tier (no fast attempt first).
+// True when this turn should go STRAIGHT to the deep tier (no fast attempt first).
+// Reserved for genuinely heavy technical work, where a fast-model attempt is
+// usually wasted. Strategic/'deep' turns deliberately do NOT short-circuit here:
+// the deep tier (e.g. deepseek-v4-pro) is ~4x slower than the fast tier (~18s vs
+// ~4.5s), so they go fast-first and only escalate when the fast answer is thin
+// (see responseIsThin in the chat handler). This keeps the common case snappy
+// without losing the quality safety net. Set BRAIN_TWO_TIER=off to force fast-only.
 export function wantsDeep(route) {
-  return route.depth === 'deep' || (route.depth === 'technical' && route.complexity === 'complex');
+  return route.depth === 'technical' && route.complexity === 'complex';
 }
