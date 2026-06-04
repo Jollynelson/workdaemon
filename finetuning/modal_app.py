@@ -32,17 +32,17 @@ image = (
         "cd /root/.unsloth/llama.cpp && cmake -B build && cmake --build build --config Release -j$(nproc)",
     )
     # Layer 3: torch with CUDA (must precede Unsloth).
-    # Bumped 2026-06-04 for Gemma 4 support — the old torch 2.3.1/cu121 +
-    # unsloth[cu121-torch231] pins predate Gemma 4's arch. ⚠️ VALIDATE these pins
-    # with a real `modal deploy` + test train; a 1-day-old release's dep matrix
-    # can shift. If the build breaks, fall back to Unsloth's version-agnostic
-    # install (`pip install unsloth unsloth_zoo`, no extra tag) which auto-resolves
-    # a compatible torch, or pin to whatever Unsloth's Gemma 4 docs recommend.
+    # torch 2.6.0/cu124 + latest Unsloth. (2.7.0 — a leftover from the never-run
+    # Gemma 4 commit — does NOT exist on the cu124 wheel index, which tops out at
+    # 2.6.0; validated by a failed `modal deploy` 2026-06-04.) Mistral Small 24B is
+    # a stable, long-supported arch, so 2.6.0 is a safe, well-tested combo. If a
+    # future build breaks, fall back to Unsloth's version-agnostic install
+    # (`pip install unsloth unsloth_zoo`, no torch pin) which auto-resolves torch.
     .pip_install(
-        "torch==2.7.0",
+        "torch==2.6.0",
         index_url="https://download.pytorch.org/whl/cu124",
     )
-    # Layer 4: Unsloth (latest — Gemma 4 support landed at release) + training deps
+    # Layer 4: Unsloth (latest) + training deps
     .pip_install(
         "unsloth",
         "unsloth_zoo",
@@ -68,9 +68,15 @@ app = modal.App("workdaemon-finetuning")
 
 @app.function(
     image=image,
-    gpu="L4",               # 24GB VRAM — 12B QLoRA won't fit T4's 16GB at 8192 seq;
-                            # L4 (Ada, bf16) is the cheap fit. Bump to A10G if OOM.
-    timeout=60 * 60 * 3,   # 3h hard cap — typical run is ~1–2h
+    gpu="L40S",             # 48GB VRAM — Qwen3-32B QLoRA 4-bit (~19GB weights) does
+                            # NOT fit the L4's 24GB (fails at load: "modules dispatched
+                            # on CPU/disk"), so we step up to the L40S. Attached to THIS
+                            # function only and scale-to-zero, so the L40S is billed
+                            # solely during a train (~1-2h), never idle. The 48GB leaves
+                            # ample room for seq=4096. (24B-class fits an L4 fine; revert
+                            # gpu="L4" + seq=2048 if you ever drop to a ≤24B base.)
+    timeout=60 * 60 * 6,   # 6h hard cap — 24B on the slow L4 runs well past the
+                           # ~1–2h a 12B took; raise/lower with the GPU choice.
     secrets=[modal.Secret.from_name("workdaemon-secrets")],
 )
 def run_training(company_id: str, dataset_jsonl: str, version: int) -> dict:
@@ -136,7 +142,8 @@ orchestrator_image = (
 
 @app.function(
     image=orchestrator_image,
-    timeout=60 * 60 * 4,   # covers the full build→train→gate→deploy cycle
+    timeout=60 * 60 * 7,   # covers the full build→train→gate→deploy cycle (24B
+                           # train on L4 dominates; > the GPU fn's 6h cap + margin)
     secrets=[modal.Secret.from_name("workdaemon-secrets")],
 )
 def run_company_remote(company_id: str) -> dict:

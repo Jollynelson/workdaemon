@@ -1,5 +1,5 @@
 """
-Unsloth QLoRA training loop — runs inside Modal on an L4 GPU (Gemma 4 12B base).
+Unsloth QLoRA training loop — runs inside Modal on an L4 GPU (Qwen3-32B base).
 
 Uses the standard HuggingFace Trainer (not SFTTrainer) to avoid trl's EOS token
 validation, which fails because the Unsloth model repo ships the wrong eos_token
@@ -61,10 +61,10 @@ def train_adapter(
     )
 
     # ── 3. Load tokenizer ─────────────────────────────────────────────────────
-    # Gemma 4 uses <start_of_turn>/<end_of_turn> turns (eos = <end_of_turn>) and
-    # ships its chat_template as a single string, so apply_chat_template below
-    # produces Gemma format with no override. Gemma's tokenizer already defines a
-    # <pad> token, so the fallback below is a no-op for it (kept for other bases).
+    # Qwen3 uses ChatML turns (<|im_start|>role … <|im_end|>, eos = <|im_end|>)
+    # and ships its chat_template as a single string, so apply_chat_template below
+    # produces ChatML with no override. Qwen3 defines <|endoftext|> as pad, so the
+    # fallback below is typically a no-op (kept for safety across bases).
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -131,13 +131,14 @@ def train_adapter(
 
     # ── 7. Export merged GGUF for Ollama serving ──────────────────────────────
     # Unsloth merges the adapter into the base model and quantizes to GGUF in
-    # one step. q4_k_m on a 12B is ~7GB — fits the L4 and serves fine on Ollama.
+    # one step. q4_k_m on a 32B is ~19GB — quantization runs on CPU (llama.cpp),
+    # so it doesn't need to fit VRAM; serves fine on Ollama.
     # Ollama's ADAPTER directive requires GGUF format; exporting here avoids
     # a separate conversion step outside the GPU container.
     gguf_dir = f"/tmp/{company_id}-gguf"
     os.makedirs(gguf_dir, exist_ok=True)
 
-    # Gemma 4 ships chat_template as a single string, so the coercion below is a
+    # Mistral ships chat_template as a single string, so the coercion below is a
     # no-op for it. It's retained as a safety net: some Unsloth repos (e.g. the old
     # Hermes-3 base) ship chat_template as a DICT/LIST of named templates, and
     # Unsloth's GGUF exporter (fix_tokenizer_bos_token) calls `.replace(" ", "")`

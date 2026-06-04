@@ -24,20 +24,32 @@ class Settings(BaseSettings):
     hf_token: str = Field(validation_alias="HF_TOKEN")
     hf_org: str = Field(default="workdaemon", validation_alias="HF_ORG")
 
-    # ── Model — Gemma 4 12B (Apache-2.0, agentic tool-use + reasoning mode) ────
-    # Upgraded 2026-06-04 from Hermes-3-8B. Unsloth re-hosts the weights ungated
-    # (no Google license-acceptance step), and FastLanguageModel quantizes to
-    # 4-bit on load (load_in_4bit=True), same QLoRA flow as before. Gemma uses
-    # <start_of_turn>/<end_of_turn> formatting — handled automatically because
-    # train.py drives formatting off the tokenizer's own chat_template.
-    # Override per-deploy with BASE_MODEL (e.g. an unsloth *-bnb-4bit variant).
+    # ── Model — Qwen3-32B (Apache-2.0, text-only, long-context) ────────────────
+    # Chosen 2026-06-04 for "Mistral-24B-like capacity + large context window":
+    # 32B params, native 32K context extensible to 128K via YaRN, Apache 2.0, and
+    # crucially TEXT-ONLY — so the GGUF→Ollama export path stays clean (Mistral
+    # Small 3.1/3.2 give 128K but are multimodal, and Unsloth's vision-model GGUF
+    # export is unreliable). We use Unsloth's pre-quantized dynamic 4-bit variant
+    # as the QLoRA base. Qwen3 uses ChatML formatting (<|im_start|>/<|im_end|>,
+    # eos=<|im_end|>) — handled automatically because train.py drives formatting
+    # off the tokenizer's own chat_template.
+    #
+    # ⚠️ 128K is enabled at SERVING time via YaRN rope-scaling, not in training.
+    # To serve >32K, set rope_scaling {"type":"yarn","factor":4.0,
+    # "original_max_position_embeddings":32768} in the Ollama Modelfile / model
+    # config (see unsloth/Qwen3-32B-128K-GGUF). Training runs at 2048 (below).
+    # Override per-deploy with BASE_MODEL.
     base_model: str = Field(
-        default="unsloth/gemma-4-12b-it",
+        default="unsloth/Qwen3-32B-unsloth-bnb-4bit",
         validation_alias="BASE_MODEL",
     )
 
     # ── Training ───────────────────────────────────────────────────────────────
-    max_seq_length: int = 8192
+    # 4096: Qwen3-32B trains on an L40S (48GB) — see modal_app.py — which has ample
+    # room for this seq after the ~19GB of 4-bit weights. Our training examples are
+    # short Q&A anyway. Keep in sync with HYPERPARAMS["max_seq_length"]. (Serving
+    # context is a separate axis — YaRN extends to 128K at serve time.)
+    max_seq_length: int = 4096
     lora_r: int = 16
     lora_alpha: int = 16
     learning_rate: float = 2e-4
@@ -47,6 +59,17 @@ class Settings(BaseSettings):
 
     # ── Quality gate ───────────────────────────────────────────────────────────
     gate_epsilon: float = 0.01           # new model must score >= old - epsilon
+    # LLM judge for the gate (scores generated answers vs reference). Provider-
+    # configurable so it isn't tied to one vendor's key. Default DeepSeek: it's
+    # cheap, strong, independent of the candidate models, and DEEPSEEK_API_KEY is
+    # already set in this stack. Supported: deepseek | openai | anthropic. Leave
+    # judge_model empty to use the provider's default below.
+    judge_provider: str = Field(default="deepseek", validation_alias="JUDGE_PROVIDER")
+    judge_model: str = Field(default="", validation_alias="JUDGE_MODEL")
+    deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com", validation_alias="DEEPSEEK_BASE_URL"
+    )
 
     # ── Modal ──────────────────────────────────────────────────────────────────
     modal_environment: str = "main"
