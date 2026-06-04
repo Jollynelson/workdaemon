@@ -33,7 +33,7 @@ function embedConfig() {
 // on the chat path, retrieveDocuments falls back to keyword search when embed()
 // returns null, but only if embed() actually returns — a fetch with no timeout
 // hangs forever and freezes the whole daemon turn. Fail fast → keyword fallback.
-const EMBED_TIMEOUT_MS = Number(process.env.EMBED_TIMEOUT_MS || 8000);
+const EMBED_TIMEOUT_MS = Number(process.env.EMBED_TIMEOUT_MS || 7000);
 
 export async function embed(inputs) {
   if (!inputs?.length) return null;

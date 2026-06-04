@@ -71,15 +71,20 @@ _Compact log; deep detail in the linked memory files._
   embeddings endpoint (`workdaemon-embeddings`, scale-to-zero) was failing to cold-start
   (hangs 90s+). Every user turn → `retrieveDocuments` → `embed()` → hung forever; the
   surrounding try/catch can't catch a hang. Fixes: (1) `embed()` now uses
-  `AbortSignal.timeout(EMBED_TIMEOUT_MS=8000)` on both fetches → on a dead endpoint it
-  returns null → keyword-search fallback (daemon responds). (2) **Parallelized** the
-  serial context-gathering DB queries in `chat.js` (agent_profile/memory/hunt_findings/
+  `AbortSignal.timeout(EMBED_TIMEOUT_MS, default 7000)` on both fetches → on a dead/slow
+  endpoint it returns null → keyword-search fallback (daemon responds). (2) **Parallelized**
+  the serial context-gathering DB queries in `chat.js` (agent_profile/memory/hunt_findings/
   integrations/history in one `Promise.all`; graph + docs in another) — cuts pre-LLM
   latency. (3) `vercel.json` `api/chat.js` `maxDuration: 45` as a backstop so nothing can
-  hang indefinitely again. ⚠️ Separately: the `workdaemon-embeddings` Modal app is still
-  broken (cold-start hang) — daemon no longer depends on it, but semantic retrieval is on
-  keyword fallback until that app is fixed/redeployed. Also noticed: root `.env` had a
-  typo'd `NEXT_PUBLIC_SUPABASE_ANON_KEY==` (double `=`); harmless (prod uses Vercel env).
+  hang indefinitely again. (4) ✅ **REDEPLOYED `workdaemon-embeddings`** — root cause was it
+  wasn't deployed at all (only backend/serving/finetuning were), so the endpoint hung;
+  `modal deploy finetuning/modal/embeddings_app.py` restored it at the same URL Vercel uses
+  (verified cold 6.2s / warm 1.3s / dim 768). Timeout 7s covers the ~6.2s cold start so
+  semantic survives cold turns, yet fails fast if it drops again. Live POST /api/chat:
+  hung 120s+ → 200 in ~12s (broken-embeddings build) → ~5s warm expected now. Shipped via
+  PR #8 (hang fix) + a follow-up commit (embeddings redeploy + 7s timeout). Also noticed:
+  root `.env` has a typo'd `NEXT_PUBLIC_SUPABASE_ANON_KEY==` (double `=`); harmless (prod
+  uses Vercel env). Memory: `project-daemon-latency-embeddings`.
 - **Spec-capability build — the 4 specs implemented INTO the live app** (06-03). Decision:
   build the `docs/specs/*` capabilities **additively into the Vercel+Supabase app**, NOT
   rebuild to the specs' Python/VPS/Hermes/Neo4j stack; keep the app multi-provider (no
