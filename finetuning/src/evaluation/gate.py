@@ -1,10 +1,11 @@
 """
 Quality gate: only deploy a new adapter if it scores >= current - epsilon.
 
-Inference is via Ollama (httpx calls). Scoring uses Claude as the LLM judge,
-evaluating answer relevance against the known-good reference answers from the
-eval holdout set. The same deterministic 10% holdout used in builder.py is
-applied here — those examples were never in the training JSONL.
+Inference is via Ollama (httpx calls). Scoring uses a provider-configurable LLM
+judge (settings.judge_provider, default DeepSeek) to evaluate answer relevance
+against the known-good reference answers from the eval holdout set. The same
+deterministic 10% holdout used in builder.py is applied here — those examples
+were never in the training JSONL.
 """
 
 from __future__ import annotations
@@ -26,7 +27,15 @@ logger = logging.getLogger(__name__)
 # port from a brain/embedding daemon). Must match where load_into_ollama writes.
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 EVAL_MODEL_SUFFIX = "-eval"          # temporary Ollama model name for new adapter
-JUDGE_MODEL = "claude-haiku-4-5-20251001"
+
+# Per-provider judge config: (OpenAI-compatible base_url | None for SDK, key, default model).
+# DeepSeek/OpenAI are OpenAI-compatible → called via httpx (no extra SDK). Anthropic
+# uses its own SDK (lazy-imported). Resolved against settings in _judge_config().
+_JUDGE_PROVIDERS = {
+    "deepseek":  {"base_url": None, "default_model": "deepseek-chat"},
+    "openai":    {"base_url": "https://api.openai.com/v1", "default_model": "gpt-4o-mini"},
+    "anthropic": {"base_url": None, "default_model": "claude-haiku-4-5-20251001"},
+}
 
 
 class GateResult(TypedDict):
@@ -85,36 +94,77 @@ def _ollama_generate(query: str, model_name: str, company_name: str) -> str:
 # ── Scoring ────────────────────────────────────────────────────────────────────
 
 
+def _judge_config() -> tuple[str, str, str, str | None]:
+    """Resolve (provider, model, api_key, base_url) from settings. Raises if the
+    provider is unknown or its key is missing — callers treat that as a scoring
+    failure (→ 0.5 fallback) rather than crashing the gate."""
+    provider = (settings.judge_provider or "deepseek").lower()
+    cfg = _JUDGE_PROVIDERS.get(provider)
+    if cfg is None:
+        raise ValueError(f"unknown judge_provider {provider!r}")
+    model = settings.judge_model or cfg["default_model"]
+    key = {
+        "deepseek": settings.deepseek_api_key,
+        "openai": settings.openai_api_key,
+        "anthropic": settings.anthropic_api_key,
+    }[provider]
+    if not key:
+        raise ValueError(f"no API key set for judge_provider {provider!r}")
+    base_url = settings.deepseek_base_url + "/v1" if provider == "deepseek" else cfg["base_url"]
+    return provider, model, key, base_url
+
+
+_JUDGE_PROMPT = (
+    "You are evaluating an AI assistant's answer against a reference answer.\n\n"
+    "Question: {query}\n\n"
+    "Reference answer: {reference}\n\n"
+    "Generated answer: {answer}\n\n"
+    "Score how well the generated answer covers the key information in the reference. "
+    "Reply with a single decimal number between 0.0 and 1.0 only. No explanation."
+)
+
+
 def _score_answer(query: str, answer: str, reference: str) -> float:
     """
     Rate how well `answer` addresses `query` compared to `reference`.
-    Uses Claude as the judge. Returns 0.0–1.0.
+    Uses the configured LLM judge (settings.judge_provider). Returns 0.0–1.0.
     Falls back to 0.5 on any error so one bad score doesn't block a deploy.
     """
     if not answer.strip():
         return 0.0
 
-    import anthropic
-
-    prompt = (
-        "You are evaluating an AI assistant's answer against a reference answer.\n\n"
-        f"Question: {query}\n\n"
-        f"Reference answer: {reference}\n\n"
-        f"Generated answer: {answer}\n\n"
-        "Score how well the generated answer covers the key information in the reference. "
-        "Reply with a single decimal number between 0.0 and 1.0 only. No explanation."
-    )
+    prompt = _JUDGE_PROMPT.format(query=query, reference=reference, answer=answer)
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        msg = client.messages.create(
-            model=JUDGE_MODEL,
-            max_tokens=8,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return max(0.0, min(1.0, float(msg.content[0].text.strip())))
+        provider, model, key, base_url = _judge_config()
+
+        if provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=key)
+            msg = client.messages.create(
+                model=model, max_tokens=8,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = msg.content[0].text
+        else:
+            # DeepSeek / OpenAI — OpenAI-compatible chat/completions via httpx.
+            resp = httpx.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 8,
+                    "temperature": 0.0,
+                },
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"]
+
+        return max(0.0, min(1.0, float(text.strip())))
     except Exception as exc:
-        logger.warning("Scoring failed: %s", exc)
+        logger.warning("Scoring failed (judge=%s): %s", settings.judge_provider, exc)
         return 0.5
 
 

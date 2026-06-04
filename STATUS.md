@@ -208,22 +208,42 @@ _Compact log; deep detail in the linked memory files._
    own token lets the Brain read what THAT user can see; disclose the access-scoped
    read + need-to-know answering behavior in the privacy policy / onboarding consent
    (`public/privacy.html`). Carried over from this session's privacy work.
-9. **▶ RESUME HERE (2026-06-05) — validate the Gemma 4 12B base swap.** Code is committed
-   (`eefd4f3`): `finetuning/src/config.py` base_model = `unsloth/gemma-4-12b-it`, GPU L4,
-   torch 2.7.0/cu124, unsloth latest. NOT yet run. To validate the install pins + the full
-   train→GGUF→Ollama→gate cycle, kick a single-company test train on Modal:
-   ```
-   cd finetuning
-   .venv/bin/modal deploy modal_app.py          # rebuilds the image with the new pins
-   .venv/bin/python scripts/run_one_company.py   # one seeded company → ~1–2h on L4 ($)
-   ```
-   If the image build breaks on the pins: fall back to Unsloth's version-agnostic install
-   (`pip install unsloth unsloth_zoo`, drop the explicit torch pin) or match Unsloth's Gemma 4
-   docs (https://unsloth.ai/docs/models/gemma-4/train). Watch for: chat-template/EOS in the
-   exported GGUF, and OOM (drop max_seq_length 8192→4096 or batch→1, or gpu="A10G").
-   ⚠️ This is the **sidelined self-hosted track** — even after validation, per-company models
-   still aren't wired into the live daemon (`api/chat.js` `modal` provider unused; serving GPU
-   in `finetuning/modal/serve_app.py` still T4). Memory: `project-base-model-upgrade-deferred`.
+9. **✅ DONE (2026-06-04) — per-company finetune base = Qwen3-32B, validated on L40S.**
+   The base model was swapped twice this session (Gemma 4 12B → Mistral Small 24B → **Qwen3-32B**),
+   driven by: wanting "Mistral-24B-like capacity + a large context window" while keeping the
+   pipeline **text-only** (so GGUF→Ollama export stays clean). Final pick **`unsloth/Qwen3-32B-unsloth-bnb-4bit`**
+   (`finetuning/src/config.py`): 32B, Apache-2.0, **text-only**, native 32K context **extensible to
+   128K via YaRN**. (Mistral Small 3.1/3.2 also give 24B+128K+Apache but are *multimodal* — Unsloth's
+   vision-model GGUF export is unreliable, so they were rejected.)
+   - **Train GPU = L40S (48GB), training-only.** Qwen3-32B 4-bit (~19GB) does NOT fit the L4's 24GB
+     (fails at *load*: "modules dispatched on CPU/disk" — not an activation/seq problem). Bumped
+     `run_training` to `gpu="L40S"` in `modal_app.py`; it's scale-to-zero so the L40S is billed only
+     during a train (~1–2h), never idle. Orchestrator/dataset/GGUF-quant stay CPU; serving is a
+     separate fn (still T4). L4 ceiling found empirically: ~24B fits, 32B doesn't.
+   - Hyperparams (`config.py`+`hyperparams.py`): `max_seq_length`=**4096**, batch=1, grad_accum=8.
+     `modal_app.py` timeouts 6h/7h.
+   - **Validated end-to-end** via `scripts/validate_train.py` (GPU-only path: build dataset → train →
+     GGUF → HF push; skips the local Ollama gate, unfit for a 24B/32B on a 16GB Mac + no
+     ANTHROPIC_API_KEY judge). Result: clean **19.8GB `qwen3-32b.Q4_K_M.gguf`** pushed to HF
+     (revision `600de36…`, 56 examples). Mistral 24B 2501 also validated first as a baseline (14.3GB GGUF).
+   - **⚠️ KEY GOTCHA fixed:** `base_model` uses `validation_alias="BASE_MODEL"`, and BOTH the root
+     `.env` AND the Modal secret `workdaemon-secrets` carried a stale `BASE_MODEL=unsloth/Hermes-3-Llama-3.1-8B-bnb-4bit`.
+     **An env var overrides the code default**, so every code-level base swap (Gemma, Mistral) was
+     silently INERT — the first "successful" run actually trained Hermes-3-8B (~5GB llama GGUF, the tell).
+     Fixed: updated `.env` + recreated the secret (8 keys, only BASE_MODEL changed) → now Qwen3.
+     If you change the base again, update `.env` AND the secret, not just `config.py`.
+   - Test data: `scripts/seed_test_signals.py --reset` (Acme/Nexus, 60 signals each → 56 examples,
+     clears the ≥50 gate). To re-run: `cd finetuning && .venv/bin/modal run scripts/validate_train.py`.
+   ⚠️ Still the **sidelined self-hosted track** — per-company models are NOT wired into the live
+   daemon (`api/chat.js` `modal` provider unused). Remaining follow-ups (none block this validation):
+   (a) serving (`serve_app.py`/`runtime.py`) still parses **Hermes-3** `<tool_call>` format — Qwen3
+   uses its own tool-call format; (b) **128K serving** needs YaRN rope-scaling in the Ollama Modelfile
+   (cf. `unsloth/Qwen3-32B-128K-GGUF`); (c) ✅ **DONE — gate judge is now provider-configurable**
+   (`gate.py` + `config.py` `judge_provider`/`judge_model`), defaulting to **DeepSeek** (was hardcoded to
+   Claude via the empty `ANTHROPIC_API_KEY` → 0.5 fallback). DeepSeek/OpenAI go via httpx (OpenAI-compatible),
+   Anthropic via SDK. Smoke-tested: good answer→1.0, wrong→0.0; (d) image pre-builds llama.cpp but Unsloth rebuilds it anyway (path
+   mismatch, +1–3min, harmless); (e) the `torch==2.6.0/cu124` pin in `modal_app.py` is redundant —
+   Unsloth upgrades torch to 2.10.0 itself. Memory: `project-base-model-upgrade-deferred`.
 
 ## Integrations — native OAuth connectors (Zapier-breadth)
 Native OAuth connectors so any company connects its tools; daemon reads/acts on real
