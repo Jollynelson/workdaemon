@@ -7,7 +7,7 @@ import { getAccessToken } from './_lib/oauth.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
-import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal } from './_lib/learning.js';
+import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -713,6 +713,9 @@ export default async function handler(req, res) {
       let codeProposals = 0;
       try { codeProposals = (await runCodebaseImprover(cronDb)).proposals || 0; }
       catch (e) { console.error('[brain] runCodebaseImprover:', e.message); }
+      // Retention: prune stale raw signals so the append-only table stays bounded.
+      try { await pruneOldSignals(cronDb, Number(process.env.BRAIN_SIGNAL_RETENTION_DAYS || 90)); }
+      catch (e) { console.error('[brain] pruneOldSignals:', e.message); }
       console.log('[brain] scan_external processed=%d skipped=%d batch=%d findings=%d patterns=%d deep=%d codeProposals=%d budgetHit=%s', processed, skipped, wss.length, inserted, patterns, deepFindings, codeProposals, budgetHit);
       return res.status(200).json({ ok: true, processed, skipped, batch: wss.length, findings: inserted, patterns, deepFindings, codeProposals, budgetHit });
     } catch (e) {
@@ -926,6 +929,42 @@ export default async function handler(req, res) {
         .eq('id', id)
         .eq('workspace_id', workspaceId);
       return res.status(200).json({ ok: true });
+    }
+
+    // ── Self-improvement code proposals: approve (→ file GitHub issue via the
+    // workspace's OAuth connection) or dismiss. Routed to the WorkDaemon HQ
+    // workspace's inbox by runCodebaseImprover. Never opens a PR. ───────────────
+    if (body.action === 'file_code_issue' || body.action === 'dismiss_code_proposal') {
+      const itemId = body.itemId || body.id;
+      if (!itemId) return res.status(400).json({ error: 'itemId required' });
+      const { data: item } = await db.from('inbox_items')
+        .select('id, metadata').eq('id', itemId).eq('workspace_id', workspaceId).maybeSingle();
+      if (!item || item.metadata?.event_type !== 'code_proposal') {
+        return res.status(404).json({ error: 'Code proposal not found' });
+      }
+      const cp = item.metadata.code_proposal || {};
+      if (body.action === 'dismiss_code_proposal') {
+        await db.from('inbox_items').update({ read: true }).eq('id', itemId);
+        if (cp.insight_id) await db.from('learning_insights').update({ status: 'retired', updated_at: new Date().toISOString() }).eq('id', cp.insight_id);
+        return res.status(200).json({ ok: true, dismissed: true });
+      }
+      // Approve → file the issue with the workspace's GitHub OAuth token.
+      const token = await getAccessToken(db, workspaceId, 'github');
+      if (!token) return res.status(400).json({ error: 'Connect GitHub (Settings → Tools) to file the issue.' });
+      const repo = process.env.GITHUB_REPO;
+      if (!repo) return res.status(400).json({ error: 'GITHUB_REPO is not configured.' });
+      try {
+        const r = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'WorkDaemon' },
+          body: JSON.stringify({ title: cp.issue_title || 'WorkDaemon self-improvement', body: cp.issue_body || item.metadata.draft || '', labels: ['self-improvement'] }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return res.status(502).json({ error: j.message || `GitHub ${r.status}` });
+        await db.from('inbox_items').update({ read: true, metadata: { ...item.metadata, code_proposal: { ...cp, issue_url: j.html_url } } }).eq('id', itemId);
+        if (cp.insight_id) await db.from('learning_insights').update({ status: 'active', applied_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', cp.insight_id);
+        return res.status(200).json({ ok: true, url: j.html_url });
+      } catch (e) { return fail(res, 502, 'Could not file GitHub issue', e, 'brain'); }
     }
 
     // ── Update agent profile ──────────────────────────────────────────────────

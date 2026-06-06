@@ -394,6 +394,8 @@ WEB SEARCH: You CAN search the live web. When the user asks for news/latest/onli
 
 ${UNTRUSTED_DATA_NOTICE}
 ${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
+JSON VALIDITY — non-negotiable: emit ONE complete, valid JSON object with every { and [ closed by its } and ]. Never stop mid-structure. Never put block data as a JSON string inside a "text" block's "md" — emit typed blocks (kanban, stat_grid, …) directly as objects. If the content is large, include FEWER items/blocks rather than risk an unterminated object. A truncated or string-wrapped response renders as raw JSON and breaks the UI.
+
 BLOCK TYPES — use these schemas exactly:
 
 {"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${safeName || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${wsName || 'Workspace'} · LINKED"},{"label":"Integrations","status":"${connectedTools.length ? 'ok' : 'pending'}","detail":"${connectedTools.length ? connectedTools.join(', ') + ' — live' : 'No tools connected yet'}"},{"label":"Permission","status":"ok","detail":"LEVEL ${permLevel} — ${permLabels[permLevel] || permLabels[2]}"},{"label":"Memory","status":"ok","detail":"${memories?.length ? `${memories.length} memories loaded` : 'Learning your patterns'}"},{"label":"Brain Intelligence","status":"${huntFindings?.length ? 'ok' : 'pending'}","detail":"${huntFindings?.length ? `${huntFindings.length} active findings` : 'No patterns detected yet'}"}]}
