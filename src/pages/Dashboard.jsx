@@ -701,11 +701,39 @@ async function callDaemonAPI({ messages, context, apiKey, authToken }) {
 // CHAT VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Recover a daemon envelope that the model emitted as incomplete/unclosed JSON
+// (it then got stored as a raw text block). Mirrors the backend's repair so old
+// messages and any edge case render as real blocks instead of raw JSON text.
+function recoverDaemonEnvelope(md) {
+  if (typeof md !== 'string' || !md.trimStart().startsWith('{') || !md.includes('"blocks"')) return null;
+  try { const p = JSON.parse(md); if (p && Array.isArray(p.blocks)) return p.blocks; } catch {}
+  let s = md.slice(md.indexOf('{'));
+  for (let a = 0; a < 5 && s.length > 1; a++) {
+    let inStr = false, esc = false; const st = [];
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true; else if (ch === '{' || ch === '[') st.push(ch); else if (ch === '}' || ch === ']') st.pop();
+    }
+    let r = inStr ? s + '"' : s; r = r.replace(/[,:]\s*$/, '');
+    for (let i = st.length - 1; i >= 0; i--) r += st[i] === '{' ? '}' : ']';
+    try { const p = JSON.parse(r); if (p && Array.isArray(p.blocks)) return p.blocks; } catch {}
+    const lc = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']')); if (lc <= 0) break; s = s.slice(0, lc + 1);
+  }
+  return null;
+}
+
 function dbMsgToDisplay(m) {
   if (m.role === 'user') return { role: 'user', text: m.content };
   try {
     const p = JSON.parse(m.content);
-    return { role: 'daemon', blocks: p.blocks || [] };
+    let blocks = p.blocks || [];
+    // Heal a stored message whose single text block is actually an unparsed envelope.
+    if (blocks.length === 1 && blocks[0]?.type === 'text') {
+      const rec = recoverDaemonEnvelope(blocks[0].md);
+      if (rec) blocks = rec;
+    }
+    return { role: 'daemon', blocks };
   } catch {
     return { role: 'daemon', blocks: [{ type: 'text', md: m.content }] };
   }
