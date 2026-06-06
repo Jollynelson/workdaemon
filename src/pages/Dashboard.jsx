@@ -490,6 +490,83 @@ function BlockActionDone({ block }) {
   );
 }
 
+// Adaptive action card — the daemon proposes something the user approves in one
+// click; the buttons adapt to the conversation (Verify & Apply / Reject for a
+// tool mutation, Copy / Email for produced content). A button's `exec` runs a
+// real tool via /api/tasks execute_action; `copy` copies `body`; neither dismisses.
+function BlockStagedAction({ block, onExec }) {
+  const c = useC();
+  const [s, setS] = useState('idle');        // idle | running | done | rejected | err
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState(false);
+  if (s === 'rejected') return null;
+  const body = block.body || block.content || '';
+  const changes = Array.isArray(block.changes) ? block.changes : [];
+  const actions = Array.isArray(block.actions) && block.actions.length
+    ? block.actions
+    : [{ label: 'Verify & Apply', style: 'primary', exec: block.exec }, { label: 'Reject', style: 'danger' }];
+
+  const onClick = async (a) => {
+    if (a.exec?.name) {
+      setS('running'); setErr('');
+      const r = await onExec?.(a.exec);
+      if (r?.ok) setS('done'); else { setS('err'); setErr(r?.error || 'Action failed'); }
+    } else if (a.copy) {
+      navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => {});
+    } else {
+      setS('rejected'); // Reject / dismiss
+    }
+  };
+  const btnStyle = (style) => style === 'primary'
+    ? { color: '#fff', background: '#4172f5', border: 'none' }
+    : style === 'danger'
+      ? { color: '#ef4444', background: 'none', border: '1px solid rgba(239,68,68,0.4)' }
+      : { color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}` };
+
+  return (
+    <div style={{ border: `1px solid ${c.cardBorder}`, borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 16px', borderBottom: `1px solid ${c.cardBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.14em', color: c.text3 }}>{(block.label || 'STAGED ACTION').toUpperCase()}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.06em', color: s === 'done' ? '#10b981' : '#f59e0b', border: `1px solid ${s === 'done' ? 'rgba(16,185,129,0.35)' : 'rgba(245,158,11,0.35)'}`, borderRadius: 7, padding: '4px 10px' }}>
+          {s === 'done' ? '● Applied' : s === 'running' ? '● Applying…' : `● ${block.status || 'Awaiting verification'}`}
+        </span>
+      </div>
+      <div style={{ padding: '16px 18px' }}>
+        {block.title && (
+          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: changes.length || body ? 13 : 4 }}>
+            <div style={{ width: 3, alignSelf: 'stretch', background: '#4172f5', borderRadius: 2, minHeight: 18 }} />
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 16, fontWeight: 600, color: c.text, lineHeight: 1.3 }}>{block.title}</div>
+          </div>
+        )}
+        {changes.length > 0 && (
+          <div style={{ background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 9, padding: '12px 14px', marginBottom: 14, fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.8 }}>
+            {changes.map((ch, i) => (
+              <div key={i} style={{ color: c.text3 }}>
+                {ch.field}: {ch.before != null && <span style={{ color: '#ef4444', textDecoration: 'line-through', opacity: 0.8 }}>{String(ch.before)}</span>}{ch.before != null && ' → '}<span style={{ color: c.text, fontWeight: 600 }}>{String(ch.after)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {body && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text2, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginBottom: 14 }}>{body}</div>}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {s === 'done' ? (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', color: '#10b981' }}>✓ DONE</span>
+          ) : actions.map((a, i) => (
+            <button key={i} type="button" disabled={s === 'running'} onClick={() => onClick(a)}
+              style={{ flex: a.style === 'primary' ? 1 : '0 0 auto', minWidth: a.style === 'primary' ? 160 : undefined, height: 44, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em', borderRadius: 9, cursor: s === 'running' ? 'default' : 'pointer', opacity: s === 'running' ? 0.6 : 1, ...btnStyle(a.style) }}>
+              {a.copy && copied ? 'COPIED ✓' : (s === 'running' && a.style === 'primary' ? 'APPLYING…' : a.label)}
+            </button>
+          ))}
+        </div>
+        {s === 'err' && <div style={{ marginTop: 10, fontFamily: 'var(--mono)', fontSize: 10, color: '#ef4444' }}>{err}</div>}
+      </div>
+      <div style={{ padding: '10px 18px', borderTop: `1px solid ${c.cardBorder}`, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: c.text4 }}>
+        {block.note || 'Nothing executes without explicit human sign-off.'}
+      </div>
+    </div>
+  );
+}
+
 // Company-wide announcement DRAFT (SOUL §broadcast). Always confirm-first: the
 // user clicks Send to push it to every staff member's daemon (senior roles only,
 // enforced server-side by /api/tasks broadcast).
@@ -560,7 +637,7 @@ function BlockInvoiceTable({ block }) {
   );
 }
 
-function renderBlock(block, i, { onConfirm, onCancel, onBroadcast } = {}) {
+function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec } = {}) {
   const wrap = (content) => (
     <div key={i}>
       {block.label && <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.1em', marginBottom: 10 }}>{block.label.toUpperCase()}</p>}
@@ -582,6 +659,7 @@ function renderBlock(block, i, { onConfirm, onCancel, onBroadcast } = {}) {
     case 'action_done':    return wrap(<BlockActionDone block={block} />);
     case 'invoice_table':  return wrap(<BlockInvoiceTable block={block} />);
     case 'broadcast':      return wrap(<BlockBroadcast block={block} onBroadcast={onBroadcast} />);
+    case 'staged_action':  return wrap(<BlockStagedAction block={block} onExec={onExec} />);
     default:               return wrap(<BlockText block={{ md: typeof block === 'string' ? block : JSON.stringify(block) }} />);
   }
 }
@@ -926,6 +1004,20 @@ function ChatView({ context, onBack, onMenu }) {
     setSuggestions([]);
   }, []);
 
+  // Run a staged action's tool exec (Verify & Apply) via the action executor.
+  const onExec = useCallback(async (exec) => {
+    if (!exec?.name) return { ok: false, error: 'No action' };
+    try {
+      const r = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        body: JSON.stringify({ action: 'execute_action', name: exec.name, params: exec.params || {} }),
+      });
+      const d = await r.json().catch(() => ({}));
+      return r.ok ? { ok: true, result: d.result } : { ok: false, error: d.error || `Error ${r.status}` };
+    } catch { return { ok: false, error: 'Network error' }; }
+  }, [authToken]);
+
   // Send a daemon-drafted company-wide broadcast (BlockBroadcast confirm).
   const onBroadcast = useCallback(async (message) => {
     if (!message?.trim()) return false;
@@ -1041,7 +1133,7 @@ function ChatView({ context, onBack, onMenu }) {
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>DAEMON</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction, onBroadcast }))}
+                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction, onBroadcast, onExec }))}
                     {m.text && <Md text={m.text} c={c} />}
                   </div>
                   {/* Rate the latest answer — feeds the daemon's self-improvement loop */}
