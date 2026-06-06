@@ -91,6 +91,27 @@ export const ACTIONS = {
     },
   },
 
+  // ── Google Calendar — create an event / invite (needs calendar.events scope) ─
+  'gcal.create_event': {
+    provider: 'google',
+    label: 'Create a calendar event',
+    minLevel: 2,
+    describe: (p) => `Calendar: “${(p?.title || 'Event').slice(0, 60)}”${p?.start ? ` at ${p.start}` : ''}`,
+    run: async (token, p) => {
+      if (!p?.title || !p?.start) throw new Error('title and start (ISO datetime) are required');
+      const end = p.end || new Date(new Date(p.start).getTime() + (Number(p.duration_min) || 30) * 60000).toISOString();
+      const attendees = Array.isArray(p.attendees) ? p.attendees.filter(Boolean).map(e => ({ email: e })) : undefined;
+      const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary: p.title, description: p.description || '', start: { dateTime: p.start }, end: { dateTime: end }, attendees }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error?.message || `Calendar ${r.status}`);
+      return { id: d.id, url: d.htmlLink };
+    },
+  },
+
   // ── Google Drive — create a Doc (needs drive.file scope) ─────────────────────
   'gdrive.create_doc': {
     provider: 'google',
