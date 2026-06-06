@@ -8,6 +8,7 @@ import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
+import { provisionStaff } from './_lib/hermes_admin.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -929,6 +930,14 @@ export default async function handler(req, res) {
         .eq('id', id)
         .eq('workspace_id', workspaceId);
       return res.status(200).json({ ok: true });
+    }
+
+    // ── Stage 3: provision this staff member's Hermes agent profile (no-op for
+    // non-Hermes workspaces). Called at onboarding once the workspace runs on
+    // the `hermes` provider. ───────────────────────────────────────────────────
+    if (body.action === 'provision_hermes') {
+      const result = await provisionStaff(db, workspaceId, { staffId: user.id });
+      return res.status(200).json(result);
     }
 
     // ── Self-improvement code proposals: approve (→ file GitHub issue via the

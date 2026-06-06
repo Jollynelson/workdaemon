@@ -81,15 +81,33 @@ Hermes agents are how it reaches and acts for each staff member. Two flows:
 - **Pull (stage 5):** `hermes/brain_mcp.py` exposes the Brain as an MCP server;
   `hermes mcp add brain` on each profile lets the agent query company truth.
 
+## Wiring the workspace to its Hermes runtime
+After deploying `hermes/modal_app.py`, store the company's Hermes connection on a
+`workspace_integrations` row (this is what `api/_lib/hermes_admin.js` reads; the
+whole integration is **inert** for workspaces without it):
+```
+workspace_integrations: provider='hermes', status='connected',
+  access_token = <encrypted HERMES_ADMIN_TOKEN>,
+  metadata = { admin_url: '<modal admin endpoint URL>',
+               gateway_url: '<modal :8642 gateway URL>',
+               model_provider: 'anthropic', model: 'claude-sonnet-4-6' }
+```
+And the chat route (`provider='hermes'`) on `workspace_api_keys` (endpoint =
+gateway_url, api_key = API_SERVER_KEY, model = `<staff_id>`).
+
 ## Build order
 1. ✅ `hermes` provider proxy in `api/chat.js`.
-2. ✅ `hermes/modal_app.py` — Hermes image on Modal (:8642) + `provision_staff` +
-   `connect_tool` functions. **Deployable, not yet deployed/verified** (needs your
-   Modal account + a model key).
-3. `provision_staff()` wired to onboarding (create profile + SOUL.md + model).
-4. Integrations UI → `connect_tool()` / `hermes mcp add` (replaces executors).
+2. ✅ `hermes/modal_app.py` — Hermes image on Modal (:8642) + token-secured `admin`
+   HTTP endpoint (provision + connect). **Deployable, not yet deployed/verified.**
+3. ✅ Provision wired: `POST /api/brain {action:'provision_hermes'}` → creates the
+   caller's profile (SOUL stub + model). Call it at onboarding per staff.
+4. ✅ Tool-connect wired: `api/_lib/oauth.js` callback → `connectTool()` adds the
+   tool's MCP server to the staff's profile (replaces the executor path).
 5. ✅ `hermes/brain_mcp.py` — Brain-as-MCP server (deployable; verify endpoints).
-   Wire interaction logging from the proxy (already logged via `daemon_messages`).
+   Interaction logging already flows via `daemon_messages`.
+
+> All WorkDaemon-side wiring (stages 3–4) is **inert until a workspace has the
+> Hermes integration row** — it never affects non-Hermes workspaces.
 
 ## Verify (first milestone)
 Deploy stage 2 for one company (Cobalt), provision one staff profile, connect
