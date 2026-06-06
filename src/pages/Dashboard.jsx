@@ -490,6 +490,41 @@ function BlockActionDone({ block }) {
   );
 }
 
+// Company-wide announcement DRAFT (SOUL §broadcast). Always confirm-first: the
+// user clicks Send to push it to every staff member's daemon (senior roles only,
+// enforced server-side by /api/tasks broadcast).
+function BlockBroadcast({ block, onBroadcast }) {
+  const c = useC();
+  const [state, setState] = useState('idle'); // idle | sending | sent | err
+  const message = block.message || block.content || '';
+  return (
+    <div style={{ border: '1px solid rgba(245,158,11,0.3)', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '8px 16px', background: 'rgba(245,158,11,0.08)', borderBottom: '1px solid rgba(245,158,11,0.22)' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', color: '#f59e0b' }}>⚡ BROADCAST — DRAFT (CONFIRM TO SEND)</span>
+      </div>
+      <div style={{ padding: '16px 18px' }}>
+        {block.title && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 15, fontWeight: 600, color: c.text, marginBottom: 4 }}>{block.title}</div>}
+        {block.audience && <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text4, marginBottom: 10 }}>TO: {String(block.audience).toUpperCase()}</div>}
+        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text2, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginBottom: 16 }}>{message}</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {state === 'sent' ? (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#10b981' }}>✓ BROADCAST SENT TO ALL STAFF</span>
+          ) : (
+            <>
+              <button className="wd-btn" style={{ height: 42, padding: '0 18px', fontSize: 9, letterSpacing: '0.1em' }}
+                disabled={state === 'sending'}
+                onClick={async () => { setState('sending'); const ok = await onBroadcast?.(message); setState(ok ? 'sent' : 'err'); }}>
+                {state === 'sending' ? 'SENDING…' : '⚡ SEND TO ALL STAFF'}
+              </button>
+              {state === 'err' && <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#ef4444' }}>Failed — senior role required</span>}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BlockInvoiceTable({ block }) {
   const c = useC();
   const total = (block.rows || []).reduce((sum, r) => sum + (r.amount || 0), 0);
@@ -525,7 +560,7 @@ function BlockInvoiceTable({ block }) {
   );
 }
 
-function renderBlock(block, i, { onConfirm, onCancel } = {}) {
+function renderBlock(block, i, { onConfirm, onCancel, onBroadcast } = {}) {
   const wrap = (content) => (
     <div key={i}>
       {block.label && <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.1em', marginBottom: 10 }}>{block.label.toUpperCase()}</p>}
@@ -546,6 +581,7 @@ function renderBlock(block, i, { onConfirm, onCancel } = {}) {
     case 'action_confirm': return wrap(<BlockActionConfirm block={block} onConfirm={onConfirm} onCancel={onCancel} />);
     case 'action_done':    return wrap(<BlockActionDone block={block} />);
     case 'invoice_table':  return wrap(<BlockInvoiceTable block={block} />);
+    case 'broadcast':      return wrap(<BlockBroadcast block={block} onBroadcast={onBroadcast} />);
     default:               return wrap(<BlockText block={{ md: typeof block === 'string' ? block : JSON.stringify(block) }} />);
   }
 }
@@ -890,6 +926,19 @@ function ChatView({ context, onBack, onMenu }) {
     setSuggestions([]);
   }, []);
 
+  // Send a daemon-drafted company-wide broadcast (BlockBroadcast confirm).
+  const onBroadcast = useCallback(async (message) => {
+    if (!message?.trim()) return false;
+    try {
+      const r = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        body: JSON.stringify({ action: 'broadcast', message }),
+      });
+      return r.ok;
+    } catch { return false; }
+  }, [authToken]);
+
   const isLong = suggestions.some(s => s.length > 36);
 
   const clearChat = useCallback(() => {
@@ -992,7 +1041,7 @@ function ChatView({ context, onBack, onMenu }) {
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>DAEMON</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction }))}
+                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction, onBroadcast }))}
                     {m.text && <Md text={m.text} c={c} />}
                   </div>
                   {/* Rate the latest answer — feeds the daemon's self-improvement loop */}

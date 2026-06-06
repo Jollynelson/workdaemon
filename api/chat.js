@@ -85,6 +85,16 @@ function extractTopicTags(message) {
     .slice(0, 8);
 }
 
+// SOUL §config: the daemon's output is a strict JSON contract, so keep reasoning
+// effort LOW on reasoning models — high effort makes some models emit visible
+// planning notes outside the JSON (or unterminated JSON), which breaks the UI.
+// Only applied to models that actually accept the param (reasoners), so it never
+// 400s a normal chat model.
+const REASONER_RE = /reason|reasoner|\bo1\b|\bo3\b|\bo4\b|o1-|o3-|o4-|thinking|-think/i;
+function reasoningParams(model) {
+  return REASONER_RE.test(String(model || '')) ? { reasoning_effort: process.env.BRAIN_REASONING_EFFORT || 'low' } : {};
+}
+
 // ── AI provider dispatcher ────────────────────────────────────────────────────
 async function callProvider({ provider, api_key, endpoint, model }, sys, messages) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
@@ -134,6 +144,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'gpt-4o',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
       console.log('[chat] openai text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
@@ -149,6 +160,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'deepseek-chat',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
       console.log('[chat] deepseek text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
@@ -431,11 +443,15 @@ EXEC (optional): include "exec" ONLY when the action maps to a connected tool ac
 
 {"type":"invoice_table","columns":["Client","Amount","Status"],"rows":[{"client":"Acme","amount":5000,"status":"overdue"}],"showTotal":true}
 
+{"type":"broadcast","title":"New parental-leave policy","audience":"All staff","message":"the full company-wide announcement text"}
+broadcast: a company-wide announcement DRAFT. ALWAYS confirm-first — the user clicks Send to push it to every staff member's daemon (irreversible, high-impact, even at L3). Emit ONLY when a senior role (CEO/exec/director) explicitly wants to announce something to the whole company.
+
 BLOCK SELECTION (required):
 Session start → boot + text + stat_grid or alert (surface any active hunt findings as alerts)
 Metrics/KPIs → stat_grid + chart | Tasks → kanban | Team → people_list
 Urgent → alert (critical/warning) | History → timeline | Goals → progress_bars + stat_grid
 Action (L2) → action_confirm | Action (L3) → action_done | Financial → invoice_table + stat_grid
+Company-wide announcement (senior roles) → broadcast
 General → text + structural block
 Open with text (or boot at session start). 2–5 blocks max.
 
