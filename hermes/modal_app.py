@@ -33,7 +33,8 @@ COMPANY = os.environ.get("HERMES_COMPANY", "default")
 app = modal.App(f"workdaemon-hermes-{COMPANY}")
 
 # Official Hermes Agent image — ships the gateway / OpenAI-compatible API server.
-image = modal.Image.from_registry("nousresearch/hermes-agent", add_python="3.11")
+# fastapi is needed for the admin HTTP endpoint WorkDaemon calls.
+image = modal.Image.from_registry("nousresearch/hermes-agent", add_python="3.11").pip_install("fastapi[standard]")
 
 # Persistent per-company profile store (Hermes' ~/.hermes → /opt/data).
 volume = modal.Volume.from_name(f"hermes-{COMPANY}", create_if_missing=True)
@@ -56,15 +57,14 @@ def gateway():
     subprocess.Popen(["hermes", "gateway", "run"])
 
 
-# ── Provision a staff member's agent profile (stage 3) ────────────────────────
-@app.function(**BASE)
-def provision_staff(staff_id: str, soul_md: str, provider: str, model: str):
+# ── Profile + tool ops (shared by the admin endpoint and `modal run`) ─────────
+def _provision(staff_id: str, soul_md: str, provider: str, model: str):
     """Create a per-staff Hermes profile: SOUL.md + cloud model + API server on."""
     os.environ.setdefault("HERMES_HOME", DATA)
     subprocess.run(["hermes", "profile", "create", staff_id], check=False)
     soul = pathlib.Path(f"{DATA}/profiles/{staff_id}/SOUL.md")
     soul.parent.mkdir(parents=True, exist_ok=True)
-    soul.write_text(soul_md)  # = docs/specs/workdaemon-soul.md, personalised per staff
+    soul.write_text(soul_md or "You are a WorkDaemon daemon. Follow the system message exactly.")
     for k, v in [("model.provider", provider), ("model.default", model),
                  ("API_SERVER_ENABLED", "true"), ("reasoning_effort", "low")]:
         subprocess.run(["hermes", "-p", staff_id, "config", "set", k, v], check=False)
@@ -72,10 +72,7 @@ def provision_staff(staff_id: str, soul_md: str, provider: str, model: str):
     return {"ok": True, "profile": staff_id}
 
 
-# ── Connect a tool = add an MCP server to the profile (stage 4, replaces executors) ─
-@app.function(**BASE)
-def connect_tool(staff_id: str, name: str, command: str = None,
-                 args: list = None, url: str = None, auth: str = "oauth"):
+def _connect(staff_id: str, name: str, command=None, args=None, url=None, auth="oauth"):
     """`hermes -p <staff> mcp add <tool>` — the agent then acts on it itself."""
     os.environ.setdefault("HERMES_HOME", DATA)
     cmd = ["hermes", "-p", staff_id, "mcp", "add", name]
@@ -89,3 +86,34 @@ def connect_tool(staff_id: str, name: str, command: str = None,
     subprocess.run(cmd, check=False)
     volume.commit()
     return {"ok": True, "tool": name}
+
+
+# CLI-callable wrappers (`modal run hermes/modal_app.py::provision_staff ...`).
+@app.function(**BASE)
+def provision_staff(staff_id: str, soul_md: str, provider: str, model: str):
+    return _provision(staff_id, soul_md, provider, model)
+
+
+@app.function(**BASE)
+def connect_tool(staff_id: str, name: str, command: str = None,
+                 args: list = None, url: str = None, auth: str = "oauth"):
+    return _connect(staff_id, name, command, args, url, auth)
+
+
+# ── Admin HTTP endpoint — what WorkDaemon calls (stages 3 + 4) ────────────────
+# POST { token, action: 'provision'|'connect', ... }. Token = HERMES_ADMIN_TOKEN
+# (in the Modal secret). Put this endpoint's URL + the token on the workspace's
+# Hermes integration row so api/_lib/hermes_admin.js can reach it.
+@app.function(**BASE)
+@modal.fastapi_endpoint(method="POST")
+def admin(payload: dict):
+    if not payload or payload.get("token") != os.environ.get("HERMES_ADMIN_TOKEN"):
+        return {"ok": False, "error": "unauthorized"}
+    action = payload.get("action")
+    if action == "provision":
+        return _provision(payload["staff_id"], payload.get("soul_md", ""),
+                          payload["provider"], payload["model"])
+    if action == "connect":
+        return _connect(payload["staff_id"], payload["name"], payload.get("command"),
+                       payload.get("args"), payload.get("url"), payload.get("auth", "oauth"))
+    return {"ok": False, "error": f"unknown action: {action}"}

@@ -346,6 +346,13 @@ export async function handleOAuthCallback(req, res, db) {
     await storeIntegration(db, { workspaceId: st.workspace_id, provider, parsed, userId: st.user_id });
     // Also capture the connecting staff member's own user token (per-staff ingest).
     await storeUserIntegration(db, { workspaceId: st.workspace_id, userId: st.user_id, provider, parsed });
+    // Stage 4: on a Hermes workspace, connecting a tool adds its MCP server to the
+    // staff's agent (the agent then acts on it itself — no executor). Inert + best-
+    // effort: a no-op for non-Hermes workspaces and never blocks the OAuth callback.
+    try {
+      const { connectTool } = await import('./hermes_admin.js');
+      await connectTool(db, st.workspace_id, { staffId: st.user_id, provider });
+    } catch (e) { console.error('[oauth] hermes connect_tool:', e.message); }
     console.log('[oauth] connected provider=%s ws=%s user=%s', provider, st.workspace_id, st.user_id);
     return redirect(res, `/app/integrations?connected=${provider}`);
   } catch (e) {
