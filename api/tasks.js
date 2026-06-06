@@ -302,5 +302,39 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── execute_actions: run a MULTI-STEP plan (one confirm → a sequence of tool
+  //    calls across tools). Each step is allow-listed + permission-gated + token-
+  //    resolved independently; failures are per-step, not fatal. ────────────────
+  if (action === 'execute_actions') {
+    const body = parseBody(res, req.body, {
+      action: { type: 'string' },
+      steps: { type: 'array', required: true, min: 1, max: 12, items: { type: 'object' } },
+    });
+    if (!body) return;
+    const { data: agent } = await db.from('app_agent_profiles').select('access_level').eq('user_id', user.id).single();
+    const tokenCache = {};
+    const results = [];
+    for (const step of body.steps) {
+      const name = step?.name;
+      const params = step?.params || {};
+      const spec = name && ACTIONS[name];
+      if (!spec) { results.push({ name: name || null, ok: false, error: 'not an executable step' }); continue; }
+      if (!meetsLevel(agent?.access_level, spec.minLevel)) { results.push({ name, label: spec.label, ok: false, error: `your access level can't run "${spec.label}"` }); continue; }
+      if (!(spec.provider in tokenCache)) tokenCache[spec.provider] = await getFreshAccessToken(db, workspaceId, spec.provider);
+      const token = tokenCache[spec.provider];
+      if (!token) { results.push({ name, label: spec.label, ok: false, error: `${spec.provider} is not connected` }); continue; }
+      try { results.push({ name, label: spec.label, ok: true, result: await spec.run(token, params) }); }
+      catch (e) { results.push({ name, label: spec.label, ok: false, error: e.message }); }
+    }
+    const ran = results.filter(r => r.ok).length;
+    await db.from('inbox_items').insert({
+      workspace_id: workspaceId, user_id: user.id, type: 'update', source: 'daemon',
+      title: `✓ Executed ${ran}/${results.length} steps`,
+      body: results.map(r => `${r.ok ? '✓' : '✕'} ${r.label || r.name}${r.error ? ` — ${r.error}` : ''}`).join('\n'),
+      metadata: { event_type: 'action_done', multi: true }, read: true, acted_on: true,
+    });
+    return res.status(200).json({ ok: ran > 0, ran, total: results.length, results });
+  }
+
   return res.status(400).json({ error: 'Unknown action' });
 }

@@ -100,6 +100,7 @@ export const PROVIDERS = {
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/gmail.send',         // send email (gmail.send)
       'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events',    // create events (gcal.create_event)
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     responseType: 'code',

@@ -437,10 +437,22 @@ function BlockKanban({ block }) {
   );
 }
 
-function BlockActionConfirm({ block, onConfirm, onCancel }) {
+function BlockActionConfirm({ block, onConfirm, onCancel, onExecPlan }) {
   const c = useC();
   const [dismissed, setDismissed] = useState(false);
+  const [running, setRunning] = useState(false);
   if (dismissed) return null;
+  const steps = Array.isArray(block.steps) ? block.steps : [];
+  const stepText = (s) => (typeof s === 'string' ? s : (s?.text || s?.title || ''));
+  // Multi-step plan: collect the execs from the steps (or a top-level execs array).
+  const execs = Array.isArray(block.execs)
+    ? block.execs
+    : steps.filter(s => s && typeof s === 'object' && s.exec).map(s => s.exec);
+
+  const confirm = async () => {
+    if (execs.length && onExecPlan) { setRunning(true); await onExecPlan(execs, block); setDismissed(true); return; }
+    onConfirm?.(block.id, block.exec); setDismissed(true);
+  };
   return (
     <div style={{ border: `1px solid ${c.cardBorder}`, borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '8px 16px', background: c.d ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderBottom: `1px solid ${c.cardBorder}` }}>
@@ -451,12 +463,15 @@ function BlockActionConfirm({ block, onConfirm, onCancel }) {
         {block.description && (
           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginBottom: 14, lineHeight: 1.5 }}>{block.description}</div>
         )}
-        {(block.steps || []).length > 0 && (
+        {steps.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-            {block.steps.map((step, i) => (
+            {steps.map((step, i) => (
               <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                 <div style={{ width: 22, height: 22, borderRadius: 6, background: c.subtle, border: `1px solid ${c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
-                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.5, paddingTop: 2 }}>{step}</div>
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.5, paddingTop: 2 }}>
+                  {stepText(step)}
+                  {step && typeof step === 'object' && step.exec && <span style={{ marginLeft: 7, fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.06em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.2)', borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap' }}>⚙ {step.exec.name}</span>}
+                </div>
               </div>
             ))}
           </div>
@@ -467,12 +482,12 @@ function BlockActionConfirm({ block, onConfirm, onCancel }) {
           </div>
         )}
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="wd-btn" style={{ flex: 1, height: 44, fontSize: 9, letterSpacing: '0.1em' }}
-            onClick={() => { onConfirm?.(block.id, block.exec); setDismissed(true); }}>
-            CONFIRM — EXECUTE
+          <button className="wd-btn" style={{ flex: 1, height: 44, fontSize: 9, letterSpacing: '0.1em', opacity: running ? 0.6 : 1 }}
+            disabled={running} onClick={confirm}>
+            {running ? 'EXECUTING…' : (execs.length > 1 ? `CONFIRM — EXECUTE ${execs.length} STEPS` : 'CONFIRM — EXECUTE')}
           </button>
           <button className="wd-btn-ghost" style={{ height: 44, padding: '0 20px', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em' }}
-            onClick={() => { onCancel?.(); setDismissed(true); }}>
+            disabled={running} onClick={() => { onCancel?.(); setDismissed(true); }}>
             CANCEL
           </button>
         </div>
@@ -637,7 +652,7 @@ function BlockInvoiceTable({ block }) {
   );
 }
 
-function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec } = {}) {
+function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec, onExecPlan } = {}) {
   const wrap = (content) => (
     <div key={i}>
       {block.label && <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.1em', marginBottom: 10 }}>{block.label.toUpperCase()}</p>}
@@ -655,7 +670,7 @@ function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec } = {}
     case 'people_list':    return wrap(<BlockPeopleList block={block} />);
     case 'timeline':       return wrap(<BlockTimeline block={block} />);
     case 'progress_bars':  return wrap(<BlockProgressBars block={block} />);
-    case 'action_confirm': return wrap(<BlockActionConfirm block={block} onConfirm={onConfirm} onCancel={onCancel} />);
+    case 'action_confirm': return wrap(<BlockActionConfirm block={block} onConfirm={onConfirm} onCancel={onCancel} onExecPlan={onExecPlan} />);
     case 'action_done':    return wrap(<BlockActionDone block={block} />);
     case 'invoice_table':  return wrap(<BlockInvoiceTable block={block} />);
     case 'broadcast':      return wrap(<BlockBroadcast block={block} onBroadcast={onBroadcast} />);
@@ -1018,6 +1033,27 @@ function ChatView({ context, onBack, onMenu }) {
     } catch { return { ok: false, error: 'Network error' }; }
   }, [authToken]);
 
+  // Run a MULTI-STEP action plan (one confirm → a sequence of tool calls), then
+  // append an action_done summary + an execution-log timeline from the results.
+  const onExecPlan = useCallback(async (execs, block) => {
+    try {
+      const r = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+        body: JSON.stringify({ action: 'execute_actions', steps: execs }),
+      });
+      const d = await r.json().catch(() => ({}));
+      const results = Array.isArray(d.results) ? d.results : [];
+      const ok = results.filter(x => x.ok).length;
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const events = results.map(x => ({ date: now, title: x.label || x.name || 'Step', body: x.ok ? 'Done.' : (x.error || 'Failed'), event_type: x.ok ? 'completion' : 'flag' }));
+      const summary = `✓ Executed ${ok}/${results.length} step${results.length === 1 ? '' : 's'}${block?.title ? ` — ${block.title}` : ''}.`;
+      setMsgs(m => [...m, { role: 'daemon', blocks: [{ type: 'action_done', summary }, ...(events.length ? [{ type: 'timeline', events }] : [])] }]);
+    } catch {
+      setMsgs(m => [...m, { role: 'daemon', blocks: [{ type: 'alert', level: 'warning', content: 'Could not execute the plan.' }] }]);
+    }
+  }, [authToken]);
+
   // Send a daemon-drafted company-wide broadcast (BlockBroadcast confirm).
   const onBroadcast = useCallback(async (message) => {
     if (!message?.trim()) return false;
@@ -1133,7 +1169,7 @@ function ChatView({ context, onBack, onMenu }) {
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>DAEMON</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction, onBroadcast, onExec }))}
+                    {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction, onBroadcast, onExec, onExecPlan }))}
                     {m.text && <Md text={m.text} c={c} />}
                   </div>
                   {/* Rate the latest answer — feeds the daemon's self-improvement loop */}
