@@ -613,6 +613,20 @@ export async function graphSummary(workspaceId, db) {
   return `\nORG GRAPH (the Company Brain's relationship map — who owns what, what's at risk and who it touches; use it to answer org/ownership questions and connect dots):\n${lines.join('\n')}\n`;
 }
 
+// Cheap activity probe for the nightly sweep's skip-inactive gate. A workspace
+// is "active" if staff have used their daemons recently OR it has a connected
+// tool feeding real data. Seed/test workspaces (no interactions, no tools) skip
+// the heavy passes so the budget reaches workspaces that are actually in use.
+async function hasRecentActivity(db, workspaceId, days) {
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  const [bi, dm, integ] = await Promise.all([
+    db.from('brain_interactions').select('id').eq('workspace_id', workspaceId).gte('created_at', since).limit(1),
+    db.from('daemon_messages').select('id').eq('workspace_id', workspaceId).gte('created_at', since).limit(1),
+    db.from('workspace_integrations').select('provider').eq('workspace_id', workspaceId).eq('status', 'connected').limit(1),
+  ]);
+  return Boolean(bi.data?.length || dm.data?.length || integ.data?.length);
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // ── Cron: proactive external scan (system job, no user session) ──────────────
@@ -639,10 +653,20 @@ export default async function handler(req, res) {
       // One budgeted, cursor-advancing loop: external scan + per-workspace passes
       // happen together per workspace, so each fully-processed workspace advances
       // its cursor before the budget can cut the run off.
-      let inserted = 0, patterns = 0, deepFindings = 0, processed = 0, budgetHit = false;
+      const ACTIVE_DAYS = Number(process.env.BRAIN_ACTIVE_WINDOW_DAYS || 14);
+      let inserted = 0, patterns = 0, deepFindings = 0, processed = 0, skipped = 0, budgetHit = false;
       const wss = batch || [];
       for (const w of wss) {
         if (Date.now() - startedAt > BUDGET_MS) { budgetHit = true; break; }
+        // SKIP-INACTIVE: the heavy per-workspace LLM passes are the budget cost, so
+        // don't spend it on dormant/seed workspaces (no recent staff interactions,
+        // no connected tools). Advance the cursor anyway so they rotate to the back
+        // and the budget reaches the workspaces that actually have activity.
+        if (!(await hasRecentActivity(cronDb, w.id, ACTIVE_DAYS))) {
+          await cronDb.from('workspaces').update({ last_scanned_at: new Date().toISOString() }).eq('id', w.id);
+          skipped++;
+          continue;
+        }
         try { inserted += (await scanOneWorkspace(cronDb, w)).inserted || 0; }
         catch (e) { console.error('[brain] scanOneWorkspace ws=%s:', w.id, e.message); }
         try { patterns += (await detectPatterns(w.id, cronDb)).patterns || 0; }
@@ -680,8 +704,8 @@ export default async function handler(req, res) {
       let codeProposals = 0;
       try { codeProposals = (await runCodebaseImprover(cronDb)).proposals || 0; }
       catch (e) { console.error('[brain] runCodebaseImprover:', e.message); }
-      console.log('[brain] scan_external processed=%d/%d findings=%d patterns=%d deep=%d codeProposals=%d budgetHit=%s', processed, wss.length, inserted, patterns, deepFindings, codeProposals, budgetHit);
-      return res.status(200).json({ ok: true, processed, batch: wss.length, findings: inserted, patterns, deepFindings, codeProposals, budgetHit });
+      console.log('[brain] scan_external processed=%d skipped=%d batch=%d findings=%d patterns=%d deep=%d codeProposals=%d budgetHit=%s', processed, skipped, wss.length, inserted, patterns, deepFindings, codeProposals, budgetHit);
+      return res.status(200).json({ ok: true, processed, skipped, batch: wss.length, findings: inserted, patterns, deepFindings, codeProposals, budgetHit });
     } catch (e) {
       console.error('[brain] scan_external error:', e.message);
       await recordSignal(adminClient(), {
