@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
-import { researchRole, researchCompany, scanAllWorkspaces } from './_lib/research_actions.js';
+import { researchRole, researchCompany, scanOneWorkspace, SCAN_COLUMNS } from './_lib/research_actions.js';
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
@@ -626,12 +626,25 @@ export default async function handler(req, res) {
     }
     try {
       const cronDb = adminClient();
-      const results = await scanAllWorkspaces(cronDb);
-      const inserted = results.reduce((n, r) => n + (r.inserted || 0), 0);
-      // Also run cross-staff pattern detection per workspace (spec §11).
-      let patterns = 0, deepFindings = 0;
-      const { data: wss } = await cronDb.from('workspaces').select('id').limit(50);
-      for (const w of (wss || [])) {
+      // SCALE: process a least-recently-scanned BATCH within a wall-clock budget,
+      // not the first N workspaces. Over successive cron runs every workspace is
+      // covered (round-robin via workspaces.last_scanned_at). Tune batch/cadence
+      // so coverage_per_day = (24/cadence_hours) × batch ≥ active workspace count.
+      const startedAt = Date.now();
+      const BATCH = Number(process.env.BRAIN_SCAN_BATCH || 25);
+      const BUDGET_MS = Number(process.env.BRAIN_SCAN_BUDGET_MS || 50000);
+      const { data: batch } = await cronDb.from('workspaces')
+        .select(SCAN_COLUMNS + ', last_scanned_at')
+        .order('last_scanned_at', { ascending: true, nullsFirst: true }).limit(BATCH);
+      // One budgeted, cursor-advancing loop: external scan + per-workspace passes
+      // happen together per workspace, so each fully-processed workspace advances
+      // its cursor before the budget can cut the run off.
+      let inserted = 0, patterns = 0, deepFindings = 0, processed = 0, budgetHit = false;
+      const wss = batch || [];
+      for (const w of wss) {
+        if (Date.now() - startedAt > BUDGET_MS) { budgetHit = true; break; }
+        try { inserted += (await scanOneWorkspace(cronDb, w)).inserted || 0; }
+        catch (e) { console.error('[brain] scanOneWorkspace ws=%s:', w.id, e.message); }
         try { patterns += (await detectPatterns(w.id, cronDb)).patterns || 0; }
         catch (e) { console.error('[brain] detectPatterns ws=%s:', w.id, e.message); }
         // Nightly deep pass (the 7am cron is the "CEO morning briefing" slot).
@@ -657,14 +670,18 @@ export default async function handler(req, res) {
         catch (e) { console.error('[brain] auditBrain ws=%s:', w.id, e.message); }
         try { await runDaemonLearning(cronDb, w.id); }
         catch (e) { console.error('[brain] runDaemonLearning ws=%s:', w.id, e.message); }
+        // Advance the round-robin cursor so this workspace goes to the back of
+        // the queue and a different batch is picked next run.
+        await cronDb.from('workspaces').update({ last_scanned_at: new Date().toISOString() }).eq('id', w.id);
+        processed++;
       }
       // SELF-IMPROVEMENT (platform): propose fixes for recurring code errors
       // (global, propose-only, ~weekly-gated, never opens a PR).
       let codeProposals = 0;
       try { codeProposals = (await runCodebaseImprover(cronDb)).proposals || 0; }
       catch (e) { console.error('[brain] runCodebaseImprover:', e.message); }
-      console.log('[brain] scan_external workspaces=%d findings=%d patterns=%d deep=%d codeProposals=%d', results.length, inserted, patterns, deepFindings, codeProposals);
-      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, patterns, deepFindings, codeProposals, results });
+      console.log('[brain] scan_external processed=%d/%d findings=%d patterns=%d deep=%d codeProposals=%d budgetHit=%s', processed, wss.length, inserted, patterns, deepFindings, codeProposals, budgetHit);
+      return res.status(200).json({ ok: true, processed, batch: wss.length, findings: inserted, patterns, deepFindings, codeProposals, budgetHit });
     } catch (e) {
       console.error('[brain] scan_external error:', e.message);
       await recordSignal(adminClient(), {

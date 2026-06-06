@@ -400,27 +400,34 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
   return { workspaceId, inserted, candidates: rawFindings.length, published: publishedCount };
 }
 
-export async function scanAllWorkspaces(db, { limit = 25 } = {}) {
-  const { data: workspaces } = await db
-    .from('workspaces')
-    .select('id, name, industry, location, context, auto_publish, publish_webhook_url')
-    .order('created_at', { ascending: true })
-    .limit(limit);
-
-  const out = [];
-  for (const ws of workspaces || []) {
-    const { data: profs } = await db
-      .from('profiles')
-      .select('role, title')
-      .eq('workspace_id', ws.id);
-    const roles = [...new Set((profs || []).map(p => (p.role || p.title || '').trim()).filter(Boolean))];
-    try {
-      out.push(await scanExternal(db, ws.id, ws, roles));
-    } catch (e) {
-      console.error('[scan_external] ws=%s fatal:', ws.id, e.message);
-      out.push({ workspaceId: ws.id, error: e.message });
-    }
+// The external scan for ONE workspace. Exposed so the cron can drive a single
+// budgeted, cursor-advancing loop (see api/brain.js) instead of scanning the
+// whole batch up front. `ws` must carry the columns SCAN_COLUMNS selects.
+export const SCAN_COLUMNS = 'id, name, industry, location, context, auto_publish, publish_webhook_url';
+export async function scanOneWorkspace(db, ws) {
+  const { data: profs } = await db
+    .from('profiles')
+    .select('role, title')
+    .eq('workspace_id', ws.id);
+  const roles = [...new Set((profs || []).map(p => (p.role || p.title || '').trim()).filter(Boolean))];
+  try {
+    return await scanExternal(db, ws.id, ws, roles);
+  } catch (e) {
+    console.error('[scan_external] ws=%s fatal:', ws.id, e.message);
+    return { workspaceId: ws.id, error: e.message };
   }
+}
+
+// Pass an explicit `workspaceIds` batch; falls back to the legacy
+// created_at/limit selection when no batch is given.
+export async function scanAllWorkspaces(db, { limit = 25, workspaceIds = null } = {}) {
+  let q = db.from('workspaces').select(SCAN_COLUMNS);
+  q = workspaceIds
+    ? q.in('id', workspaceIds)
+    : q.order('created_at', { ascending: true }).limit(limit);
+  const { data: workspaces } = await q;
+  const out = [];
+  for (const ws of workspaces || []) out.push(await scanOneWorkspace(db, ws));
   return out;
 }
 
