@@ -1,0 +1,84 @@
+# WorkDaemon ⇄ Hermes Agent runtime
+
+> The daemon **is** a per-staff Hermes Agent (NousResearch) that does its own MCP
+> tool-calling — no backend executors. WorkDaemon's webapp proxies Daemon Chat to
+> each staff member's Hermes agent. Sources: Hermes docs
+> (`/docs/user-guide/features/api-server`, `/docs/user-guide/docker`,
+> `/docs/reference/cli-commands`, `/docs/user-guide/security`).
+
+## Why this replaces the executors
+A connected tool is an **MCP server** on the agent's profile. You `hermes mcp add`
+the tool once, then tell the agent in natural language and **it calls the tool
+itself**, with Hermes' **built-in approval gate** (Manual / Smart / Off). So the
+platform adapts to any tool with zero per-tool WorkDaemon code. The `ACTIONS`
+executor framework is a stopgap for non-Hermes workspaces and is superseded here.
+
+## 1. Run Hermes (per company)
+Official image `nousresearch/hermes-agent`, OpenAI-compatible API server on **:8642**.
+
+Docker (one container per company; `~/.hermes` is the persistent profile store):
+```bash
+docker run -d --name hermes-<company> --restart unless-stopped \
+  -e API_SERVER_ENABLED=true -e API_SERVER_KEY=<per-company-secret> \
+  -v /srv/hermes/<company>:/opt/data -p 8642:8642 \
+  nousresearch/hermes-agent gateway run
+```
+
+On **Modal** (no GPU; cloud model): run the same image and expose 8642 via
+`@modal.web_server(8642)` with a per-company `modal.Volume` mounted at `/opt/data`
+and `API_SERVER_KEY` in a Modal secret. (Modal app: stage 2 — `hermes/modal_app.py`.)
+
+## 2. One profile per staff member
+At onboarding, for each staff member (the WorkDaemon provisioner does this over the
+container/SSH):
+```bash
+hermes profile create <staff_id>                       # the per-staff agent
+cp docs/specs/workdaemon-soul.md ~/.hermes/profiles/<staff_id>/SOUL.md   # identity + JSON block contract
+hermes -p <staff_id> model                             # set the company's chosen cloud model
+hermes -p <staff_id> config set API_SERVER_ENABLED true
+hermes -p <staff_id> config set reasoning_effort low   # keep the JSON-block output clean (SOUL §config)
+```
+`MEMORY.md` / `USER.md` per profile give each staff member persistent, private memory.
+
+## 3. Connect a tool = add an MCP server (no executor)
+When a staff member connects a tool in WorkDaemon's Integrations UI, the backend runs:
+```bash
+hermes -p <staff_id> mcp add <tool> --command npx --args "-y" "@modelcontextprotocol/server-<tool>" \
+  --auth oauth         # or: --url <remote-mcp-url> --auth header
+```
+The agent can now act on that tool during normal conversation. Config changes take
+effect on the next session.
+
+## 4. Point a WorkDaemon workspace at its Hermes (provider hook — DONE)
+`api/chat.js` has a `hermes` provider (OpenAI-compatible proxy to the gateway).
+Configure a workspace to route Daemon Chat to its Hermes agent:
+```
+workspace_api_keys: { provider:'hermes',
+                      endpoint:'https://<company-hermes-host>:8642',   // or the Modal web URL
+                      api_key:'<API_SERVER_KEY>',
+                      model:'<staff_id>',                              // selects the profile
+                      use_case:'reasoning' }
+```
+Daemon Chat then POSTs to `{endpoint}/v1/chat/completions`; Hermes runs the agent
+loop (tools + approval) and returns the SOUL JSON blocks the UI already renders.
+> Per-staff routing: today `model` carries the profile; the full FINAL-spec
+> per-user endpoint/key (one port per profile) is stage 3.
+
+## 5. The Company Brain (every agent pulls from it)
+Expose WorkDaemon's Supabase brain (knowledge, hunt findings, cross-daemon events)
+as an **MCP server** and `hermes mcp add brain` to every profile, so each staff's
+agent queries company truth. The chat proxy keeps logging interactions back to the
+brain (the visibility layer). — stage 5.
+
+## Build order
+1. ✅ `hermes` provider proxy in `api/chat.js`.
+2. `hermes/modal_app.py` — run the Hermes image on Modal, per-company volume, :8642.
+3. Provisioner — create profile + SOUL.md + model per staff on onboarding.
+4. Integrations UI → `hermes mcp add` (replaces the executor path).
+5. Brain-as-MCP server + interaction logging.
+
+## Verify (first milestone)
+Deploy stage 2 for one company (Cobalt), provision one staff profile, connect
+GitHub via MCP, set that workspace to `provider:'hermes'`, then in Daemon Chat:
+"comment on BUG-119 that it's escalated" → the agent posts it itself and surfaces
+Hermes' approval prompt. No WorkDaemon executor involved.
