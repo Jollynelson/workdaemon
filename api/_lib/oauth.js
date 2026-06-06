@@ -96,7 +96,9 @@ export const PROVIDERS = {
     clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
     scopes: [
       'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',        // create/manage files the app makes (gdrive.create_doc)
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',         // send email (gmail.send)
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
@@ -269,6 +271,40 @@ export async function getAccessToken(db, workspaceId, provider, kind = 'bot') {
   if (!data || data.status !== 'connected') return null;
   const enc = kind === 'user' ? data.user_token : data.access_token;
   return enc ? decryptSecret(enc) : null;
+}
+
+// Like getAccessToken but refreshes an expired OAuth2 token via its refresh_token
+// (Google/Microsoft/Atlassian expire hourly; Slack/Notion/GitHub are long-lived
+// and return the stored token unchanged). Used by the action executor so a
+// staged action's "Verify & Apply" never fails on a stale token.
+export async function getFreshAccessToken(db, workspaceId, provider) {
+  const { data } = await db.from('workspace_integrations')
+    .select('access_token, refresh_token, token_expires_at, status').eq('workspace_id', workspaceId).eq('provider', provider).single();
+  if (!data || data.status !== 'connected') return null;
+  const expired = data.token_expires_at && new Date(data.token_expires_at).getTime() - 60000 <= Date.now();
+  if (!expired) return data.access_token ? decryptSecret(data.access_token) : null;
+  if (!data.refresh_token) return data.access_token ? decryptSecret(data.access_token) : null;
+
+  const cfg = PROVIDERS[provider];
+  try {
+    const params = new URLSearchParams({
+      client_id: process.env[cfg.clientIdEnv] || '',
+      client_secret: process.env[cfg.clientSecretEnv] || '',
+      refresh_token: decryptSecret(data.refresh_token),
+      grant_type: 'refresh_token',
+    });
+    const r = await fetch(cfg.tokenUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.access_token) return data.access_token ? decryptSecret(data.access_token) : null;
+    const expiresAt = d.expires_in ? new Date(Date.now() + d.expires_in * 1000).toISOString() : null;
+    await db.from('workspace_integrations').update({
+      access_token: encryptSecret(d.access_token), token_expires_at: expiresAt, updated_at: new Date().toISOString(),
+    }).eq('workspace_id', workspaceId).eq('provider', provider);
+    return d.access_token;
+  } catch (e) {
+    console.error('[oauth] refresh %s:', provider, e.message);
+    return data.access_token ? decryptSecret(data.access_token) : null;
+  }
 }
 
 // ── Per-staff tokens (each staff connects their own daemon) ──────────────────

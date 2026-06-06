@@ -3,7 +3,7 @@ import { fail, enforceRateLimit, parseBody } from './_lib/security.js';
 import { assessCapacity, suggestAlternatives } from './_lib/capacity.js';
 import { recordTaskAction } from './_lib/calibration.js';
 import { ACTIONS, meetsLevel } from './_lib/actions.js';
-import { getAccessToken } from './_lib/oauth.js';
+import { getAccessToken, getFreshAccessToken } from './_lib/oauth.js';
 
 // Tasks + Cross-Daemon Communication.
 // GET                → list workspace tasks (with assignee + from-staff)
@@ -284,7 +284,7 @@ export default async function handler(req, res) {
     if (!meetsLevel(agent?.access_level, spec.minLevel))
       return res.status(403).json({ error: `Your access level can't run "${spec.label}"` });
 
-    const token = await getAccessToken(db, workspaceId, spec.provider);
+    const token = await getFreshAccessToken(db, workspaceId, spec.provider);
     if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
 
     if (body.dry_run) return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
