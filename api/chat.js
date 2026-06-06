@@ -8,6 +8,7 @@ import { braveSearchMany, roleToTags } from './_lib/research.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
 import { retrieveDocuments } from './_lib/ingestion.js';
+import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -502,6 +503,43 @@ async function handleHistory(req, res) {
   return res.status(200).json({ messages: (rows || []).reverse() });
 }
 
+// ── POST: rate a daemon answer (self-improvement feedback signal) ─────────────
+// The daemon learns its owner's preferences from these signals: distillDaemonInsights
+// turns repeated 👎/edits into durable style corrections injected on the next turn.
+async function handleFeedback(req, res, user) {
+  const db = adminClient();
+  if (!(await enforceRateLimit(res, { key: `chat-fb:${user.id}`, max: 120, windowSec: 60 }))) return;
+  const body = parseBody(res, req.body, {
+    action:    { type: 'string', max: 16 },
+    messageId: { type: 'string', max: 64, required: true },
+    signal:    { type: 'string', max: 16, required: true },
+    note:      { type: 'string', max: 500 },
+  });
+  if (!body) return;
+  if (!['up', 'down', 'edited', 'redo'].includes(body.signal)) {
+    return res.status(400).json({ error: 'signal must be up|down|edited|redo' });
+  }
+  // Resolve the target message. Live answers have no client-side id yet, so the
+  // UI sends 'latest' → the user's most recent daemon answer. Otherwise authz the id.
+  let msg;
+  if (body.messageId === 'latest') {
+    ({ data: msg } = await db.from('daemon_messages')
+      .select('id').eq('user_id', user.id).eq('role', 'daemon')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle());
+  } else {
+    ({ data: msg } = await db.from('daemon_messages')
+      .select('id').eq('id', body.messageId).eq('user_id', user.id).maybeSingle());
+  }
+  if (!msg) return res.status(404).json({ error: 'Message not found' });
+  const { data: profile } = await db.from('profiles').select('workspace_id, role, title').eq('id', user.id).single();
+  await recordSignal(db, {
+    workspaceId: profile?.workspace_id || null, domain: 'daemon', subjectType: 'daemon_message',
+    subjectId: msg.id, signal: body.signal,
+    meta: { user_id: user.id, role: profile?.role || profile?.title || null, note: body.note || null },
+  });
+  return res.status(200).json({ ok: true });
+}
+
 // ── POST: main chat handler ───────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleHistory(req, res);
@@ -509,6 +547,9 @@ export default async function handler(req, res) {
 
   const user = await requireAuth(req, res);
   if (!user) return;
+
+  // Feedback signals share this endpoint (stays under Vercel's 12-fn cap).
+  if (req.body?.action === 'feedback') return handleFeedback(req, res, user);
 
   // Rate limit first (cheap reject), then strictly validate the body shape.
   if (!(await enforceRateLimit(res, { key: `chat:${user.id}`, max: 60, windowSec: 60 }))) return;
@@ -738,6 +779,12 @@ export default async function handler(req, res) {
     }
   }
 
+  // LEARNED PREFERENCES: style corrections this daemon distilled from the owner's
+  // 👍/👎/edit feedback — applied silently so the daemon's voice improves over time.
+  let learningContext = '';
+  try { learningContext = await buildDaemonLearningContext(db, { workspaceId, userId: user.id }); }
+  catch (e) { console.warn('[chat] learning context failed:', e.message); }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -747,7 +794,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext + graphContext + docsContext;
+  ) + daemonEventsContext + patternsContext + graphContext + docsContext + learningContext;
 
   // Resolve AI provider key
   let keyRow = null;
@@ -957,6 +1004,11 @@ export default async function handler(req, res) {
     return res.status(200).json(parsed);
   } catch (e) {
     console.error('[chat] provider=%s error=%s', keyRow.provider, e.message, e.stack);
+    // LEARN (codebase): capture the failure for the weekly improver to cluster.
+    recordSignal(db, {
+      workspaceId: workspaceId || null, domain: 'codebase', subjectType: 'error', subjectId: 'chat.handler',
+      signal: 'error', meta: { where: 'chat.handler', provider: keyRow?.provider, message: e.message, stack: String(e.stack || '').slice(0, 1000) },
+    });
     return res.status(502).json({ error: 'AI request failed. Please try again.' });
   }
 }

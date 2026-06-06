@@ -7,6 +7,7 @@ import { getAccessToken } from './_lib/oauth.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
+import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal } from './_lib/learning.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -650,11 +651,26 @@ export default async function handler(req, res) {
         // Rebuild the knowledge graph after findings/patterns/tasks settle.
         try { await buildGraph(w.id, cronDb); }
         catch (e) { console.error('[brain] buildGraph ws=%s:', w.id, e.message); }
+        // SELF-IMPROVEMENT: the brain audits its own knowledge, and each company's
+        // daemons learn from their users' feedback (workspace-scoped).
+        try { await auditBrain(cronDb, w.id); }
+        catch (e) { console.error('[brain] auditBrain ws=%s:', w.id, e.message); }
+        try { await runDaemonLearning(cronDb, w.id); }
+        catch (e) { console.error('[brain] runDaemonLearning ws=%s:', w.id, e.message); }
       }
-      console.log('[brain] scan_external workspaces=%d findings=%d patterns=%d deep=%d', results.length, inserted, patterns, deepFindings);
-      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, patterns, deepFindings, results });
+      // SELF-IMPROVEMENT (platform): propose fixes for recurring code errors
+      // (global, propose-only, ~weekly-gated, never opens a PR).
+      let codeProposals = 0;
+      try { codeProposals = (await runCodebaseImprover(cronDb)).proposals || 0; }
+      catch (e) { console.error('[brain] runCodebaseImprover:', e.message); }
+      console.log('[brain] scan_external workspaces=%d findings=%d patterns=%d deep=%d codeProposals=%d', results.length, inserted, patterns, deepFindings, codeProposals);
+      return res.status(200).json({ ok: true, workspaces: results.length, findings: inserted, patterns, deepFindings, codeProposals, results });
     } catch (e) {
       console.error('[brain] scan_external error:', e.message);
+      await recordSignal(adminClient(), {
+        workspaceId: null, domain: 'codebase', subjectType: 'error', subjectId: 'brain.scan_external',
+        signal: 'error', meta: { where: 'brain.scan_external', message: e.message, stack: String(e.stack || '').slice(0, 1000) },
+      }).catch(() => {});
       return res.status(500).json({ error: 'Scan failed' });
     }
   }

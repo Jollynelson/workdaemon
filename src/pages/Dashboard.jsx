@@ -722,6 +722,7 @@ function ChatView({ context, onBack, onMenu }) {
   const [error, setError]             = useState('');
   const [apiKey]                      = useState(() => sessionStorage.getItem('wd_apiKey') || '');
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [feedback, setFeedback]       = useState({}); // msg index → 'up'|'down' once rated
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const startedRef = useRef(false);
@@ -793,6 +794,22 @@ function ChatView({ context, onBack, onMenu }) {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [msgs, context, apiKey, authToken, thinking]);
+
+  // Rate the daemon's most recent answer → trains the daemon's style over time
+  // (server distills repeated 👎/edits into durable LEARNED PREFERENCES).
+  const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
+  const serverBacked = Boolean(authToken && !apiKey && !brainUrl);
+  const sendFeedback = useCallback(async (idx, signal) => {
+    if (!serverBacked || feedback[idx]) return;
+    setFeedback(f => ({ ...f, [idx]: signal })); // optimistic
+    try {
+      await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+        body: JSON.stringify({ action: 'feedback', messageId: 'latest', signal }),
+      });
+    } catch { /* non-blocking — feedback is best-effort */ }
+  }, [serverBacked, feedback, authToken]);
 
   // Session startup: fires after history is loaded. Fresh session → [SESSION_START]
   // (full boot greeting); returning session with restored history → [SESSION_RESUME]
@@ -950,6 +967,25 @@ function ChatView({ context, onBack, onMenu }) {
                     {(m.blocks || []).map((block, bi) => renderBlock(block, bi, { onConfirm: onConfirmAction, onCancel: onCancelAction }))}
                     {m.text && <Md text={m.text} c={c} />}
                   </div>
+                  {/* Rate the latest answer — feeds the daemon's self-improvement loop */}
+                  {serverBacked && i === msgs.length - 1 && !thinking && (m.blocks?.length || m.text) && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      {feedback[i] ? (
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.08em' }}>
+                          {feedback[i] === 'up' ? 'THANKS — NOTED' : 'NOTED — I’LL ADJUST'}
+                        </span>
+                      ) : (
+                        <>
+                          <button title="Good answer" onClick={() => sendFeedback(i, 'up')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: 0.45, padding: 2, lineHeight: 1 }}
+                            onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.45}>👍</button>
+                          <button title="Needs work" onClick={() => sendFeedback(i, 'down')}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: 0.45, padding: 2, lineHeight: 1 }}
+                            onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.45}>👎</button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
