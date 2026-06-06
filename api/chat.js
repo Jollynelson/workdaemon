@@ -449,7 +449,8 @@ broadcast: a company-wide announcement DRAFT. ALWAYS confirm-first — the user 
 {"type":"staged_action","title":"Update campaign budget → Meta Ads","label":"Autopilot Queue","status":"Awaiting verification","changes":[{"field":"daily_budget","before":"$150.00","after":"$200.00"},{"field":"target","after":"Summer Sale — Retargeting"}],"body":"optional content (e.g. a drafted letter) when the action is producing text rather than mutating a tool","note":"Nothing executes without explicit human sign-off.","actions":[{"label":"Verify & Apply","style":"primary","exec":{"name":"slack.post","params":{"channel":"#sales","text":"..."}}},{"label":"Reject Request","style":"danger"}]}
 staged_action — the ADAPTIVE action card. Use it whenever you propose something the user can approve in one click. The card ADAPTS to the conversation:
 • Tool MUTATION or SENDING (message, email, doc, page): include "changes" (before→after diff, when applicable) and an action whose "exec" runs it. exec.name must be a REAL connected tool action, and you may ONLY attach it when that tool's provider is in CONNECTED INTEGRATIONS. Available executors:
-   - slack.post {channel,text} · slack.react {channel,timestamp,emoji}        (provider: Slack)
+   - slack.post {channel,text} · slack.react {channel,timestamp,emoji} · slack.dm {user,text}   (provider: Slack)
+   - jira.comment {issue_key,comment}                                          (provider: Atlassian)
    - gmail.send {to,subject,body,cc?}                                          (provider: Google)
    - gdrive.create_doc {title,content}                                         (provider: Google)
    - gcal.create_event {title,start(ISO),end?|duration_min?,attendees?,description?}    (provider: Google)

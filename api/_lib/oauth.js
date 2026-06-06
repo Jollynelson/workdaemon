@@ -130,7 +130,7 @@ export const PROVIDERS = {
     tokenBody: 'json',
     clientIdEnv: 'ATLASSIAN_CLIENT_ID',
     clientSecretEnv: 'ATLASSIAN_CLIENT_SECRET',
-    scopes: ['read:jira-work', 'read:jira-user', 'offline_access'],
+    scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user', 'offline_access'],
     responseType: 'code',
     authExtra: { audience: 'api.atlassian.com', prompt: 'consent' },
     parseToken: (d) => {
