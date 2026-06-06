@@ -70,12 +70,26 @@ as an **MCP server** and `hermes mcp add brain` to every profile, so each staff'
 agent queries company truth. The chat proxy keeps logging interactions back to the
 brain (the visibility layer). — stage 5.
 
+## The Brain ⇄ agents (the entity and its fingertips)
+The **Company Brain** is the goal-driven entity — always hunting (threats, waste,
+opportunities, performance, knowledge; online and in-company) and self-improving.
+It stays in WorkDaemon/Supabase (`brain.js` + crons + the learning substrate); the
+Hermes agents are how it reaches and acts for each staff member. Two flows:
+- **Push (works today):** `api/chat.js` injects the Brain's hunt findings,
+  cross-daemon events, and patterns into the system prompt for *every* provider,
+  including `hermes` — so the Brain's intelligence already flows into the agent.
+- **Pull (stage 5):** `hermes/brain_mcp.py` exposes the Brain as an MCP server;
+  `hermes mcp add brain` on each profile lets the agent query company truth.
+
 ## Build order
 1. ✅ `hermes` provider proxy in `api/chat.js`.
-2. `hermes/modal_app.py` — run the Hermes image on Modal, per-company volume, :8642.
-3. Provisioner — create profile + SOUL.md + model per staff on onboarding.
-4. Integrations UI → `hermes mcp add` (replaces the executor path).
-5. Brain-as-MCP server + interaction logging.
+2. ✅ `hermes/modal_app.py` — Hermes image on Modal (:8642) + `provision_staff` +
+   `connect_tool` functions. **Deployable, not yet deployed/verified** (needs your
+   Modal account + a model key).
+3. `provision_staff()` wired to onboarding (create profile + SOUL.md + model).
+4. Integrations UI → `connect_tool()` / `hermes mcp add` (replaces executors).
+5. ✅ `hermes/brain_mcp.py` — Brain-as-MCP server (deployable; verify endpoints).
+   Wire interaction logging from the proxy (already logged via `daemon_messages`).
 
 ## Verify (first milestone)
 Deploy stage 2 for one company (Cobalt), provision one staff profile, connect
