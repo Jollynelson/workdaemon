@@ -217,6 +217,25 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       return r.choices[0]?.message?.content ?? '';
     }
 
+    // Real Hermes Agent runtime (NousResearch) — the daemon IS a per-staff Hermes
+    // agent with MCP tools + native approval gating; it does its own tool-calling,
+    // so no executors. `endpoint` = that company's Hermes gateway (OpenAI-compatible
+    // API server, default :8642), `api_key` = API_SERVER_KEY, `model` = the staff's
+    // profile/model. See docs/specs/WorkDaemon_FINAL_BuildSpec.md (Hermes layer).
+    case 'hermes': {
+      if (!endpoint) throw new Error('Hermes provider requires an endpoint (gateway API URL)');
+      let base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
+      if (!base.endsWith('/v1')) base = `${base}/v1`;
+      const client = new OpenAI({ baseURL: base, apiKey: api_key || 'hermes' });
+      const r = await client.chat.completions.create({
+        model: model || 'hermes',
+        messages: [{ role: 'system', content: sys }, ...messages],
+      });
+      const text = r.choices[0]?.message?.content ?? '';
+      console.log('[chat] hermes text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
+      return text;
+    }
+
     case 'azure': {
       if (!endpoint) throw new Error('Azure provider requires an endpoint');
       const base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
