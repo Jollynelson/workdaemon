@@ -1,7 +1,13 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { fail, enforceRateLimit, parseBody } from './_lib/security.js';
+import { agentsHandler } from './_lib/agents_handler.js';
 
 export default async function handler(req, res) {
+  // Multiplex: /api/agents is rewritten to /api/inbox?__agents=1 to stay under
+  // Vercel's 12-function cap. The agents handler does its own auth (cron secret,
+  // public unsubscribe, then requireAuth), so delegate before inbox's own auth.
+  if (req.query?.__agents !== undefined) return agentsHandler(req, res);
+
   const user = await requireAuth(req, res);
   if (!user) return;
 

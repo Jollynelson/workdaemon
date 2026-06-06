@@ -4,14 +4,17 @@
   "outputDirectory": "dist",
   "functions": {
     "api/brain.js": { "maxDuration": 60 },
-    "api/chat.js": { "maxDuration": 45 }
+    "api/chat.js": { "maxDuration": 45 },
+    "api/inbox.js": { "maxDuration": 60 }
   },
   "crons": [
-    { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" }
+    { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" },
+    { "path": "/api/inbox?__agents=1&action=run_due", "schedule": "0 8 * * *" }
   ],
   "rewrites": [
     { "source": "/api/oauth", "destination": "/api/workspace/settings" },
     { "source": "/api/slack/events", "destination": "/api/overview?__slack=events" },
+    { "source": "/api/agents", "destination": "/api/inbox?__agents=1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
