@@ -2372,6 +2372,24 @@ function InboxPage() {
     }).catch(() => {});
   }, []);
 
+  // Self-improvement code proposals: approve (→ file a GitHub issue via the
+  // workspace's OAuth connection) or dismiss. Routed here by the brain.
+  const [proposalState, setProposalState] = useState({}); // id → filing|filed|dismissed|err:msg
+  const codeProposalAct = useCallback(async (item, action) => {
+    setProposalState(s => ({ ...s, [item.id]: action === 'file_code_issue' ? 'filing' : 'dismissing' }));
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action, itemId: item.id }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setProposalState(s => ({ ...s, [item.id]: 'err:' + (d.error || r.status) })); return; }
+      setProposalState(s => ({ ...s, [item.id]: action === 'file_code_issue' ? 'filed' : 'dismissed' }));
+      markRead(item.id);
+    } catch { setProposalState(s => ({ ...s, [item.id]: 'err:network' })); }
+  }, [token, markRead]);
+
   const FILTERS = [
     { key: 'all',      label: 'ALL',      fn: () => true },
     { key: 'mentions', label: 'MENTIONS', fn: i => i.source === 'Slack' },
@@ -2430,6 +2448,8 @@ function InboxPage() {
               const expanded       = expandedId === item.id;
               const roles          = item.metadata?.affected_roles || [];
               const recommendation = (item.body || '').split('\n\nDraft ready:\n')[0];
+              const isCodeProposal = !!item.metadata?.code_proposal;
+              const ps             = proposalState[item.id];
               return (
                 <div key={item.id || idx} style={{
                   background: item.unread ? (lc ? c.d ? `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.05)` : `rgba(${item.level === 'danger' ? '239,68,68' : '245,158,11'},0.03)` : c.row) : c.subtle,
@@ -2475,17 +2495,33 @@ function InboxPage() {
                       )}
                       {item.draft && (
                         <div style={{ border: '1px solid rgba(65,114,245,0.22)', background: 'rgba(65,114,245,0.05)', borderRadius: 9, padding: '12px 13px' }}>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 7 }}>✎ DRAFT — READY TO POST</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 7 }}>{isCodeProposal ? '⚙ CODE PROPOSAL — REVIEW' : '✎ DRAFT — READY TO POST'}</div>
                           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{item.draft}</div>
-                          <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
-                            <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
-                              style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
-                              ✎ REFINE IN DAEMON
-                            </button>
-                            <button type="button" onClick={(e) => { e.stopPropagation(); copyDraft(item); }}
-                              style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
-                              {copiedId === item.id ? 'COPIED ✓' : 'COPY'}
-                            </button>
+                          <div style={{ marginTop: 11, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            {isCodeProposal ? (
+                              ps === 'filed' ? <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#22c55e' }}>✓ GITHUB ISSUE FILED</span>
+                              : ps === 'dismissed' ? <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text4 }}>DISMISSED</span>
+                              : (<>
+                                  <button type="button" disabled={ps === 'filing'} onClick={(e) => { e.stopPropagation(); codeProposalAct(item, 'file_code_issue'); }}
+                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: ps === 'filing' ? 'default' : 'pointer', opacity: ps === 'filing' ? 0.6 : 1 }}>
+                                    {ps === 'filing' ? 'FILING…' : '✓ APPROVE & FILE ISSUE'}
+                                  </button>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); codeProposalAct(item, 'dismiss_code_proposal'); }}
+                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                                    DISMISS
+                                  </button>
+                                  {typeof ps === 'string' && ps.startsWith('err:') && <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#ef4444' }}>{ps.slice(4)}</span>}
+                                </>)
+                            ) : (<>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
+                                style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                                ✎ REFINE IN DAEMON
+                              </button>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); copyDraft(item); }}
+                                style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                                {copiedId === item.id ? 'COPIED ✓' : 'COPY'}
+                              </button>
+                            </>)}
                           </div>
                         </div>
                       )}

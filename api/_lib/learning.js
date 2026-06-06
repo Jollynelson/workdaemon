@@ -54,15 +54,28 @@ export async function upsertInsight(db, { workspaceId = null, domain, scope = {}
       confidence, evidence, status,
       applied_at: status === 'active' ? new Date().toISOString() : null, updated_at: new Date().toISOString(),
     };
-    if (existing?.id) await db.from('learning_insights').update(row).eq('id', existing.id);
-    else await db.from('learning_insights').insert(row);
+    if (existing?.id) { await db.from('learning_insights').update(row).eq('id', existing.id); return existing.id; }
+    const { data: ins } = await db.from('learning_insights').insert(row).select('id').single();
+    return ins?.id || null;
   } catch (e) {
     console.error('[learning] upsertInsight failed:', e.message);
+    return null;
   }
 }
 
 export async function retireInsight(db, id) {
   await db.from('learning_insights').update({ status: 'retired', updated_at: new Date().toISOString() }).eq('id', id);
+}
+
+// Retention: signals are append-only and only matter while fresh (insights are the
+// distilled, durable value). Prune raw signals older than `days` so the table
+// doesn't grow unbounded. Called from the daily cron.
+export async function pruneOldSignals(db, days = 90) {
+  const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+  const { error, count } = await db.from('learning_signals')
+    .delete({ count: 'estimated' }).lt('created_at', cutoff);
+  if (error) { console.error('[learning] pruneOldSignals:', error.message); return { pruned: 0 }; }
+  return { pruned: count || 0 };
 }
 
 // ── Bandit: turn approve/reject/edit signals into a weighted pick ─────────────
@@ -251,24 +264,36 @@ export async function auditBrain(db, workspaceId) {
 
 // ── Cron pass: the platform proposes fixes for its own recurring errors ───────
 // (Phase 4, propose-only). Global (errors are platform-wide). Clusters error
-// signals, drafts a fix per cluster, files it as a PROPOSED insight + optional
-// GitHub *issue*. Never opens a PR or merges — humans decide.
-async function maybeOpenGithubIssue(cluster, body) {
-  const token = process.env.GITHUB_TOKEN, repo = process.env.GITHUB_REPO; // "owner/repo"
-  if (!token || !repo) return null;
-  try {
-    const r = await fetch(`https://api.github.com/repos/${repo}/issues`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'workdaemon-self-improve' },
-      body: JSON.stringify({
-        title: `[self-improve] recurring error in ${cluster.where} (${cluster.count}×)`,
-        body: `${body}\n\n— auto-filed by WorkDaemon self-improvement. Review before acting; no PR was opened.`,
-        labels: ['self-improvement'],
-      }),
-    });
-    const j = await r.json().catch(() => ({}));
-    return r.ok ? (j.html_url || null) : null;
-  } catch (e) { console.error('[learning] github issue:', e.message); return null; }
+// signals, drafts a fix per cluster, and ROUTES each as a proposed insight + an
+// inbox item to the WorkDaemon HQ workspace, where it can be approved — which
+// files a GitHub *issue* via that workspace's OAuth connection (see brain.js
+// `file_code_issue`). Never opens a PR or merges.
+
+// The WorkDaemon dogfood workspace that codebase proposals are routed to.
+async function resolveHqWorkspace(db) {
+  if (process.env.WORKDAEMON_WORKSPACE_ID) return process.env.WORKDAEMON_WORKSPACE_ID;
+  const { data } = await db.from('workspaces').select('id').ilike('name', '%workdaemon%')
+    .order('created_at', { ascending: true }).limit(1).maybeSingle();
+  return data?.id || null;
+}
+
+// Deliver a code proposal into the HQ workspace inbox for review/approval.
+// Recipients: executives first, else the workspace's members.
+async function deliverCodeProposalToInbox(db, workspaceId, { insightId, title, body, where, count, issue }) {
+  let { data: recips } = await db.from('app_agent_profiles')
+    .select('user_id').eq('workspace_id', workspaceId).eq('access_level', 'executive');
+  if (!recips?.length) ({ data: recips } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId).limit(5));
+  const rows = (recips || []).map(r => ({
+    workspace_id: workspaceId, user_id: r.user_id, type: 'update', source: 'daemon',
+    title: `Self-improvement · ${title}`, body,
+    metadata: {
+      event_type: 'code_proposal', severity: 'info', draft: body,
+      code_proposal: { insight_id: insightId, where, count, issue_title: issue.title, issue_body: issue.body },
+    },
+    read: false,
+  }));
+  if (rows.length) await db.from('inbox_items').insert(rows);
+  return rows.length;
 }
 
 export async function runCodebaseImprover(db, { sinceDays = 7, minOccurrences = 2 } = {}) {
@@ -291,26 +316,33 @@ export async function runCodebaseImprover(db, { sinceDays = 7, minOccurrences = 
   const top = Object.values(clusters).filter(c => c.count >= minOccurrences).sort((a, b) => b.count - a.count).slice(0, 3);
   if (!top.length) return { proposals: 0, clusters: 0 };
 
+  const hqWs = await resolveHqWorkspace(db);
   const llm = await resolveLLM(null, db);
-  let proposals = 0;
+  let proposals = 0, delivered = 0;
   for (const c of top) {
-    let proposal = `Recurring error in ${c.where} (${c.count}×): ${c.sample}`;
+    let title = `Recurring error in ${c.where} (${c.count}×)`;
+    let proposal = `${title}: ${c.sample}`;
     if (llm) {
       try {
         const sys = 'You are a senior engineer triaging a recurring production error. Return ONLY JSON.';
         const user = `Error site: ${c.where}\nMessage: ${c.sample}\nStack (truncated): ${c.stack || 'n/a'}\nSeen ${c.count}× in ${sinceDays} days.\nReturn JSON {"title":"short imperative","root_cause":"1-2 sentences","suggested_fix":"concrete steps; reference ${c.where}","confidence":0..1}.`;
         const txt = await callLLM(llm, sys, user, { maxTokens: 600 });
         const p = extractJson(txt);
-        if (p?.title) proposal = `**${p.title}**\nRoot cause: ${p.root_cause}\nSuggested fix: ${p.suggested_fix}`;
+        if (p?.title) { title = p.title; proposal = `**${p.title}**\nRoot cause: ${p.root_cause}\nSuggested fix: ${p.suggested_fix}`; }
       } catch (e) { console.error('[learning] codebase llm:', e.message); }
     }
-    const issueUrl = await maybeOpenGithubIssue(c, proposal);
-    await upsertInsight(db, {
+    const insightId = await upsertInsight(db, {
       workspaceId: null, domain: 'codebase', scope: { where: c.where }, kind: 'proposal',
-      insight: proposal + (issueUrl ? `\nGitHub issue: ${issueUrl}` : ''),
-      confidence: 0.5, evidence: { count: c.count, sample: c.sample, issueUrl }, status: 'proposed',
+      insight: proposal, confidence: 0.5, evidence: { count: c.count, sample: c.sample }, status: 'proposed',
     });
+    if (hqWs) {
+      const issue = {
+        title: `[self-improve] ${title}`,
+        body: `${proposal}\n\nError site: \`${c.where}\` · seen ${c.count}× in ${sinceDays}d.\n\n— Raised by WorkDaemon self-improvement; approved in-app. No PR was opened.`,
+      };
+      delivered += await deliverCodeProposalToInbox(db, hqWs, { insightId, title, body: proposal, where: c.where, count: c.count, issue });
+    }
     proposals++;
   }
-  return { proposals, clusters: top.length };
+  return { proposals, delivered, clusters: top.length, hq: Boolean(hqWs) };
 }
