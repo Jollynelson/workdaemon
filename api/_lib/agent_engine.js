@@ -217,14 +217,18 @@ export async function runAgent(db, agent) {
 }
 
 // ── Cron: run every active agent whose next_run_at is due ─────────────────────
-export async function runDueAgents(db, { limit = 25 } = {}) {
+export async function runDueAgents(db, { limit = Number(process.env.AGENTS_RUN_BATCH || 25), budgetMs = Number(process.env.AGENTS_RUN_BUDGET_MS || 50000) } = {}) {
   const nowIso = new Date().toISOString();
+  // Oldest-due first → fair round-robin across all companies' agents at scale.
   const { data: due } = await db.from('agents')
     .select('*').eq('status', 'active')
     .or(`next_run_at.is.null,next_run_at.lte.${nowIso}`)
+    .order('next_run_at', { ascending: true, nullsFirst: true })
     .limit(limit);
   const results = [];
+  const startedAt = Date.now();
   for (const agent of (due || [])) {
+    if (Date.now() - startedAt > budgetMs) break; // stay inside the function's maxDuration
     try { results.push({ agent: agent.id, ...(await runAgent(db, agent)) }); }
     catch (e) { results.push({ agent: agent.id, ok: false, error: e.message }); }
   }
