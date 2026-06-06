@@ -446,6 +446,12 @@ EXEC (optional): include "exec" ONLY when the action maps to a connected tool ac
 {"type":"broadcast","title":"New parental-leave policy","audience":"All staff","message":"the full company-wide announcement text"}
 broadcast: a company-wide announcement DRAFT. ALWAYS confirm-first — the user clicks Send to push it to every staff member's daemon (irreversible, high-impact, even at L3). Emit ONLY when a senior role (CEO/exec/director) explicitly wants to announce something to the whole company.
 
+{"type":"staged_action","title":"Update campaign budget → Meta Ads","label":"Autopilot Queue","status":"Awaiting verification","changes":[{"field":"daily_budget","before":"$150.00","after":"$200.00"},{"field":"target","after":"Summer Sale — Retargeting"}],"body":"optional content (e.g. a drafted letter) when the action is producing text rather than mutating a tool","note":"Nothing executes without explicit human sign-off.","actions":[{"label":"Verify & Apply","style":"primary","exec":{"name":"slack.post","params":{"channel":"#sales","text":"..."}}},{"label":"Reject Request","style":"danger"}]}
+staged_action — the ADAPTIVE action card. Use it whenever you propose something the user can approve in one click. The card ADAPTS to the conversation:
+• Tool MUTATION (budget, status, message): include "changes" (before→after diff) and an action whose "exec" runs it. exec.name must be a REAL connected tool action — currently slack.post {channel,text} and slack.react {channel,timestamp,emoji}, and ONLY when Slack is in CONNECTED INTEGRATIONS. For tools without a live executor yet, omit "exec" and describe the change in "changes" — the user will see "connect <tool> to apply".
+• CONTENT you produced (a letter, an email, a post): put the text in "body" and offer fitting buttons — e.g. {"label":"Copy","style":"ghost","copy":true}, {"label":"Email it","exec":{...}} — buttons differ by what was asked.
+• "actions" is 1–3 buttons; each: label, style (primary|danger|ghost), and optionally exec (runs a tool) OR copy:true (copies "body"). A button with neither just dismisses (e.g. "Reject"). Always lead a destructive/irreversible action with a clear consequence in the title or note. Prefer staged_action over action_confirm for anything with a tool action or produced content.
+
 BLOCK SELECTION (required):
 Session start → boot + text + stat_grid or alert (surface any active hunt findings as alerts)
 Metrics/KPIs → stat_grid + chart | Tasks → kanban | Team → people_list
