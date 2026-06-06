@@ -462,6 +462,37 @@ Never: "As an AI", "I don't have access", "I'm just a demo", "I am a brain", "I 
 End with exactly 3 specific actionable suggestions tuned to a ${roleLabel}.`;
 }
 
+// Recover a daemon JSON envelope when the model emits incomplete/unclosed JSON
+// (it sometimes drops the final brackets on a large block like a kanban, which
+// otherwise renders as raw JSON text). Walk the text tracking string state and
+// bracket depth, then append the missing closers; trim a dangling key/comma and
+// retry from the last closed bracket if needed.
+function repairJsonEnvelope(text) {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let s = text.slice(start);
+  for (let attempt = 0; attempt < 5 && s.length > 1; attempt++) {
+    let inStr = false, esc = false;
+    const stack = [];
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') stack.push(ch);
+      else if (ch === '}' || ch === ']') stack.pop();
+    }
+    let repaired = inStr ? s + '"' : s;
+    repaired = repaired.replace(/[,:]\s*$/, ''); // drop a dangling comma/colon with no value
+    for (let i = stack.length - 1; i >= 0; i--) repaired += stack[i] === '{' ? '}' : ']';
+    try { const p = JSON.parse(repaired); if (p && p.blocks) return p; } catch {}
+    // Truncation may have landed mid-element — trim back to the last closer and retry.
+    const lastClose = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
+    if (lastClose <= 0) break;
+    s = s.slice(0, lastClose + 1);
+  }
+  return null;
+}
+
 // ── Response parser ───────────────────────────────────────────────────────────
 function parseJsonResponse(text) {
   if (!text) return { blocks: [{ type: 'text', md: 'No response.' }], suggestions: [] };
@@ -484,6 +515,10 @@ function parseJsonResponse(text) {
       }
     }
   }
+
+  // Last resort before giving up: recover unclosed/truncated JSON.
+  const repaired = repairJsonEnvelope(t);
+  if (repaired) return repaired;
 
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
