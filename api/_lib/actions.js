@@ -29,6 +29,43 @@ export const ACTIONS = {
     },
   },
 
+  'slack.dm': {
+    provider: 'slack',
+    label: 'Send a Slack DM',
+    minLevel: 2,
+    describe: (p) => `DM ${p?.user || '(user)'}: “${(p?.text || '').slice(0, 80)}”`,
+    run: async (token, p) => {
+      if (!p?.user || !p?.text) throw new Error('user (Slack member ID) and text are required');
+      const r = await slack.sendDirectMessage(token, { user: p.user, text: p.text });
+      return { ts: r?.ts || null, channel: r?.channel || null };
+    },
+  },
+
+  // ── Jira — comment on an issue (resolves the cloud id, posts ADF) ────────────
+  'jira.comment': {
+    provider: 'atlassian',
+    label: 'Comment on a Jira issue',
+    minLevel: 2,
+    describe: (p) => `Comment on ${p?.issue_key || '(issue)'}: “${(p?.comment || '').slice(0, 80)}”`,
+    run: async (token, p) => {
+      if (!p?.issue_key || !p?.comment) throw new Error('issue_key and comment are required');
+      const resR = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (!resR.ok) throw new Error(`atlassian resources ${resR.status}`);
+      const cloud = (await resR.json())?.[0]?.id;
+      if (!cloud) throw new Error('No Atlassian site authorized');
+      const r = await fetch(`https://api.atlassian.com/ex/jira/${cloud}/rest/api/3/issue/${encodeURIComponent(p.issue_key)}/comment`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: String(p.comment).slice(0, 1900) }] }] } }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((d.errorMessages || []).join('; ') || `Jira ${r.status}`);
+      return { id: d.id };
+    },
+  },
+
   // ── Notion (token is long-lived; integration must have insert capability + the
   //    target page shared with it) ──────────────────────────────────────────────
   'notion.create_page': {
