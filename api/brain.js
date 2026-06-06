@@ -343,10 +343,13 @@ async function callDeepModel(keyRow, system, userPrompt) {
   if (base === null) return null;
   const { deep } = pickTierModels(keyRow);
   const client = new OpenAI({ apiKey: decryptSecret(keyRow.api_key), ...(base ? { baseURL: base } : {}) });
+  // Bound the deep reasoner so one big-context call can't run away and blow the
+  // serverless function's maxDuration (Hobby = 60s hard ceiling).
+  const timeout = Number(process.env.BRAIN_DEEP_TIMEOUT_MS || 30000);
   const r = await client.chat.completions.create({
     model: deep, max_tokens: 4096,
     messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }],
-  });
+  }, { timeout, maxRetries: 0 });
   return r.choices?.[0]?.message?.content ?? '';
 }
 
@@ -654,50 +657,56 @@ export default async function handler(req, res) {
       // happen together per workspace, so each fully-processed workspace advances
       // its cursor before the budget can cut the run off.
       const ACTIVE_DAYS = Number(process.env.BRAIN_ACTIVE_WINDOW_DAYS || 14);
-      let inserted = 0, patterns = 0, deepFindings = 0, processed = 0, skipped = 0, budgetHit = false;
+      const DEEP_TIMEOUT = Number(process.env.BRAIN_DEEP_TIMEOUT_MS || 30000);
+      const DEEP_PER_RUN = Number(process.env.BRAIN_DEEP_PER_RUN || 1);
+      const elapsed = () => Date.now() - startedAt;
+      const advance = (id) => cronDb.from('workspaces').update({ last_scanned_at: new Date().toISOString() }).eq('id', id);
+      let inserted = 0, patterns = 0, deepFindings = 0, processed = 0, skipped = 0, deepRuns = 0, budgetHit = false;
       const wss = batch || [];
       for (const w of wss) {
-        if (Date.now() - startedAt > BUDGET_MS) { budgetHit = true; break; }
-        // SKIP-INACTIVE: the heavy per-workspace LLM passes are the budget cost, so
-        // don't spend it on dormant/seed workspaces (no recent staff interactions,
-        // no connected tools). Advance the cursor anyway so they rotate to the back
-        // and the budget reaches the workspaces that actually have activity.
-        if (!(await hasRecentActivity(cronDb, w.id, ACTIVE_DAYS))) {
-          await cronDb.from('workspaces').update({ last_scanned_at: new Date().toISOString() }).eq('id', w.id);
-          skipped++;
-          continue;
-        }
-        try { inserted += (await scanOneWorkspace(cronDb, w)).inserted || 0; }
+        if (elapsed() > BUDGET_MS) { budgetHit = true; break; }
+        // SKIP-INACTIVE: don't spend the budget on dormant/seed workspaces (no recent
+        // staff interactions, no connected tools). Advance the cursor so they rotate
+        // out and the budget reaches workspaces that are actually in use.
+        if (!(await hasRecentActivity(cronDb, w.id, ACTIVE_DAYS))) { await advance(w.id); skipped++; continue; }
+        // Advance the cursor BEFORE the heavy passes so a slow/timing-out workspace
+        // still rotates to the back — never a poison pill that retries and 504s forever.
+        await advance(w.id);
+        processed++;
+        // Each pass is budget-gated; the deep pass (the dominant cost) is also capped
+        // per run and only started with enough headroom for its own timeout, so no
+        // single workspace can breach the function's maxDuration.
+        try { if (elapsed() < BUDGET_MS) inserted += (await scanOneWorkspace(cronDb, w)).inserted || 0; }
         catch (e) { console.error('[brain] scanOneWorkspace ws=%s:', w.id, e.message); }
-        try { patterns += (await detectPatterns(w.id, cronDb)).patterns || 0; }
+        try { if (elapsed() < BUDGET_MS) patterns += (await detectPatterns(w.id, cronDb)).patterns || 0; }
         catch (e) { console.error('[brain] detectPatterns ws=%s:', w.id, e.message); }
-        // Nightly deep pass (the 7am cron is the "CEO morning briefing" slot).
-        try { deepFindings += (await nightlyDeepPass(w.id, cronDb)).findings || 0; }
-        catch (e) { console.error('[brain] nightlyDeepPass ws=%s:', w.id, e.message); }
+        try {
+          if (deepRuns < DEEP_PER_RUN && elapsed() < BUDGET_MS - DEEP_TIMEOUT) {
+            deepFindings += (await nightlyDeepPass(w.id, cronDb)).findings || 0;
+            deepRuns++;
+          }
+        } catch (e) { console.error('[brain] nightlyDeepPass ws=%s:', w.id, e.message); }
         // Auto-ingest connected tools into the document store (FINAL §17 polling).
         try {
-          const { data: integ } = await cronDb.from('workspace_integrations')
-            .select('provider').eq('workspace_id', w.id).eq('status', 'connected');
-          for (const it of (integ || [])) {
-            const conn = CONNECTORS[it.provider];
-            if (!conn) continue;
-            const tok = await getAccessToken(cronDb, w.id, it.provider);
-            if (tok) { try { await conn.ingest(cronDb, w.id, tok); } catch (e) { console.error('[brain] ingest %s ws=%s:', it.provider, w.id, e.message); } }
+          if (elapsed() < BUDGET_MS) {
+            const { data: integ } = await cronDb.from('workspace_integrations')
+              .select('provider').eq('workspace_id', w.id).eq('status', 'connected');
+            for (const it of (integ || [])) {
+              const conn = CONNECTORS[it.provider];
+              if (!conn) continue;
+              const tok = await getAccessToken(cronDb, w.id, it.provider);
+              if (tok) { try { await conn.ingest(cronDb, w.id, tok); } catch (e) { console.error('[brain] ingest %s ws=%s:', it.provider, w.id, e.message); } }
+            }
           }
         } catch (e) { console.error('[brain] auto-ingest ws=%s:', w.id, e.message); }
-        // Rebuild the knowledge graph after findings/patterns/tasks settle.
-        try { await buildGraph(w.id, cronDb); }
+        try { if (elapsed() < BUDGET_MS) await buildGraph(w.id, cronDb); }
         catch (e) { console.error('[brain] buildGraph ws=%s:', w.id, e.message); }
         // SELF-IMPROVEMENT: the brain audits its own knowledge, and each company's
         // daemons learn from their users' feedback (workspace-scoped).
-        try { await auditBrain(cronDb, w.id); }
+        try { if (elapsed() < BUDGET_MS) await auditBrain(cronDb, w.id); }
         catch (e) { console.error('[brain] auditBrain ws=%s:', w.id, e.message); }
-        try { await runDaemonLearning(cronDb, w.id); }
+        try { if (elapsed() < BUDGET_MS) await runDaemonLearning(cronDb, w.id); }
         catch (e) { console.error('[brain] runDaemonLearning ws=%s:', w.id, e.message); }
-        // Advance the round-robin cursor so this workspace goes to the back of
-        // the queue and a different batch is picked next run.
-        await cronDb.from('workspaces').update({ last_scanned_at: new Date().toISOString() }).eq('id', w.id);
-        processed++;
       }
       // SELF-IMPROVEMENT (platform): propose fixes for recurring code errors
       // (global, propose-only, ~weekly-gated, never opens a PR).
