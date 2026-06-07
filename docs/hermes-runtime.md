@@ -13,21 +13,26 @@ itself**, with Hermes' **built-in approval gate** (Manual / Smart / Off). So the
 platform adapts to any tool with zero per-tool WorkDaemon code. The `ACTIONS`
 executor framework is a stopgap for non-Hermes workspaces and is superseded here.
 
-## 1. Run Hermes (per company) — use Docker, NOT Modal
-Official image `nousresearch/hermes-agent`, OpenAI-compatible API server on **:8642**.
-Run it as a plain long-lived container — the way it's designed (and how it ran on
-your PC). **`hermes/docker-compose.yml`** is ready to go on a small always-on host
-(a ~$5 VPS, your machine, or the Hermes Desktop app):
+## 1. Run Hermes (per company) — Modal WORKS (verified 2026-06-07)
+`hermes/modal_app.py` runs Hermes on Modal and is **live-verified** end to end (the
+gateway answered a real `/v1/chat/completions`). Deploy:
 ```bash
-export HERMES_API_SERVER_KEY=… DEEPSEEK_API_KEY=…
-docker compose -f hermes/docker-compose.yml up -d        # gateway at :8642
+modal secret create hermes-<company> \
+  API_SERVER_KEY=$(openssl rand -hex 32) HERMES_ADMIN_TOKEN=$(openssl rand -hex 16) DEEPSEEK_API_KEY=…
+HERMES_COMPANY=<company> modal deploy hermes/modal_app.py   # prints gateway + admin URLs
 ```
+The four things that made Modal work (don't undo them):
+1. **Clean image** — `debian_slim` + `install.sh` running as **root** (NOT the
+   prebuilt `nousresearch/hermes-agent` Docker image — its s6/non-root user fights Modal).
+2. **`@modal.web_server` functions must `Popen` the server and RETURN** — blocking
+   (`serve_forever`/`subprocess.run`) makes Modal never mark the port ready → no routing.
+3. **Strong `API_SERVER_KEY`** (≥ a real secret) — Hermes refuses to bind `0.0.0.0`
+   with a weak/placeholder key.
+4. **Model = `custom` provider → `https://api.deepseek.com/v1`** — Hermes's built-in
+   `deepseek` provider routes via OpenRouter (needs an OR key); `custom` hits DeepSeek natively.
 
-> **Modal does NOT work for this image** (tried thoroughly, 2026-06-07): the image
-> uses s6-overlay (needs PID 1), runs as a non-root user that can't write Modal's
-> `/pkg`, and a Modal Volume isn't a normal writable FS for a live server. The
-> serverless-function model fights the image at every layer. `hermes/modal_app.py`
-> is kept only as a record of that attempt — **do not deploy it.** Use Docker.
+Alternative host: **`hermes/docker-compose.yml`** runs the same thing as a plain
+container on a VPS/your machine — also valid (the image is designed for `docker run`).
 
 ## 2. One profile per staff member
 At onboarding, for each staff member (the WorkDaemon provisioner does this over the
