@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { researchRole, researchCompany, scanOneWorkspace, SCAN_COLUMNS } from './_lib/research_actions.js';
-import { fail, enforceRateLimit, decryptSecret, delimitUntrusted } from './_lib/security.js';
+import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
@@ -730,19 +730,24 @@ export default async function handler(req, res) {
   }
 
   // ── Company Brain as an MCP tool (read-only service-token surface) ───────────
-  // Each staff member's Hermes agent PULLs company truth (context, hunt findings,
-  // knowledge search) through this surface. Hardened against the IDOR class fixed
-  // in security-hardening: the token is bound to ONE workspace via env
-  // (BRAIN_MCP_WORKSPACE_ID), so a leaked token can't enumerate other tenants —
-  // there is no caller-supplied workspace id here. GET-only, fixed allow-list of
-  // read tools, content of restricted docs never leaves the building.
+  // Each company's Hermes agent PULLs company truth (context, hunt findings,
+  // knowledge search) through this surface. The workspace is NEVER caller-supplied
+  // (IDOR-safe): it comes from a per-company SIGNED token that encodes the
+  // workspace_id (one signing secret → unlimited companies), or the legacy single-
+  // workspace env token (Cobalt). GET-only, fixed read tools, restricted-doc
+  // content never leaves the building.
   if (req.method === 'GET' && req.query?.action === 'mcp') {
-    const token = process.env.BRAIN_MCP_TOKEN;
-    const boundWs = process.env.BRAIN_MCP_WORKSPACE_ID;
     const presented = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (!token || !boundWs || presented.length !== token.length || presented !== token) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    let boundWs = null;
+    const claims = verifyServiceToken(presented);
+    if (claims && claims.scope === 'brain_mcp' && claims.workspace_id) {
+      boundWs = claims.workspace_id;                                   // per-company signed token
+    } else if (process.env.BRAIN_MCP_TOKEN && process.env.BRAIN_MCP_WORKSPACE_ID
+               && presented.length === process.env.BRAIN_MCP_TOKEN.length
+               && presented === process.env.BRAIN_MCP_TOKEN) {
+      boundWs = process.env.BRAIN_MCP_WORKSPACE_ID;                    // legacy single-workspace (Cobalt)
     }
+    if (!boundWs) return res.status(401).json({ error: 'Unauthorized' });
     const mdb = adminClient();
     const tool = String(req.query?.tool || '');
     try {
