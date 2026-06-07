@@ -96,7 +96,7 @@ function reasoningParams(model) {
 }
 
 // ── AI provider dispatcher ────────────────────────────────────────────────────
-async function callProvider({ provider, api_key, endpoint, model }, sys, messages) {
+async function callProvider({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {
 
@@ -234,10 +234,18 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
       let base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
       if (!base.endsWith('/v1')) base = `${base}/v1`;
       const client = new OpenAI({ baseURL: base, apiKey: api_key || 'hermes' });
+      // Per-staff memory isolation on a shared gateway: X-Hermes-Session-Key is a
+      // stable per-user scope the Hermes memory provider keys on (docs:
+      // features/api-server). So each staff member gets their own long-term memory
+      // even though many share one gateway. Identity also rides in `sys`.
+      const headers = {};
+      if (identity.workspaceId && identity.userId) {
+        headers['X-Hermes-Session-Key'] = `${identity.workspaceId}:${identity.userId}`.slice(0, 256);
+      }
       const r = await client.chat.completions.create({
         model: model || 'hermes',
         messages: [{ role: 'system', content: sys }, ...messages],
-      });
+      }, { headers });
       const text = r.choices[0]?.message?.content ?? '';
       console.log('[chat] hermes text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
       return text;
@@ -984,18 +992,19 @@ export default async function handler(req, res) {
     let escalated = false;
     let parsed;
     try {
-      parsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, trimmed));
+      const identity = { workspaceId, userId: user.id };
+      parsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, trimmed, identity));
       // Escalation gate: a fast-tier answer that came back thin → retry on deep.
       if (tiers.twoTier && !goDeep && responseIsThin(parsed)) {
         try {
-          const deepParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: tiers.deep }, sys, trimmed));
+          const deepParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: tiers.deep }, sys, trimmed, identity));
           if (!responseIsThin(deepParsed)) { parsed = deepParsed; usedModel = tiers.deep; escalated = true; }
         } catch { /* keep the fast result */ }
       }
     } catch (e) {
       // Routed model failed → fall back to the workspace's configured model once.
       if (usedModel !== resolvedKey.model) {
-        parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed));
+        parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed, { workspaceId, userId: user.id }));
         usedModel = resolvedKey.model;
       } else {
         throw e;

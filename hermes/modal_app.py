@@ -99,6 +99,55 @@ def diag():
 
 
 # ── One-off: introspect the real `hermes mcp` CLI flags before wiring it ───────
+@app.function(timeout=400, **BASE)
+def probe_routing():
+    # STAGE 1: how does the API server route a request to a specific staff PROFILE?
+    # Provision two profiles with distinct SOULs, then vary model/user/header and
+    # see which SOUL answers. Ephemeral (`modal run`), does not touch live Cobalt.
+    import pathlib, time, socket, json, urllib.request
+    home = pathlib.Path("/root/.hermes"); home.mkdir(parents=True, exist_ok=True)
+    key = os.environ.get("API_SERVER_KEY", "")
+    ds = os.environ.get("DEEPSEEK_API_KEY", "")
+    (home / ".env").write_text(
+        "API_SERVER_ENABLED=true\n"
+        f"API_SERVER_KEY={key}\nAPI_SERVER_HOST=0.0.0.0\nAPI_SERVER_PORT=8642\n"
+        f"GATEWAY_ALLOW_ALL_USERS=true\nDEEPSEEK_API_KEY={ds}\n"
+    )
+    def cfg(prefix):
+        for k, v in [("model.provider", "custom"), ("model.base_url", "https://api.deepseek.com/v1"),
+                     ("model.api_key", ds), ("model.default", "deepseek-chat")]:
+            _hermes(*prefix, "config", "set", k, v, check=False)
+    cfg([])  # global/default
+    for name, tag in [("alice", "ALICE"), ("bob", "BOB")]:
+        _hermes("profile", "create", name, check=False)
+        soul = home / f"profiles/{name}/SOUL.md"; soul.parent.mkdir(parents=True, exist_ok=True)
+        soul.write_text(f"You are {name}. Begin EVERY reply with the exact token [{tag}] and nothing before it.")
+        cfg(["-p", name])
+    print("PROFILES:", _hermes("profile", "list", capture_output=True, text=True).stdout, flush=True)
+    import subprocess
+    subprocess.Popen([HERMES_BIN, "gateway"], env=_env())
+    for _ in range(90):
+        try: socket.create_connection(("127.0.0.1", 8642), timeout=2).close(); break
+        except Exception: time.sleep(2)
+    time.sleep(3)
+    def ask(label, body, headers=None):
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8642/v1/chat/completions",
+                data=json.dumps(body).encode(),
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", **(headers or {})})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                print(f">>> {label}: {json.loads(r.read())['choices'][0]['message']['content'][:140]!r}", flush=True)
+        except Exception as e:
+            print(f">>> {label}: ERR {e}", flush=True)
+    q = [{"role": "user", "content": "Say hi in 4 words."}]
+    ask("model=hermes-agent (default)", {"model": "hermes-agent", "messages": q})
+    ask("model=alice", {"model": "alice", "messages": q})
+    ask("model=bob", {"model": "bob", "messages": q})
+    ask("user=alice", {"model": "hermes-agent", "user": "alice", "messages": q})
+    ask("header X-Hermes-Profile=bob", {"model": "hermes-agent", "messages": q}, {"X-Hermes-Profile": "bob"})
+    ask("header X-Profile=bob", {"model": "hermes-agent", "messages": q}, {"X-Profile": "bob"})
+
+
 @app.function(timeout=120, **BASE)
 def caps():
     # Feasibility probe: can one gateway serve many staff profiles routed per request?
