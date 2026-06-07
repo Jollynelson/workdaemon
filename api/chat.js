@@ -977,6 +977,20 @@ export default async function handler(req, res) {
   // Decrypt the stored key at the last moment (no-op for legacy plaintext / env keys).
   const resolvedKey = { ...keyRow, api_key: decryptSecret(keyRow.api_key) };
 
+  // Resilience: a self-hosted provider (hermes) going down must NEVER break the
+  // daemon. If the primary provider fails, fall back to a cloud model. No-op when
+  // the primary already IS a cloud provider (those just surface the error).
+  const CLOUD = new Set(['deepseek', 'anthropic', 'openai', 'openrouter', 'google', 'mistral']);
+  const cloudFallback = async (err) => {
+    if (CLOUD.has(resolvedKey.provider)) throw err;
+    let fb = null;
+    if (process.env.DEEPSEEK_API_KEY) fb = { provider: 'deepseek', api_key: process.env.DEEPSEEK_API_KEY, endpoint: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com', model: 'deepseek-chat' };
+    else if (process.env.ANTHROPIC_API_KEY) fb = { provider: 'anthropic', api_key: process.env.ANTHROPIC_API_KEY, model: 'claude-sonnet-4-6' };
+    if (!fb) throw err;
+    console.warn('[chat] provider=%s failed (%s) → cloud fallback %s', resolvedKey.provider, err.message, fb.provider);
+    return parseJsonResponse(await callProvider(fb, sys, trimmed, { workspaceId, userId: user.id }));
+  };
+
   try {
     // ── Two-tier brain routing + escalation (spec §10 / ChangeSpec §2b) ────────
     // Route shallow turns to the workspace's fast model, deep/complex turns to a
@@ -1002,12 +1016,15 @@ export default async function handler(req, res) {
         } catch { /* keep the fast result */ }
       }
     } catch (e) {
-      // Routed model failed → fall back to the workspace's configured model once.
+      // Routed model failed → fall back to the workspace's configured model once,
+      // then to a cloud provider (so a hermes outage never breaks the daemon).
       if (usedModel !== resolvedKey.model) {
-        parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed, { workspaceId, userId: user.id }));
-        usedModel = resolvedKey.model;
+        try {
+          parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed, { workspaceId, userId: user.id }));
+          usedModel = resolvedKey.model;
+        } catch (e2) { parsed = await cloudFallback(e2); usedModel = 'cloud-fallback'; }
       } else {
-        throw e;
+        parsed = await cloudFallback(e); usedModel = 'cloud-fallback';
       }
     }
     console.log('[chat] route depth=%s complexity=%s model=%s escalated=%s',
