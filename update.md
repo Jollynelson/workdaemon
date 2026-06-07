@@ -47,3 +47,28 @@ The deferred "demo the agent *acting* on a real tool" item — done and live-ver
 - **Live proof:** Cobalt agent calls `mcp_brain_{company_context,list_hunt_findings,search_knowledge}` and answers with real truth — $3.2M ARR / Series A / Ramp-IPO threat, etc.
 
 **Next:** GitHub MCP for the agent (creds in `.env`; needs the OAuth flow done in the Hermes runtime — interactive, the harder headless case). Gateway is still `min_containers=0` so the first call cold-starts ~60–90s.
+
+## 2026-06-07 (cont.) · Hermes as the daemon for ALL companies + fixes
+
+A long session driven by "make Hermes the daemon for every company, per staff." Grounded in `WorkDaemon_FINAL_BuildSpec.md` + `workdaemon-soul.md` (each agent connected to its company Brain) and the real Hermes docs.
+
+### Fixes shipped (all companies)
+- **Daemon raw-JSON render bug** (Gemini emitted malformed JSON → raw `{"blocks"}` wall): force JSON output mode (Gemini `responseMimeType`, OpenAI-compatible `response_format`) + `salvageEnvelope()` recovery. (PR #33)
+- **Cloud fallback**: if the self-hosted (hermes) provider fails/times out, the daemon falls back to deepseek → never breaks. (PR #36)
+- **GitHub OAuth → agent wiring** (per-workspace) + **per-staff** memory (`X-Hermes-Session-Key`) and tool tokens (executors use each staff's own token). (PRs #32, #35)
+
+### Architecture decided (grounded in spec + Hermes docs + Modal limits)
+- Hermes "profiles" are per-PORT/process (profile-per-staff = cost explosion). Per-staff identity rides the per-user **system message** (already built); per-staff **memory** rides `X-Hermes-Session-Key` on a shared gateway; per-staff **tool actions** ride the **executor path** (Hermes MCP tools are fixed per-gateway).
+- **Modal caps at 8 web functions** → per-company gateways scale to only ~4. So: **one shared brain-connected gateway is the platform default for all companies**, with dedicated brain-MCP gateways (Cobalt) as premium.
+- **The brain reaches every company via context injection** `api/chat.js` already does (RAG docs + hunt findings + graph in `sys`) — so the shared gateway IS brain-connected per company; dedicated gateways add the active brain-MCP *pull*.
+- **Per-company signed Brain-MCP tokens** (HMAC, encode workspace_id) so one endpoint serves any company, IDOR-safe. (PR #37)
+
+### Rolled out
+- **Shared gateway** `workdaemon-hermes-shared` (warm, `min_containers=1`) serves the fleet; verified `FLEET-OK`.
+- All 7 non-Cobalt workspaces pointed at it (`scripts/point_to_shared.mjs`); **Cobalt stays dedicated** (brain-MCP, verified pulling its own brain).
+- **Auto-onboard**: chat.js defaults a keyless workspace to the shared gateway (`HERMES_SHARED_GATEWAY_URL/_API_KEY` on Vercel) → every current AND future company auto-runs on a brain-connected Hermes daemon, no per-company deploy/DB row. (PR #38)
+- **Cost**: one warm shared container for the whole fleet + Cobalt's scale-to-zero dedicated. Stale per-company secrets/gateways cleaned up.
+
+**GOTCHA (caused a brief Cobalt outage, reverted PR #34):** a Modal Volume CANNOT mount at `/root/.hermes` (Hermes install populates `skills/`; Modal refuses non-empty mount). Persistence (if ever needed) must relocate the home.
+
+**Next:** prewarm tuning (cold path still falls back on a cold shared container if traffic is sparse — currently warm); per-staff GitHub *actions* via executors (wiring shipped, needs a live OAuth connect); optional dedicated gateways for premium companies (mind the 8-web-fn cap).
