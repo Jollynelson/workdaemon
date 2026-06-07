@@ -24,10 +24,16 @@ HERMES_BIN = "/usr/local/bin/hermes"  # install.sh links it here
 # Clean image: install the Hermes CLI as root. No s6, no non-root user, no /opt/data.
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    # Node 20 (for npx-based MCP servers, e.g. GitHub) alongside curl/git.
     .apt_install("curl", "ca-certificates", "git")
     .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        "apt-get install -y nodejs",
+        "node --version && npm --version",
         "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
         f"test -x {HERMES_BIN}",  # fail the build loudly if the CLI didn't land
+        # Pre-install the GitHub MCP server so cold starts don't re-download it.
+        "npm install -g @modelcontextprotocol/server-github",
     )
     # Company-Brain MCP tool runs as a local stdio subprocess inside the gateway
     # container — bundle it + its deps into the image.
@@ -36,7 +42,15 @@ image = (
 )
 
 secret = modal.Secret.from_name(f"hermes-{COMPANY}")
-BASE = dict(image=image, secrets=[secret], memory=2048)
+
+# Persistent, SHARED Hermes home so per-user tool connections survive cold starts
+# AND so a connection written by the `admin` container is seen by the serving
+# `gateway` container (they are separate containers). This is what makes the
+# Zapier-style flow work: user connects a tool in WorkDaemon → admin `mcp add`
+# (with their OAuth token) → committed to this Volume → gateway reads it on start.
+HERMES_HOME = "/root/.hermes"
+home_vol = modal.Volume.from_name(f"hermes-home-{COMPANY}", create_if_missing=True)
+BASE = dict(image=image, secrets=[secret], memory=2048, volumes={HERMES_HOME: home_vol})
 
 
 def _env():
@@ -88,7 +102,7 @@ def diag():
 
 
 # ── One-off: introspect the real `hermes mcp` CLI flags before wiring it ───────
-@app.function(image=image, secrets=[secret], memory=2048, timeout=180)
+@app.function(timeout=180, **BASE)
 def inspect():
     import sys
     api_base = os.environ.get("WORKDAEMON_API_BASE", "")
@@ -102,6 +116,21 @@ def inspect():
         input="y\n", text=True, capture_output=True,
     )
     print("=== add stdout/err ===\n" + (r.stdout or "") + (r.stderr or ""), flush=True)
+    # GitHub MCP (needs a token to discover tools)
+    gh_token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+    print(f">>> node: {_hermes('--version', check=False) and ''}", flush=True)
+    nv = subprocess.run(["node", "--version"], capture_output=True, text=True)
+    print(">>> node --version:", (nv.stdout or nv.stderr).strip(), flush=True)
+    print(f">>> github token_len={len(gh_token)}", flush=True)
+    if gh_token:
+        _hermes("mcp", "remove", "github", check=False)
+        g = _hermes(
+            "mcp", "--accept-hooks", "add", "github",
+            "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-github",
+            "--env", f"GITHUB_PERSONAL_ACCESS_TOKEN={gh_token}",
+            input="y\n", text=True, capture_output=True,
+        )
+        print("=== github add stdout/err ===\n" + (g.stdout or "") + (g.stderr or ""), flush=True)
     lst = _hermes("mcp", "list", capture_output=True, text=True)
     print("=== mcp list ===\n" + (lst.stdout or "") + (lst.stderr or ""), flush=True)
 
@@ -151,6 +180,23 @@ def gateway():
         print(">>> brain MCP wired (stdio):", _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
     else:
         print(">>> brain MCP NOT wired (WORKDAEMON_API_BASE / BRAIN_MCP_TOKEN unset)", flush=True)
+    # ── GitHub MCP tool ───────────────────────────────────────────────────────
+    # The agent acts on GitHub itself (list/read/search + create issues/PRs within
+    # the token's scope) via the npx GitHub MCP server as a local stdio subprocess.
+    # In production this token is the workspace's per-user GitHub OAuth grant; here
+    # it comes from the hermes-<company> secret. Inert if unset.
+    gh_token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "")
+    if gh_token:
+        _hermes("mcp", "remove", "github", check=False)
+        _hermes(
+            "mcp", "--accept-hooks", "add", "github",
+            "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-github",
+            "--env", f"GITHUB_PERSONAL_ACCESS_TOKEN={gh_token}",
+            input="y\n", text=True, check=False,
+        )
+        print(">>> github MCP wired (stdio):", _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
+    else:
+        print(">>> github MCP NOT wired (GITHUB_PERSONAL_ACCESS_TOKEN unset)", flush=True)
     # CRITICAL: @modal.web_server wants the function to LAUNCH the server (Popen)
     # and RETURN — Modal then keeps the container alive and proxies to :8642.
     # Blocking here (serve_forever / subprocess.run) makes Modal think startup
@@ -170,16 +216,25 @@ def _provision(staff_id, soul_md, provider, model):
     return {"ok": True, "profile": staff_id}
 
 
-def _connect(staff_id, name, command=None, args=None, url=None, auth="oauth"):
-    cmd = ["-p", staff_id, "mcp", "add", name]
+def _connect(name, command=None, args=None, url=None, auth=None, env=None):
+    # Add to the GLOBAL config — the gateway serves the default agent, so a tool
+    # must be in the global config to actually reach the running gateway. (Per-
+    # profile `-p` wiring waits until the gateway routes per staff profile.)
+    # `--env` carries the connecting user's OAuth token to the stdio MCP server;
+    # feed "y" so the "Enable all N tools?" prompt doesn't cancel headless.
+    cmd = ["mcp", "--accept-hooks", "add", name]
     if url:
         cmd += ["--url", url]
     if command:
         cmd += ["--command", command]
     if args:
         cmd += ["--args", *args]
-    cmd += ["--auth", auth]
-    _hermes(*cmd, check=False)
+    if env:
+        cmd += ["--env", *[f"{k}={v}" for k, v in env.items()]]
+    if auth:
+        cmd += ["--auth", auth]
+    _hermes("mcp", "remove", name, check=False)
+    _hermes(*cmd, input="y\n", text=True, check=False)
     return {"ok": True, "tool": name}
 
 
@@ -213,8 +268,10 @@ def admin():
             try:
                 if payload.get("action") == "provision":
                     r = _provision(payload["staff_id"], payload.get("soul_md", ""), payload["provider"], payload["model"])
+                    home_vol.commit()  # persist the profile so the gateway sees it
                 elif payload.get("action") == "connect":
-                    r = _connect(payload["staff_id"], payload["name"], payload.get("command"), payload.get("args"), payload.get("url"), payload.get("auth", "oauth"))
+                    r = _connect(payload["name"], payload.get("command"), payload.get("args"), payload.get("url"), payload.get("auth"), payload.get("env"))
+                    home_vol.commit()  # persist the connection for the serving gateway
                 else:
                     r = {"ok": False, "error": "unknown action"}
             except Exception as e:
