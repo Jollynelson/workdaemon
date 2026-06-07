@@ -35,3 +35,15 @@ Recognized (from the Hermes docs) the daemon should *be* a per-staff Hermes agen
 - Modal app: `workdaemon-hermes-cobalt` (gateway + admin + diag). Secret `hermes-cobalt`. Pilot keys saved in `.env` (`HERMES_COBALT_*`).
 - **Deferred:** connect a tool to the Cobalt agent via MCP (`admin connect_tool` / `hermes mcp add`) — needs GitHub OAuth creds + a live test; do this next to demo the agent *acting* on a real tool.
 - Optional infra to activate later: `GITHUB_CLIENT_ID/SECRET` (code-proposal issues + repo ingest); Vercel **Pro** for >daily crons; a retention job for `learning_signals`.
+
+## 2026-06-07 · Company Brain wired into the Cobalt agent as an MCP tool ✅
+
+The deferred "demo the agent *acting* on a real tool" item — done and live-verified.
+
+- **Read-only Brain-as-MCP surface** on the live API: `GET /api/brain?action=mcp&tool=context|hunt|search` (PR #29, `api/brain.js`). Hardened: token-gated, bound to ONE workspace via `BRAIN_MCP_WORKSPACE_ID` (no caller-supplied workspace id → no IDOR), GET-only, restricted-doc content never exposed, `q` sanitized against PostgREST filter injection. Verified on prod: good token→200 (real Cobalt data), bad token→401, unknown tool→400.
+- **`hermes/brain_mcp.py`** points at that surface and runs as a **local stdio subprocess inside the gateway container** — the token never leaves the container, nothing is internet-exposed.
+- **`hermes/modal_app.py`**: bundles `brain_mcp.py` + `mcp[cli]`/`httpx` into the image; `gateway()` registers the stdio MCP at startup. **GOTCHA (PR #30):** `hermes mcp add` discovers the tools then asks `Enable all N tools? [Y/n/select]` on a TTY — headless it cancels and saves nothing; feed `y` to stdin. (`--accept-hooks` only covers shell hooks, not this prompt.) Used the one-off `inspect()` entrypoint (`modal run hermes/modal_app.py::inspect`) to verify the real CLI flags + the enable fix without a full gateway cold-start.
+- **Config:** Vercel prod has `BRAIN_MCP_TOKEN` + `BRAIN_MCP_WORKSPACE_ID` (=Cobalt `6451c7c2-…836f`); Modal `hermes-cobalt` secret has `BRAIN_MCP_TOKEN` + `WORKDAEMON_API_BASE=https://app.workdaemon.com`. Token also recorded in `.env` (gitignored).
+- **Live proof:** Cobalt agent calls `mcp_brain_{company_context,list_hunt_findings,search_knowledge}` and answers with real truth — $3.2M ARR / Series A / Ramp-IPO threat, etc.
+
+**Next:** GitHub MCP for the agent (creds in `.env`; needs the OAuth flow done in the Hermes runtime — interactive, the harder headless case). Gateway is still `min_containers=0` so the first call cold-starts ~60–90s.
