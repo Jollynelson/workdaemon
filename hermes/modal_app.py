@@ -19,6 +19,10 @@ import modal
 COMPANY = os.environ.get("HERMES_COMPANY", "default")
 app = modal.App(f"workdaemon-hermes-{COMPANY}")
 
+# Warm pool: HERMES_MIN_CONTAINERS=1 keeps the gateway always-on (no cold-start
+# timeout) — used for the SHARED gateway that serves many companies' daemons.
+GATEWAY_MIN = int(os.environ.get("HERMES_MIN_CONTAINERS", "0"))
+
 HERMES_BIN = "/usr/local/bin/hermes"  # install.sh links it here
 
 # Clean image: install the Hermes CLI as root. No s6, no non-root user, no /opt/data.
@@ -191,7 +195,7 @@ def inspect():
 
 
 # ── Gateway: OpenAI-compatible API server on :8642 ────────────────────────────
-@app.function(timeout=60 * 60, min_containers=0, **BASE)  # scale-to-zero ($0 idle); bump to 1 for warm/no-cold-start while actively testing
+@app.function(timeout=60 * 60, min_containers=GATEWAY_MIN, **BASE)  # 0=$0 idle; set HERMES_MIN_CONTAINERS=1 for a warm shared gateway
 @modal.web_server(8642, startup_timeout=300)
 def gateway():
     import pathlib
