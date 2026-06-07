@@ -1,0 +1,39 @@
+# Run the Hermes Agent runtime the way it's DESIGNED to run — a plain long-lived
+# container exposing the OpenAI-compatible gateway on :8642. This is how you ran
+# it on your PC, and what the docs show (`docker run … gateway run`). Modal's
+# serverless-function model fights this image (s6/PID-1, non-root user vs Modal's
+# /pkg, volume writability) — so a small always-on host is the correct home:
+# a $5 VPS (Hetzner/DO), your own machine, or the Hermes Desktop app.
+#
+# Deploy on a VPS:
+#   1) install Docker, copy this file
+#   2) export HERMES_API_SERVER_KEY=… DEEPSEEK_API_KEY=…   (or put them in a .env beside this)
+#   3) docker compose up -d
+#   4) gateway is at  http://<vps-ip>:8642  (put behind HTTPS/Caddy for prod)
+#
+# Manage profiles + tools (per staff):
+#   docker compose exec hermes hermes profile create <staff_id>
+#   docker compose exec hermes hermes -p <staff_id> config set model.provider deepseek
+#   docker compose exec hermes hermes -p <staff_id> config set model.default  deepseek-chat
+#   docker compose exec hermes hermes -p <staff_id> mcp add github --command npx \
+#         --args "-y" "@modelcontextprotocol/server-github" --auth oauth
+#
+# Then point the Cobalt workspace at it (workspace_api_keys):
+#   provider='hermes', endpoint='https://<host>:8642', api_key=$HERMES_API_SERVER_KEY,
+#   model='<staff_id>'.
+services:
+  hermes:
+    image: nousresearch/hermes-agent
+    command: gateway run
+    restart: unless-stopped
+    ports:
+      - "8642:8642"
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_KEY: "${HERMES_API_SERVER_KEY}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
+    volumes:
+      - hermes-data:/opt/data      # persistent profiles/memory (native volume — writable by the hermes user)
+
+volumes:
+  hermes-data:

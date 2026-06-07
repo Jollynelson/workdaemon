@@ -13,20 +13,21 @@ itself**, with Hermes' **built-in approval gate** (Manual / Smart / Off). So the
 platform adapts to any tool with zero per-tool WorkDaemon code. The `ACTIONS`
 executor framework is a stopgap for non-Hermes workspaces and is superseded here.
 
-## 1. Run Hermes (per company)
+## 1. Run Hermes (per company) — use Docker, NOT Modal
 Official image `nousresearch/hermes-agent`, OpenAI-compatible API server on **:8642**.
-
-Docker (one container per company; `~/.hermes` is the persistent profile store):
+Run it as a plain long-lived container — the way it's designed (and how it ran on
+your PC). **`hermes/docker-compose.yml`** is ready to go on a small always-on host
+(a ~$5 VPS, your machine, or the Hermes Desktop app):
 ```bash
-docker run -d --name hermes-<company> --restart unless-stopped \
-  -e API_SERVER_ENABLED=true -e API_SERVER_KEY=<per-company-secret> \
-  -v /srv/hermes/<company>:/opt/data -p 8642:8642 \
-  nousresearch/hermes-agent gateway run
+export HERMES_API_SERVER_KEY=… DEEPSEEK_API_KEY=…
+docker compose -f hermes/docker-compose.yml up -d        # gateway at :8642
 ```
 
-On **Modal** (no GPU; cloud model): run the same image and expose 8642 via
-`@modal.web_server(8642)` with a per-company `modal.Volume` mounted at `/opt/data`
-and `API_SERVER_KEY` in a Modal secret. (Modal app: stage 2 — `hermes/modal_app.py`.)
+> **Modal does NOT work for this image** (tried thoroughly, 2026-06-07): the image
+> uses s6-overlay (needs PID 1), runs as a non-root user that can't write Modal's
+> `/pkg`, and a Modal Volume isn't a normal writable FS for a live server. The
+> serverless-function model fights the image at every layer. `hermes/modal_app.py`
+> is kept only as a record of that attempt — **do not deploy it.** Use Docker.
 
 ## 2. One profile per staff member
 At onboarding, for each staff member (the WorkDaemon provisioner does this over the
