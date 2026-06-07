@@ -72,3 +72,20 @@ A long session driven by "make Hermes the daemon for every company, per staff." 
 **GOTCHA (caused a brief Cobalt outage, reverted PR #34):** a Modal Volume CANNOT mount at `/root/.hermes` (Hermes install populates `skills/`; Modal refuses non-empty mount). Persistence (if ever needed) must relocate the home.
 
 **Next:** prewarm tuning (cold path still falls back on a cold shared container if traffic is sparse — currently warm); per-staff GitHub *actions* via executors (wiring shipped, needs a live OAuth connect); optional dedicated gateways for premium companies (mind the 8-web-fn cap).
+
+## 2026-06-08 · Agentic brain pull for all + live verification + history scrub
+
+### Agentic Company-Brain pull — now universal (PR #39)
+Hermes can't pass per-request context to MCP tools (docs confirmed), so active brain pull on the shared gateway isn't possible Hermes-side. Implemented it at the **api/chat.js proxy** instead (the FINAL spec's backend-mediated model): the agent may emit a top-level `brain_queries` array (search/hunt/context, max 3); chat.js runs them server-side against THAT workspace's brain (`runBrainQuery` — workspaceId from the authed session, never the prompt → IDOR-safe, no tokens in prompt) and re-calls once with results. So EVERY company — shared-gateway fleet included — gets active multi-hop brain pull, all providers, no per-company gateway. Cobalt's Hermes-native brain-MCP still works too.
+
+### Live verification (agent-browser, prod)
+- **Cobalt** (dedicated gateway): logged in as Maya (CEO) — daemon answered with cited company data (Ramp battlecard + SOC 2), sources `Notion / Slack / Company Brain`, clean blocks, **0 raw JSON**, adaptive action card.
+- **Beta Tenant** (shared gateway): logged in as Nelson (CEO) — daemon pulled Beta-Tenant-specific brain intel (Lagos tenancy law, $22M FDI) and cited `Company Brain Intelligence / Org Graph`. Confirms the shared-fleet path end to end.
+
+### Render-bug history scrub
+- Recovered the 2 pre-fix double-wrapped messages (Beta Tenant) — extracted real blocks (one kanban, one 4 text blocks), **recovered not deleted**. Verified live: the old "My apologies…" raw-JSON message now renders as clean prose; **0 raw-JSON across all history**.
+- Made the scrub a first-class capability (PR #40): `api/_lib/scrub.js` (shared salvage/recover lib) + admin action `POST /api/brain {action:"scrub_raw_messages", dry_run?}` (admin-only, workspace-scoped, no new Vercel fn) + `scripts/scrub_raw_messages.mjs` (cross-company CLI, same lib). Verified the admin action live in prod: `200 {scanned:35, fixed:0, deleted:0, dryRun:true}`.
+- **Cross-company real scrub run: 67 daemon messages scanned, 0 recovered, 0 deleted** — clean platform-wide.
+
+### Beta Tenant password
+Reset to the owner's control (temp password used for the live test was rotated out).
