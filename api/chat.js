@@ -8,6 +8,7 @@ import { braveSearchMany, roleToTags } from './_lib/research.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
 import { retrieveDocuments } from './_lib/ingestion.js';
+import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { waitUntil } from '@vercel/functions';
 
@@ -527,99 +528,6 @@ Do NOT repeat the boot block. Return ONE short text block: a warm one-line "welc
 LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. Direct, warm, and competent — a sharp chief-of-staff for a ${roleLabel}.
 Never: "As an AI", "I don't have access", "I'm just a demo", "I am a brain", "I cannot search online", visible reasoning.
 End with exactly 3 specific actionable suggestions tuned to a ${roleLabel}.`;
-}
-
-// Recover a daemon JSON envelope when the model emits incomplete/unclosed JSON
-// (it sometimes drops the final brackets on a large block like a kanban, which
-// otherwise renders as raw JSON text). Walk the text tracking string state and
-// bracket depth, then append the missing closers; trim a dangling key/comma and
-// retry from the last closed bracket if needed.
-function repairJsonEnvelope(text) {
-  const start = text.indexOf('{');
-  if (start === -1) return null;
-  let s = text.slice(start);
-  for (let attempt = 0; attempt < 5 && s.length > 1; attempt++) {
-    let inStr = false, esc = false;
-    const stack = [];
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
-      if (ch === '"') inStr = true;
-      else if (ch === '{' || ch === '[') stack.push(ch);
-      else if (ch === '}' || ch === ']') stack.pop();
-    }
-    let repaired = inStr ? s + '"' : s;
-    repaired = repaired.replace(/[,:]\s*$/, ''); // drop a dangling comma/colon with no value
-    for (let i = stack.length - 1; i >= 0; i--) repaired += stack[i] === '{' ? '}' : ']';
-    try { const p = JSON.parse(repaired); if (p && p.blocks) return p; } catch {}
-    // Truncation may have landed mid-element — trim back to the last closer and retry.
-    const lastClose = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
-    if (lastClose <= 0) break;
-    s = s.slice(0, lastClose + 1);
-  }
-  return null;
-}
-
-// Last-ditch salvage: when the envelope won't parse (one malformed block, e.g. a
-// bad "suggestions" entry), keep the blocks that DO parse on their own instead of
-// dumping the raw JSON into the chat. Scans the "blocks" array element-by-element.
-function salvageEnvelope(text) {
-  const bi = text.indexOf('"blocks"');
-  if (bi === -1) return null;
-  const arrStart = text.indexOf('[', bi);
-  if (arrStart === -1) return null;
-  const blocks = [];
-  let depth = 0, objStart = -1, inStr = false, esc = false;
-  for (let i = arrStart + 1; i < text.length; i++) {
-    const ch = text[i];
-    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
-    if (ch === '"') { inStr = true; continue; }
-    if (ch === '{') { if (depth === 0) objStart = i; depth++; }
-    else if (ch === '}') { depth--; if (depth === 0 && objStart !== -1) {
-      try { const o = JSON.parse(text.slice(objStart, i + 1)); if (o && o.type) blocks.push(o); } catch {}
-      objStart = -1;
-    } }
-    else if (ch === ']' && depth === 0) break;  // end of the blocks array
-  }
-  if (!blocks.length) return null;
-  let suggestions = [];
-  const sm = text.match(/"suggestions"\s*:\s*\[([^\]]*)\]/);
-  if (sm) { try { suggestions = JSON.parse('[' + sm[1] + ']').filter(x => typeof x === 'string'); } catch {} }
-  return { blocks, suggestions };
-}
-
-// ── Response parser ───────────────────────────────────────────────────────────
-function parseJsonResponse(text) {
-  if (!text) return { blocks: [{ type: 'text', md: 'No response.' }], suggestions: [] };
-
-  let t = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
-
-  try { const p = JSON.parse(t); if (p.blocks) return p; } catch {}
-
-  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) { try { const p = JSON.parse(fence[1].trim()); if (p.blocks) return p; } catch {} }
-
-  let depth = 0, start = -1;
-  for (let i = 0; i < t.length; i++) {
-    if (t[i] === '{') { if (depth === 0) start = i; depth++; }
-    else if (t[i] === '}') {
-      depth--;
-      if (depth === 0 && start !== -1) {
-        try { const p = JSON.parse(t.slice(start, i + 1)); if (p.blocks) return p; } catch {}
-        start = -1;
-      }
-    }
-  }
-
-  // Recover unclosed/truncated JSON.
-  const repaired = repairJsonEnvelope(t);
-  if (repaired) return repaired;
-
-  // Salvage whatever blocks individually parse (one bad block won't dump raw JSON).
-  const salvaged = salvageEnvelope(t);
-  if (salvaged) return salvaged;
-
-  return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
 // ── Agentic Company-Brain lookup (server-side, workspace-scoped) ──────────────
