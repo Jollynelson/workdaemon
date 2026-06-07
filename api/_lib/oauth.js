@@ -70,7 +70,9 @@ export const PROVIDERS = {
     scopes: ['repo', 'read:org', 'read:user'],
     parseToken: (d) => {
       if (d.error) throw new Error(`github: ${d.error_description || d.error}`);
-      return { access_token: d.access_token, scopes: (d.scope || '').split(',').filter(Boolean), external_account: null, metadata: {} };
+      // A GitHub OAuth token IS the connecting user's own token, so store it as the
+      // per-staff user_token too — lets each staff act on GitHub as themselves.
+      return { access_token: d.access_token, user_token: d.access_token, scopes: (d.scope || '').split(',').filter(Boolean), external_account: null, metadata: {} };
     },
   },
   notion: {
@@ -322,6 +324,15 @@ export async function storeUserIntegration(db, { workspaceId, userId, provider, 
     updated_at:       new Date().toISOString(),
   }, { onConflict: 'workspace_id,user_id,provider' });
   if (error) console.error('[oauth] storeUserIntegration:', error.message);
+}
+
+// One staff member's own connected token (decrypted), or null. Lets an executor
+// act AS the requesting staff (their OAuth grant) instead of the workspace token.
+export async function getUserToken(db, workspaceId, userId, provider) {
+  if (!userId) return null;
+  const { data } = await db.from('user_integrations')
+    .select('user_token').eq('workspace_id', workspaceId).eq('user_id', userId).eq('provider', provider).maybeSingle();
+  return data?.user_token ? decryptSecret(data.user_token) : null;
 }
 
 // All staff user tokens for a provider (decrypted) — for per-user ingest.

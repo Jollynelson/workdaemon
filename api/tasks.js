@@ -3,7 +3,7 @@ import { fail, enforceRateLimit, parseBody } from './_lib/security.js';
 import { assessCapacity, suggestAlternatives } from './_lib/capacity.js';
 import { recordTaskAction } from './_lib/calibration.js';
 import { ACTIONS, meetsLevel } from './_lib/actions.js';
-import { getAccessToken, getFreshAccessToken } from './_lib/oauth.js';
+import { getAccessToken, getFreshAccessToken, getUserToken } from './_lib/oauth.js';
 
 // Tasks + Cross-Daemon Communication.
 // GET                → list workspace tasks (with assignee + from-staff)
@@ -284,7 +284,10 @@ export default async function handler(req, res) {
     if (!meetsLevel(agent?.access_level, spec.minLevel))
       return res.status(403).json({ error: `Your access level can't run "${spec.label}"` });
 
-    const token = await getFreshAccessToken(db, workspaceId, spec.provider);
+    // Per-staff: act with THIS user's own connected token; fall back to the
+    // workspace token if they haven't connected the tool individually.
+    const token = (await getUserToken(db, workspaceId, user.id, spec.provider))
+      || (await getFreshAccessToken(db, workspaceId, spec.provider));
     if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
 
     if (body.dry_run) return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
@@ -320,7 +323,8 @@ export default async function handler(req, res) {
       const spec = name && ACTIONS[name];
       if (!spec) { results.push({ name: name || null, ok: false, error: 'not an executable step' }); continue; }
       if (!meetsLevel(agent?.access_level, spec.minLevel)) { results.push({ name, label: spec.label, ok: false, error: `your access level can't run "${spec.label}"` }); continue; }
-      if (!(spec.provider in tokenCache)) tokenCache[spec.provider] = await getFreshAccessToken(db, workspaceId, spec.provider);
+      if (!(spec.provider in tokenCache)) tokenCache[spec.provider] = (await getUserToken(db, workspaceId, user.id, spec.provider))
+        || (await getFreshAccessToken(db, workspaceId, spec.provider));
       const token = tokenCache[spec.provider];
       if (!token) { results.push({ name, label: spec.label, ok: false, error: `${spec.provider} is not connected` }); continue; }
       try { results.push({ name, label: spec.label, ok: true, result: await spec.run(token, params) }); }
