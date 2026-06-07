@@ -89,3 +89,13 @@ Hermes can't pass per-request context to MCP tools (docs confirmed), so active b
 
 ### Beta Tenant password
 Reset to the owner's control (temp password used for the live test was rotated out).
+
+### First automated tests for the api/ backend (vitest)
+The JS/api side had no test suite (only the Python `finetuning/` suite, 101 passing). Scaffolded one over the highest-risk logic added this session.
+- **Tooling:** vitest 4.x, `npm test` (= `vitest run`), `vitest.config.js` scoped to `api/**/*.test.js` so the Vite/React build + bundle are untouched.
+- **Refactor for testability:** extracted `repairJsonEnvelope` + `parseJsonResponse` from `api/chat.js` into `api/_lib/envelope.js` (reusing `salvageEnvelope` from `scrub.js` — single source). Behaviour unchanged (verbatim move; chat.js imports cleanly, all call sites intact).
+- **Coverage (26 tests, 3 files, all green):**
+  - `scrub.test.js` — salvage / isLeakedEnvelope / recover, incl. the exact production render-bug payload; prose never misclassified.
+  - `security.test.js` — signed service tokens: round-trip, tampered sig/body, garbage, and cross-secret rejection (the per-company-token IDOR guarantee).
+  - `envelope.test.js` — the full `parseJsonResponse` recovery ladder (clean / fenced / prose-wrapped / `<thinking>`-stripped / truncation-repair / one-bad-block salvage / raw-text fallback / empty).
+- So the render fix, per-company token security, and history-scrub logic are now under automated test. **Next candidates:** oauth token parsing, executor per-staff token selection.
