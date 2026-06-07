@@ -88,12 +88,22 @@ def diag():
 
 
 # ── One-off: introspect the real `hermes mcp` CLI flags before wiring it ───────
-@app.function(image=image, secrets=[secret], memory=2048, timeout=120)
+@app.function(image=image, secrets=[secret], memory=2048, timeout=180)
 def inspect():
-    for args in (["--version"], ["mcp", "--help"], ["mcp", "add", "--help"]):
-        print(f"\n=== hermes {' '.join(args)} ===", flush=True)
-        r = _hermes(*args, capture_output=True, text=True)
-        print((r.stdout or "") + (r.stderr or ""), flush=True)
+    import sys
+    api_base = os.environ.get("WORKDAEMON_API_BASE", "")
+    brain_token = os.environ.get("BRAIN_MCP_TOKEN", "")
+    print(f">>> api_base set={bool(api_base)} token_len={len(brain_token)}", flush=True)
+    _hermes("mcp", "remove", "brain", check=False)
+    r = _hermes(
+        "mcp", "--accept-hooks", "add", "brain",
+        "--command", sys.executable, "--args", "/root/hermes/brain_mcp.py",
+        "--env", f"WORKDAEMON_API_BASE={api_base}", f"BRAIN_MCP_TOKEN={brain_token}",
+        input="y\n", text=True, capture_output=True,
+    )
+    print("=== add stdout/err ===\n" + (r.stdout or "") + (r.stderr or ""), flush=True)
+    lst = _hermes("mcp", "list", capture_output=True, text=True)
+    print("=== mcp list ===\n" + (lst.stdout or "") + (lst.stderr or ""), flush=True)
 
 
 # ── Gateway: OpenAI-compatible API server on :8642 ────────────────────────────
@@ -128,12 +138,15 @@ def gateway():
     brain_token = os.environ.get("BRAIN_MCP_TOKEN", "")
     if api_base and brain_token:
         _hermes("mcp", "remove", "brain", check=False)
+        # `mcp add` discovers the tools then asks "Enable all N tools? [Y/n/select]"
+        # on a TTY — with no TTY it cancels and saves nothing. Feed "y" so all three
+        # brain tools are enabled non-interactively.
         _hermes(
             "mcp", "--accept-hooks", "add", "brain",
             "--command", sys.executable,
             "--args", "/root/hermes/brain_mcp.py",
             "--env", f"WORKDAEMON_API_BASE={api_base}", f"BRAIN_MCP_TOKEN={brain_token}",
-            check=False,
+            input="y\n", text=True, check=False,
         )
         print(">>> brain MCP wired (stdio):", _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
     else:
