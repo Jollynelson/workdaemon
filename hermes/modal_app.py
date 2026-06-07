@@ -84,7 +84,7 @@ def diag():
 
 
 # ── Gateway: OpenAI-compatible API server on :8642 ────────────────────────────
-@app.function(timeout=60 * 60, min_containers=1, **BASE)  # warm: Hermes takes ~60s to bind 8642; scale-to-zero SIGINTs it mid-boot
+@app.function(timeout=60 * 60, min_containers=0, **BASE)  # scale-to-zero ($0 idle); bump to 1 for warm/no-cold-start while actively testing
 @modal.web_server(8642, startup_timeout=300)
 def gateway():
     import pathlib
