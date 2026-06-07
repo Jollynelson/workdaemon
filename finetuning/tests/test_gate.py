@@ -161,10 +161,15 @@ def test_score_answer_empty_returns_zero():
     assert _score_answer("q", "", "reference") == 0.0
 
 
-@patch("anthropic.Anthropic")
-def test_score_answer_clamps_to_valid_range(mock_anthropic_cls):
-    mock_client = MagicMock()
-    mock_anthropic_cls.return_value = mock_client
-    mock_client.messages.create.return_value.content = [MagicMock(text="1.5")]
+@patch("src.evaluation.gate._judge_config", return_value=("deepseek", "deepseek-chat", "test-key", "https://api.deepseek.com/v1"))
+@patch("src.evaluation.gate.httpx.post")
+def test_score_answer_clamps_to_valid_range(mock_post, mock_judge_config):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "1.5"}}],
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_post.return_value = mock_response
+
     score = _score_answer("q", "answer", "reference")
     assert score == 1.0  # clamped from 1.5
