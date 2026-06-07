@@ -29,6 +29,10 @@ image = (
         "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
         f"test -x {HERMES_BIN}",  # fail the build loudly if the CLI didn't land
     )
+    # Company-Brain MCP tool runs as a local stdio subprocess inside the gateway
+    # container — bundle it + its deps into the image.
+    .pip_install("mcp[cli]", "httpx")
+    .add_local_file("hermes/brain_mcp.py", "/root/hermes/brain_mcp.py")
 )
 
 secret = modal.Secret.from_name(f"hermes-{COMPANY}")
@@ -83,6 +87,15 @@ def diag():
     print(">>> HERMES GATEWAY OUTPUT (first 4000 chars):\n" + (out or "")[:4000], flush=True)
 
 
+# ── One-off: introspect the real `hermes mcp` CLI flags before wiring it ───────
+@app.function(image=image, secrets=[secret], memory=2048, timeout=120)
+def inspect():
+    for args in (["--version"], ["mcp", "--help"], ["mcp", "add", "--help"]):
+        print(f"\n=== hermes {' '.join(args)} ===", flush=True)
+        r = _hermes(*args, capture_output=True, text=True)
+        print((r.stdout or "") + (r.stderr or ""), flush=True)
+
+
 # ── Gateway: OpenAI-compatible API server on :8642 ────────────────────────────
 @app.function(timeout=60 * 60, min_containers=0, **BASE)  # scale-to-zero ($0 idle); bump to 1 for warm/no-cold-start while actively testing
 @modal.web_server(8642, startup_timeout=300)
@@ -105,6 +118,26 @@ def gateway():
     _hermes("config", "set", "model.base_url", "https://api.deepseek.com/v1", check=False)
     _hermes("config", "set", "model.api_key", os.environ.get("DEEPSEEK_API_KEY", ""), check=False)
     _hermes("config", "set", "model.default", "deepseek-chat", check=False)
+    # ── Company-Brain MCP tool ────────────────────────────────────────────────
+    # Run brain_mcp.py as a LOCAL stdio subprocess (not internet-exposed). The
+    # token is passed only to that subprocess and the API binds it to one
+    # workspace, so the agent can PULL company truth (context/hunt/search) but
+    # nothing outside can. Re-add is idempotent across container restarts.
+    import sys
+    api_base = os.environ.get("WORKDAEMON_API_BASE", "")
+    brain_token = os.environ.get("BRAIN_MCP_TOKEN", "")
+    if api_base and brain_token:
+        _hermes("mcp", "remove", "brain", check=False)
+        _hermes(
+            "mcp", "--accept-hooks", "add", "brain",
+            "--command", sys.executable,
+            "--args", "/root/hermes/brain_mcp.py",
+            "--env", f"WORKDAEMON_API_BASE={api_base}", f"BRAIN_MCP_TOKEN={brain_token}",
+            check=False,
+        )
+        print(">>> brain MCP wired (stdio):", _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
+    else:
+        print(">>> brain MCP NOT wired (WORKDAEMON_API_BASE / BRAIN_MCP_TOKEN unset)", flush=True)
     # CRITICAL: @modal.web_server wants the function to LAUNCH the server (Popen)
     # and RETURN — Modal then keeps the container alive and proxies to :8642.
     # Blocking here (serve_forever / subprocess.run) makes Modal think startup

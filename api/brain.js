@@ -729,6 +729,59 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── Company Brain as an MCP tool (read-only service-token surface) ───────────
+  // Each staff member's Hermes agent PULLs company truth (context, hunt findings,
+  // knowledge search) through this surface. Hardened against the IDOR class fixed
+  // in security-hardening: the token is bound to ONE workspace via env
+  // (BRAIN_MCP_WORKSPACE_ID), so a leaked token can't enumerate other tenants —
+  // there is no caller-supplied workspace id here. GET-only, fixed allow-list of
+  // read tools, content of restricted docs never leaves the building.
+  if (req.method === 'GET' && req.query?.action === 'mcp') {
+    const token = process.env.BRAIN_MCP_TOKEN;
+    const boundWs = process.env.BRAIN_MCP_WORKSPACE_ID;
+    const presented = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token || !boundWs || presented.length !== token.length || presented !== token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const mdb = adminClient();
+    const tool = String(req.query?.tool || '');
+    try {
+      if (tool === 'context') {
+        const { data: ws } = await mdb.from('workspaces').select('name, context').eq('id', boundWs).single();
+        return res.status(200).json({ workspace: ws?.name || null, context: ws?.context || {} });
+      }
+      if (tool === 'hunt') {
+        const { data: findings } = await mdb.from('hunt_findings')
+          .select('hunt_mode, severity, pattern, recommendation, created_at')
+          .eq('workspace_id', boundWs).eq('resolved', false)
+          .order('severity', { ascending: false }).order('created_at', { ascending: false }).limit(25);
+        return res.status(200).json({ findings: findings || [] });
+      }
+      if (tool === 'search') {
+        // Strip PostgREST-significant chars (, ( ) % *) before interpolating into
+        // the .or() filter string — defends against filter injection.
+        const q = String(req.query?.q || '').replace(/[,()%*]/g, ' ').trim().slice(0, 200);
+        if (!q) return res.status(400).json({ error: 'q required' });
+        // Only workspace-visible docs; never expose restricted-doc content via the tool.
+        const { data: docs } = await mdb.from('workspace_documents')
+          .select('source, doc_type, title, content, url, visibility')
+          .eq('workspace_id', boundWs)
+          .or('visibility.is.null,visibility.eq.workspace,visibility.eq.public')
+          .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
+          .limit(8);
+        const results = (docs || []).map(d => ({
+          title: d.title, source: d.source, doc_type: d.doc_type, url: d.url || null,
+          snippet: (d.content || '').slice(0, 600),
+        }));
+        return res.status(200).json({ query: q, results });
+      }
+      return res.status(400).json({ error: 'unknown tool' });
+    } catch (e) {
+      console.error('[brain] mcp tool=%s error:', tool, e.message);
+      return res.status(500).json({ error: 'Brain MCP read failed' });
+    }
+  }
+
   const user = await requireAuth(req, res);
   if (!user) return;
 
