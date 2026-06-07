@@ -974,7 +974,20 @@ export default async function handler(req, res) {
   // then OpenAI. This is what makes a brand-new workspace's daemon work
   // out-of-the-box instead of 503-ing until an admin adds a key.
   if (!keyRow) {
-    if (process.env.DEEPSEEK_API_KEY) {
+    // AUTO-ONBOARD: the shared Hermes gateway is the platform default daemon, so
+    // every company without an explicit key (all current + future signups) runs on
+    // a brain-connected Hermes agent automatically — no per-company deploy or DB
+    // row. The brain reaches it via the per-workspace context injected into `sys`;
+    // the cloud fallback below covers any gateway hiccup. Dedicated keys (Cobalt)
+    // override this.
+    if (process.env.HERMES_SHARED_GATEWAY_URL && process.env.HERMES_SHARED_API_KEY) {
+      keyRow = {
+        provider: 'hermes',
+        endpoint: process.env.HERMES_SHARED_GATEWAY_URL,
+        api_key:  process.env.HERMES_SHARED_API_KEY,
+        model:    'hermes-agent',
+      };
+    } else if (process.env.DEEPSEEK_API_KEY) {
       keyRow = {
         provider: 'deepseek',
         api_key:  process.env.DEEPSEEK_API_KEY,
