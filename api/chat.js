@@ -110,6 +110,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'anthropic/claude-sonnet-4-5',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },  // force a valid JSON envelope
       });
       const text = r.choices[0]?.message?.content ?? '';
       console.log('[chat] openrouter text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
@@ -144,6 +145,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'gpt-4o',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },  // force a valid JSON envelope
         ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
@@ -160,6 +162,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'deepseek-chat',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },  // force a valid JSON envelope
         ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
@@ -176,7 +179,10 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: sys }] },
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
+            // responseMimeType forces Gemini to emit a single valid JSON object —
+            // without it Gemini sometimes emits malformed JSON (e.g. a bad
+            // suggestions block) that breaks the envelope and renders raw.
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 }, responseMimeType: 'application/json' },
             contents: messages.map(m => ({
               role: m.role === 'assistant' ? 'model' : 'user',
               parts: [{ text: m.content }],
@@ -202,6 +208,7 @@ async function callProvider({ provider, api_key, endpoint, model }, sys, message
         model: model || 'mistral-large-latest',
         max_tokens: 4096,
         messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },  // force a valid JSON envelope
       });
       return r.choices[0]?.message?.content ?? '';
     }
@@ -543,6 +550,34 @@ function repairJsonEnvelope(text) {
   return null;
 }
 
+// Last-ditch salvage: when the envelope won't parse (one malformed block, e.g. a
+// bad "suggestions" entry), keep the blocks that DO parse on their own instead of
+// dumping the raw JSON into the chat. Scans the "blocks" array element-by-element.
+function salvageEnvelope(text) {
+  const bi = text.indexOf('"blocks"');
+  if (bi === -1) return null;
+  const arrStart = text.indexOf('[', bi);
+  if (arrStart === -1) return null;
+  const blocks = [];
+  let depth = 0, objStart = -1, inStr = false, esc = false;
+  for (let i = arrStart + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+    else if (ch === '}') { depth--; if (depth === 0 && objStart !== -1) {
+      try { const o = JSON.parse(text.slice(objStart, i + 1)); if (o && o.type) blocks.push(o); } catch {}
+      objStart = -1;
+    } }
+    else if (ch === ']' && depth === 0) break;  // end of the blocks array
+  }
+  if (!blocks.length) return null;
+  let suggestions = [];
+  const sm = text.match(/"suggestions"\s*:\s*\[([^\]]*)\]/);
+  if (sm) { try { suggestions = JSON.parse('[' + sm[1] + ']').filter(x => typeof x === 'string'); } catch {} }
+  return { blocks, suggestions };
+}
+
 // ── Response parser ───────────────────────────────────────────────────────────
 function parseJsonResponse(text) {
   if (!text) return { blocks: [{ type: 'text', md: 'No response.' }], suggestions: [] };
@@ -566,9 +601,13 @@ function parseJsonResponse(text) {
     }
   }
 
-  // Last resort before giving up: recover unclosed/truncated JSON.
+  // Recover unclosed/truncated JSON.
   const repaired = repairJsonEnvelope(t);
   if (repaired) return repaired;
+
+  // Salvage whatever blocks individually parse (one bad block won't dump raw JSON).
+  const salvaged = salvageEnvelope(t);
+  if (salvaged) return salvaged;
 
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
