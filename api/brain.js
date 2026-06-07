@@ -8,6 +8,7 @@ import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
+import { scrubDaemonMessages } from './_lib/scrub.js';
 import { provisionStaff } from './_lib/hermes_admin.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -913,6 +914,14 @@ export default async function handler(req, res) {
     if (body.action === 'detect_patterns') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await detectPatterns(workspaceId, db);
+      return res.status(200).json({ ok: true, ...result });
+    }
+
+    // Scrub historical raw-JSON daemon messages for THIS workspace (admin only).
+    // pass { dry_run: true } to preview. Idempotent; only touches leaked envelopes.
+    if (body.action === 'scrub_raw_messages') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const result = await scrubDaemonMessages(db, { workspaceId, dryRun: !!body.dry_run });
       return res.status(200).json({ ok: true, ...result });
     }
 
