@@ -42,15 +42,12 @@ image = (
 )
 
 secret = modal.Secret.from_name(f"hermes-{COMPANY}")
-
-# Persistent, SHARED Hermes home so per-user tool connections survive cold starts
-# AND so a connection written by the `admin` container is seen by the serving
-# `gateway` container (they are separate containers). This is what makes the
-# Zapier-style flow work: user connects a tool in WorkDaemon → admin `mcp add`
-# (with their OAuth token) → committed to this Volume → gateway reads it on start.
-HERMES_HOME = "/root/.hermes"
-home_vol = modal.Volume.from_name(f"hermes-home-{COMPANY}", create_if_missing=True)
-BASE = dict(image=image, secrets=[secret], memory=2048, volumes={HERMES_HOME: home_vol})
+# NOTE: a Volume CANNOT be mounted at /root/.hermes — the Hermes install populates
+# that path (skills/), and Modal refuses to mount over a non-empty image path. So
+# persistence for per-staff profiles / per-user tool connections must relocate the
+# Hermes home to an empty Volume-backed path (set HOME + seed skills on first boot)
+# — a deliberate next step, NOT a mount over /root/.hermes.
+BASE = dict(image=image, secrets=[secret], memory=2048)
 
 
 def _env():
@@ -102,6 +99,15 @@ def diag():
 
 
 # ── One-off: introspect the real `hermes mcp` CLI flags before wiring it ───────
+@app.function(timeout=120, **BASE)
+def caps():
+    # Feasibility probe: can one gateway serve many staff profiles routed per request?
+    for args in (["gateway", "--help"], ["profile", "--help"], ["--help"]):
+        print(f"\n===== hermes {' '.join(args)} =====", flush=True)
+        r = _hermes(*args, capture_output=True, text=True)
+        print((r.stdout or "") + (r.stderr or ""), flush=True)
+
+
 @app.function(timeout=180, **BASE)
 def inspect():
     import sys
@@ -268,10 +274,8 @@ def admin():
             try:
                 if payload.get("action") == "provision":
                     r = _provision(payload["staff_id"], payload.get("soul_md", ""), payload["provider"], payload["model"])
-                    home_vol.commit()  # persist the profile so the gateway sees it
                 elif payload.get("action") == "connect":
                     r = _connect(payload["name"], payload.get("command"), payload.get("args"), payload.get("url"), payload.get("auth"), payload.get("env"))
-                    home_vol.commit()  # persist the connection for the serving gateway
                 else:
                     r = {"ok": False, "error": "unknown action"}
             except Exception as e:
