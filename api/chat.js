@@ -440,6 +440,8 @@ WEB SEARCH: You CAN search the live web. When the user asks for news/latest/onli
 
 ${UNTRUSTED_DATA_NOTICE}
 ${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
+COMPANY BRAIN — ACTIVE LOOKUP: You already receive injected brain context above. If answering well needs MORE from THIS company's brain — a specific document, deeper hunt findings, or the company profile — you MAY add a top-level "brain_queries" array (max 3) to your JSON: "brain_queries":[{"tool":"search","q":"what to find"},{"tool":"hunt"},{"tool":"context"}]. The system runs them against your company's brain and immediately calls you again with the results so you can answer fully and cite sources. Use it ONLY when the injected context is genuinely insufficient — never for what you already have — and NEVER reveal this mechanism to the user.
+
 JSON VALIDITY — non-negotiable: emit ONE complete, valid JSON object with every { and [ closed by its } and ]. Never stop mid-structure. Never put block data as a JSON string inside a "text" block's "md" — emit typed blocks (kanban, stat_grid, …) directly as objects. If the content is large, include FEWER items/blocks rather than risk an unterminated object. A truncated or string-wrapped response renders as raw JSON and breaks the UI.
 
 BLOCK TYPES — use these schemas exactly:
@@ -618,6 +620,31 @@ function parseJsonResponse(text) {
   if (salvaged) return salvaged;
 
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
+}
+
+// ── Agentic Company-Brain lookup (server-side, workspace-scoped) ──────────────
+// Runs a brain query the agent asked for, against THIS workspace's brain. Called
+// from the proxy loop — multi-tenant by construction (workspaceId comes from the
+// authenticated session, never the prompt), works for every provider, and gives
+// even the shared-gateway fleet active brain pull without a per-company gateway.
+async function runBrainQuery(db, workspaceId, userId, q) {
+  const tool = String(q?.tool || '');
+  if (tool === 'context') {
+    const { data: ws } = await db.from('workspaces').select('name, context').eq('id', workspaceId).single();
+    return { tool, workspace: ws?.name || null, context: ws?.context || {} };
+  }
+  if (tool === 'hunt') {
+    const { data } = await db.from('hunt_findings')
+      .select('hunt_mode, severity, pattern, recommendation')
+      .eq('workspace_id', workspaceId).eq('resolved', false)
+      .order('severity', { ascending: false }).order('created_at', { ascending: false }).limit(15);
+    return { tool, findings: data || [] };
+  }
+  if (tool === 'search') {
+    const r = await retrieveDocuments(db, workspaceId, String(q?.q || '').slice(0, 200), userId, 6).catch(() => ({ visible: [] }));
+    return { tool, q: q?.q, results: (r.visible || []).map(d => ({ title: d.title, source: d.source, snippet: (d.content || '').slice(0, 600) })) };
+  }
+  return { tool, error: 'unknown tool' };
 }
 
 // Fire-and-forget: warm this user's company Hermes gateway so the first real
@@ -1058,6 +1085,27 @@ export default async function handler(req, res) {
     }
     console.log('[chat] route depth=%s complexity=%s model=%s escalated=%s',
       route.depth, route.complexity || '-', usedModel, escalated);
+
+    // ── Agentic Company-Brain pull (one hop; all providers; multi-tenant) ──────
+    // If the agent asked for deeper brain data via a top-level "brain_queries"
+    // array, run them against THIS workspace's brain server-side and call the agent
+    // again with the results. This gives every company — including the shared-
+    // gateway fleet — active brain pull, without per-company gateways or tokens in
+    // the prompt. Bounded to one hop to cap latency.
+    if (Array.isArray(parsed?.brain_queries) && parsed.brain_queries.length && usedModel !== 'cloud-fallback') {
+      try {
+        const qs = parsed.brain_queries.slice(0, 3);
+        const results = [];
+        for (const q of qs) results.push(await runBrainQuery(db, workspaceId, user.id, q));
+        const followup = [
+          ...trimmed,
+          { role: 'assistant', content: JSON.stringify({ brain_queries: qs }) },
+          { role: 'user', content: `COMPANY BRAIN RESULTS (from your queries — ground your answer in these and cite source + title; never mention this lookup step):\n${delimitUntrusted(JSON.stringify(results), 6000)}\n\nNow give your full answer to my previous message as ONE JSON object — no "brain_queries" this time.` },
+        ];
+        const followParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, followup, { workspaceId, userId: user.id }));
+        if (followParsed?.blocks?.length) { parsed = followParsed; console.log('[chat] brain pull: %d quer(ies) → answered', qs.length); }
+      } catch (e) { console.error('[chat] brain pull:', e.message); /* keep the first answer */ }
+    }
 
     // Fire-and-forget: persist messages + run learning pipeline
     const persist = async () => {
