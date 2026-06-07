@@ -132,6 +132,28 @@ export function decryptSecret(stored) {
   }
 }
 
+// ── Signed service tokens (HMAC, no expiry) ───────────────────────────────────
+// A per-company Brain-MCP token encodes its workspace_id, so ONE endpoint serves
+// every company with a single signing secret (no per-company env var). The Hermes
+// gateway holds this token; the brain endpoint verifies it and extracts the scope.
+function serviceSecret() {
+  return process.env.SERVICE_TOKEN_SECRET || process.env.OAUTH_STATE_SECRET || process.env.ENCRYPTION_KEY || 'workdaemon-dev-secret';
+}
+export function signServiceToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', serviceSecret()).update(body).digest('base64url');
+  return `wds_${body}.${sig}`;
+}
+export function verifyServiceToken(token) {
+  if (typeof token !== 'string' || !token.startsWith('wds_') || !token.includes('.')) return null;
+  const [body, sig] = token.slice(4).split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', serviceSecret()).update(body).digest('base64url');
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try { return JSON.parse(Buffer.from(body, 'base64url').toString()); } catch { return null; }
+}
+
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
 const _memBuckets = new Map(); // key → { count, resetAt }  (per-instance fallback)
