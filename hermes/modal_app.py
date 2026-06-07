@@ -33,8 +33,22 @@ COMPANY = os.environ.get("HERMES_COMPANY", "default")
 app = modal.App(f"workdaemon-hermes-{COMPANY}")
 
 # Official Hermes Agent image — ships the gateway / OpenAI-compatible API server.
-# fastapi is needed for the admin HTTP endpoint WorkDaemon calls.
-image = modal.Image.from_registry("nousresearch/hermes-agent", add_python="3.11").pip_install("fastapi[standard]")
+# The admin endpoint uses only Python stdlib (the Hermes image's venv has no pip).
+# /opt/data is non-empty in the image, but a Modal Volume can only mount on an
+# EMPTY path — so stash the image's defaults to /opt/data-seed and empty /opt/data;
+# _ensure_data() seeds the volume from it on first boot.
+image = (
+    modal.Image.from_registry("nousresearch/hermes-agent", add_python="3.11")
+    # The image's ENTRYPOINT is s6-overlay's /init, which requires PID 1; Modal
+    # runs our function instead, so clear it (we launch `hermes gateway run`).
+    .entrypoint([])
+    # Run as root so Hermes can write to the volume-mounted data dir (logs, profiles).
+    .dockerfile_commands(["USER root"])
+    .run_commands(
+        "mkdir -p /opt/data-seed && cp -a /opt/data/. /opt/data-seed/ 2>/dev/null || true",
+        "rm -rf /opt/data && mkdir -p /opt/data",
+    )
+)
 
 # Persistent per-company profile store (Hermes' ~/.hermes → /opt/data).
 volume = modal.Volume.from_name(f"hermes-{COMPANY}", create_if_missing=True)
@@ -42,24 +56,43 @@ volume = modal.Volume.from_name(f"hermes-{COMPANY}", create_if_missing=True)
 secret = modal.Secret.from_name(f"hermes-{COMPANY}")
 
 DATA = "/opt/data"
-BASE = dict(image=image, volumes={DATA: volume}, secrets=[secret])
+BASE = dict(image=image, volumes={DATA: volume}, secrets=[secret], memory=2048)
+
+
+def _ensure_data():
+    """Seed the (initially empty) Volume from the image's stashed defaults once."""
+    import shutil
+    if os.path.isdir(DATA) and not os.listdir(DATA) and os.path.isdir("/opt/data-seed"):
+        for item in os.listdir("/opt/data-seed"):
+            s, d = f"/opt/data-seed/{item}", f"{DATA}/{item}"
+            if os.path.isdir(s):
+                shutil.copytree(s, d, dirs_exist_ok=True)
+            else:
+                shutil.copy2(s, d)
+        volume.commit()
 
 
 # ── The always-on gateway: OpenAI-compatible API server on :8642 ──────────────
-@app.function(timeout=60 * 60, min_containers=1, **BASE)
-@modal.web_server(8642, startup_timeout=240)
+# Plain image: only clear the s6 entrypoint. Do NOT empty /opt/data or force USER
+# root — Hermes runs as its own user and writes to its built-in home; let it.
+image_plain = modal.Image.from_registry("nousresearch/hermes-agent", add_python="3.11").entrypoint([])
+
+
+@app.function(timeout=60 * 60, min_containers=1, image=image_plain, secrets=[secret], memory=2048)
+@modal.web_server(8642, startup_timeout=300)
 def gateway():
-    # API_SERVER_KEY is provided by the Modal secret; the server reads it.
+    # Use the image's default HERMES_HOME (owned + writable by the hermes user).
+    subprocess.run(["hermes", "profile", "create", "default"], check=False)
+    subprocess.run(["hermes", "-p", "default", "config", "set", "model.provider", "deepseek"], check=False)
+    subprocess.run(["hermes", "-p", "default", "config", "set", "model.default", "deepseek-chat"], check=False)
     os.environ["API_SERVER_ENABLED"] = "true"
-    os.environ.setdefault("HERMES_HOME", DATA)
-    # The OpenAI-compatible endpoint routes a request to the profile named in the
-    # request's `model` field (WorkDaemon passes model='<staff_id>').
-    subprocess.Popen(["hermes", "gateway", "run"])
+    subprocess.run(["hermes", "gateway", "run"])
 
 
 # ── Profile + tool ops (shared by the admin endpoint and `modal run`) ─────────
 def _provision(staff_id: str, soul_md: str, provider: str, model: str):
     """Create a per-staff Hermes profile: SOUL.md + cloud model + API server on."""
+    _ensure_data()
     os.environ.setdefault("HERMES_HOME", DATA)
     subprocess.run(["hermes", "profile", "create", staff_id], check=False)
     soul = pathlib.Path(f"{DATA}/profiles/{staff_id}/SOUL.md")
@@ -74,6 +107,7 @@ def _provision(staff_id: str, soul_md: str, provider: str, model: str):
 
 def _connect(staff_id: str, name: str, command=None, args=None, url=None, auth="oauth"):
     """`hermes -p <staff> mcp add <tool>` — the agent then acts on it itself."""
+    _ensure_data()
     os.environ.setdefault("HERMES_HOME", DATA)
     cmd = ["hermes", "-p", staff_id, "mcp", "add", name]
     if url:
@@ -101,19 +135,65 @@ def connect_tool(staff_id: str, name: str, command: str = None,
 
 
 # ── Admin HTTP endpoint — what WorkDaemon calls (stages 3 + 4) ────────────────
+# A tiny stdlib HTTP server on :8643 (no deps; the Hermes image venv has no pip).
 # POST { token, action: 'provision'|'connect', ... }. Token = HERMES_ADMIN_TOKEN
 # (in the Modal secret). Put this endpoint's URL + the token on the workspace's
 # Hermes integration row so api/_lib/hermes_admin.js can reach it.
-@app.function(**BASE)
-@modal.fastapi_endpoint(method="POST")
-def admin(payload: dict):
-    if not payload or payload.get("token") != os.environ.get("HERMES_ADMIN_TOKEN"):
-        return {"ok": False, "error": "unauthorized"}
-    action = payload.get("action")
-    if action == "provision":
-        return _provision(payload["staff_id"], payload.get("soul_md", ""),
-                          payload["provider"], payload["model"])
-    if action == "connect":
-        return _connect(payload["staff_id"], payload["name"], payload.get("command"),
-                       payload.get("args"), payload.get("url"), payload.get("auth", "oauth"))
-    return {"ok": False, "error": f"unknown action: {action}"}
+@app.function(timeout=60 * 60, min_containers=1, **BASE)
+@modal.web_server(8643, startup_timeout=240)
+def admin():
+    print("admin: booting", flush=True)
+    _ensure_data()
+    print("admin: data ready; starting http server on :8643", flush=True)
+    import json
+    import http.server
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, obj, code=200):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):  # health check
+            self._send({"ok": True, "service": "workdaemon-hermes-admin"})
+
+        def do_POST(self):
+            try:
+                n = int(self.headers.get("content-length", 0))
+                payload = json.loads(self.rfile.read(n) or b"{}")
+            except Exception as e:
+                return self._send({"ok": False, "error": f"bad json: {e}"}, 400)
+            if payload.get("token") != os.environ.get("HERMES_ADMIN_TOKEN"):
+                return self._send({"ok": False, "error": "unauthorized"}, 401)
+            action = payload.get("action")
+            try:
+                if action == "provision":
+                    r = _provision(payload["staff_id"], payload.get("soul_md", ""),
+                                   payload["provider"], payload["model"])
+                elif action == "connect":
+                    r = _connect(payload["staff_id"], payload["name"], payload.get("command"),
+                                 payload.get("args"), payload.get("url"), payload.get("auth", "oauth"))
+                else:
+                    r = {"ok": False, "error": f"unknown action: {action}"}
+            except Exception as e:
+                r = {"ok": False, "error": str(e)}
+            self._send(r)
+
+        def log_message(self, *a):
+            pass
+
+    # Threaded so Modal's readiness probe + real requests are handled concurrently.
+    import threading, socket, time
+    httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 8643), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(1)
+    try:
+        socket.create_connection(("127.0.0.1", 8643), timeout=3).close()
+        print("admin: SELF-CONNECT OK on 8643", flush=True)
+    except Exception as e:
+        print(f"admin: SELF-CONNECT FAIL: {e}", flush=True)
+    while True:
+        time.sleep(3600)
