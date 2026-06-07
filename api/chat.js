@@ -620,11 +620,27 @@ function parseJsonResponse(text) {
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
+// Fire-and-forget: warm this user's company Hermes gateway so the first real
+// message doesn't pay the scale-to-zero cold start. Best-effort; the cloud
+// fallback still covers any miss. Triggered on chat open (history GET).
+async function prewarmHermes(db, userId) {
+  try {
+    const { data: profile } = await db.from('profiles').select('workspace_id').eq('id', userId).single();
+    if (!profile?.workspace_id) return;
+    const { data: keys } = await db.from('workspace_api_keys')
+      .select('endpoint').eq('workspace_id', profile.workspace_id).eq('provider', 'hermes').limit(1);
+    const ep = keys?.[0]?.endpoint;
+    if (!ep) return;
+    fetch(ep.replace(/\/$/, ''), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
+  } catch { /* prewarm is best-effort */ }
+}
+
 // ── GET: chat history ─────────────────────────────────────────────────────────
 async function handleHistory(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
   const db = adminClient();
+  prewarmHermes(db, user.id); // fire-and-forget: warm the gateway while history loads
   const { data: rows, error } = await db
     .from('daemon_messages')
     .select('id, role, content, created_at')
