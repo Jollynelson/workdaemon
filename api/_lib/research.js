@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { decryptSecret } from './security.js';
+import { decryptSecret, assertSafeUrl } from './security.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared research engine: web search (Brave) + LLM synthesis.
@@ -37,6 +37,9 @@ export async function braveSearch(query, { count = 8, freshness = null } = {}) {
   try {
     const r = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
       headers: { Accept: 'application/json', 'X-Subscription-Token': key },
+      // Hard timeout: a hung Brave request must never stall the daemon turn (it
+      // ran inline before the LLM call, so no cap meant the whole chat hung → 504).
+      signal: AbortSignal.timeout(6000),
     });
     if (!r.ok) {
       console.warn('[research] brave status=%d query=%s', r.status, query.slice(0, 60));
@@ -74,6 +77,109 @@ export async function braveSearchMany(queries, opts = {}) {
     snippets,
     sources: [...seen],
   };
+}
+
+// ── Real page reading (snippets → full text) ──────────────────────────────────
+// Brave/Tavily search give a title + ~200-char description. That's why "go
+// online and read X" produced thin answers — the model never saw the page. This
+// fetches the page itself, SSRF-guarded (assertSafeUrl resolves DNS + blocks
+// private ranges) and strips it to plain text so the daemon can ground on the
+// actual content. Bounded by a hard timeout and a byte cap.
+function htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article|br)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
+export async function fetchPageText(url, { maxChars = 4000, timeoutMs = 6000 } = {}) {
+  let safe;
+  try { safe = await assertSafeUrl(url); } catch { return null; } // SSRF / bad URL
+  try {
+    const r = await fetch(safe, {
+      headers: { 'User-Agent': 'WorkDaemonBot/1.0 (+https://workdaemon.com)', Accept: 'text/html,text/plain' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) return null;
+    const ct = r.headers.get('content-type') || '';
+    if (!/text\/html|text\/plain|application\/xhtml/.test(ct)) return null;
+    // Cap the body we pull into memory (~400KB) before stripping tags.
+    const raw = (await r.text()).slice(0, 400_000);
+    const text = (ct.includes('html') ? htmlToText(raw) : raw).slice(0, maxChars);
+    return text.length > 80 ? text : null; // ignore near-empty / JS-only shells
+  } catch { return null; } // timeout / network / parse → skip this page
+}
+
+// ── Tavily: search API that returns extracted page content, not just snippets ──
+// Preferred when TAVILY_API_KEY is set — one call gives ranked results with a
+// `content` field already extracted, so no separate page-fetch round trips.
+export async function tavilySearch(query, { count = 6, freshness = null } = {}) {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) return null; // signal "not configured" so callers can fall back
+  try {
+    const r = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        api_key: key,
+        query,
+        max_results: count,
+        search_depth: 'basic',
+        include_answer: false,
+        topic: freshness ? 'news' : 'general',
+        ...(freshness === 'pw' ? { days: 7 } : freshness === 'pm' ? { days: 30 } : {}),
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) { console.warn('[research] tavily status=%d', r.status); return { grounded: false, snippets: [], sources: [] }; }
+    const d = await r.json();
+    const snippets = (d?.results || []).slice(0, count).map(x => ({
+      title: x.title,
+      description: x.content ? String(x.content).slice(0, 300) : '',
+      content: x.content ? String(x.content).slice(0, 4000) : '', // full extract
+      url: x.url,
+      age: null,
+    }));
+    return { grounded: snippets.length > 0, snippets, sources: snippets.map(s => s.url).filter(Boolean) };
+  } catch (e) { console.warn('[research] tavily error:', e.message); return { grounded: false, snippets: [], sources: [] }; }
+}
+
+// ── webResearch: the orchestrator the daemon actually calls ───────────────────
+// Tier 1: Tavily (real content in one call) when configured.
+// Tier 2: Brave for ranking, then fetch + extract the top pages for real text.
+// Either way snippets carry a `content` field (full page text) when available,
+// so the daemon grounds on pages, not 200-char blurbs. Fully timeout-bounded.
+export async function webResearch(queries, { count = 6, freshness = null, readPages = 3 } = {}) {
+  const qs = [...new Set((queries || []).filter(Boolean))];
+  if (!qs.length) return { grounded: false, snippets: [], sources: [] };
+
+  // Tier 1 — Tavily (null = not configured → fall through to Brave).
+  if (process.env.TAVILY_API_KEY) {
+    const runs = await Promise.all(qs.map(q => tavilySearch(q, { count, freshness })));
+    const seen = new Set(); const snippets = [];
+    for (const run of runs || []) for (const s of (run?.snippets || [])) {
+      if (s.url && seen.has(s.url)) continue;
+      if (s.url) seen.add(s.url);
+      snippets.push(s);
+    }
+    if (snippets.length) return { grounded: true, snippets, sources: [...seen] };
+  }
+
+  // Tier 2 — Brave ranking + real page reads on the top results.
+  const base = await braveSearchMany(qs, { count, freshness });
+  if (!base.snippets.length) return base;
+  const toRead = base.snippets.filter(s => s.url).slice(0, readPages);
+  const pages = await Promise.all(toRead.map(s => fetchPageText(s.url).catch(() => null)));
+  pages.forEach((text, i) => { if (text) toRead[i].content = text; });
+  return { ...base, grounded: true };
 }
 
 // ── Resolve an LLM (workspace key first, then env fallback) ───────────────────

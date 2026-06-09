@@ -4,7 +4,7 @@ import {
   assertSafeUrl, decryptSecret, enforceRateLimit,
   sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, parseBody,
 } from './_lib/security.js';
-import { braveSearchMany, roleToTags } from './_lib/research.js';
+import { webResearch, roleToTags } from './_lib/research.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
 import { retrieveDocuments } from './_lib/ingestion.js';
@@ -41,17 +41,21 @@ async function runWebSearch(userText, { wsName, wsIndustry, companyDesc }) {
     }
   }
   if (!queries.length) return { grounded: false, snippets: [] };
-  return braveSearchMany([...new Set(queries)], { count: 6, freshness });
+  // webResearch reads the actual pages (Tavily, or Brave + page-extract) so the
+  // daemon grounds on real content, not 200-char blurbs. Fully timeout-bounded.
+  return webResearch([...new Set(queries)], { count: 6, freshness, readPages: 3 });
 }
 
 // Format fetched results as delimited UNTRUSTED context (web text can carry
 // prompt-injection, so it must never sit in instruction position).
 function buildWebContext(web, { attempted }) {
   if (web?.snippets?.length) {
-    const lines = web.snippets.slice(0, 6).map((s, i) =>
-      `${i + 1}. ${s.title || '(untitled)'}${s.age ? ` [${s.age}]` : ''}\n   ${s.description || ''}\n   ${s.url || ''}`
-    ).join('\n');
-    return `\nLIVE WEB RESULTS — you ran a live web search just now for this query; these are fresh external facts:\n${delimitUntrusted(lines, 5000)}\nGround your answer in these results and cite sources inline as (domain.com). You DID perform a live web search — never claim you "cannot search online".\n`;
+    const lines = web.snippets.slice(0, 6).map((s, i) => {
+      // Prefer the extracted page body when we have it; fall back to the snippet.
+      const body = (s.content && s.content.length > (s.description || '').length) ? s.content : (s.description || '');
+      return `${i + 1}. ${s.title || '(untitled)'}${s.age ? ` [${s.age}]` : ''}\n   ${body}\n   ${s.url || ''}`;
+    }).join('\n');
+    return `\nLIVE WEB RESULTS — you ran a live web search just now for this query and read the pages; these are fresh external facts:\n${delimitUntrusted(lines, 9000)}\nGround your answer in these results and cite sources inline as (domain.com). You DID perform a live web search — never claim you "cannot search online".\n`;
   }
   if (attempted) {
     return `\nWEB SEARCH: ran a live search for this query but it returned no usable results. Answer from your general knowledge and briefly note the search was thin — do NOT claim you are permanently unable to search the web.\n`;
@@ -98,7 +102,25 @@ function reasoningParams(model) {
 }
 
 // ── AI provider dispatcher ────────────────────────────────────────────────────
-async function callProvider({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {
+// Per-call wall-clock cap. The function's maxDuration is 45s; a single hung
+// provider (e.g. a cold self-hosted gateway) used to block the whole turn until
+// the platform killed it → 504 after minutes. Capping each call means a stall
+// throws fast and the cloud fallback / configured-model retry takes over.
+const LLM_CALL_TIMEOUT_MS = Number(process.env.CHAT_LLM_TIMEOUT_MS) || 24000;
+
+function withTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+function callProvider(cfg, sys, messages, identity = {}) {
+  return withTimeout(callProviderInner(cfg, sys, messages, identity), LLM_CALL_TIMEOUT_MS, `provider:${cfg.provider}`);
+}
+
+async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {
 
@@ -515,8 +537,8 @@ ${connectedTools.length
 PERMISSION: L1=read only | L2=action_confirm then wait | L3=execute then action_done
 
 SESSION START — when message is "[SESSION_START]":
-Return: boot block first, then a text block that greets ${firstName || 'the user'} by name with ENERGY and role-flattery. Open with a punchy, genuine hook about why their role matters — e.g. for a Head of People: "HR is the engine room of ${wsName || 'this company'} — the people side is where culture and retention are won. Good to have you, ${firstName || 'there'}." Make ${roleLabel} feel seen and important.
-Then, to learn more about them, surface 1–2 current themes or trends shaping the ${roleLabel} world right now (from your general knowledge) and ask which one is live for them — turn the greeting into a way to gather context. Keep it warm, sharp, and short.
+Return: boot block first, then ONE short text block. Greet ${firstName || 'the user'} by name in a single warm line — no speeches.
+Then immediately be USEFUL, not generic. BANNED: macro/boardroom filler that any company could read ("AI is moving from bolt-on to OS", "post-ZIRP reality", "capital is selective", "every decision compounds", "the loneliest seat"). Those are the opposite of impressive — they signal you know nothing specific about ${wsName || 'this company'}. Instead, lead with the SHARPEST concrete thing you can offer a ${roleLabel} at ${wsName || 'this company'} given what you actually know (company context, memories, hunt findings, connected tools above) — a specific observation, a likely pressing problem for THIS role, or a concrete thing you can do for them right now. If you genuinely have no company-specific data yet, say so plainly in one line and ask the single most useful question to get oriented (what they're working on this week / what would make today easier) — do NOT pad with trend commentary to fill space. Keep it tight: 3–4 sentences max, then 3 concrete suggestions.
 ${huntFindings?.filter(f => f.severity === 'critical').length > 0
   ? `CRITICAL: Surface ${huntFindings.filter(f => f.severity === 'critical').length} critical finding(s) as alert blocks immediately.`
   : ''}
@@ -965,6 +987,12 @@ export default async function handler(req, res) {
     return parseJsonResponse(await callProvider(fb, sys, trimmed, { workspaceId, userId: user.id }));
   };
 
+  // Wall-clock budget for the whole LLM phase. Optional extra hops (escalation,
+  // brain-pull) are skipped once we're close to the function's maxDuration so a
+  // slow first answer can't push the turn into a platform 504.
+  const phaseDeadline = Date.now() + 38000;
+  const budgetLeft = () => phaseDeadline - Date.now();
+
   try {
     // ── Two-tier brain routing + escalation (spec §10 / ChangeSpec §2b) ────────
     // Route shallow turns to the workspace's fast model, deep/complex turns to a
@@ -983,7 +1011,8 @@ export default async function handler(req, res) {
       const identity = { workspaceId, userId: user.id };
       parsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, trimmed, identity));
       // Escalation gate: a fast-tier answer that came back thin → retry on deep.
-      if (tiers.twoTier && !goDeep && responseIsThin(parsed)) {
+      // Skip when the time budget is too tight to afford another full call.
+      if (tiers.twoTier && !goDeep && responseIsThin(parsed) && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
         try {
           const deepParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: tiers.deep }, sys, trimmed, identity));
           if (!responseIsThin(deepParsed)) { parsed = deepParsed; usedModel = tiers.deep; escalated = true; }
@@ -1010,7 +1039,7 @@ export default async function handler(req, res) {
     // again with the results. This gives every company — including the shared-
     // gateway fleet — active brain pull, without per-company gateways or tokens in
     // the prompt. Bounded to one hop to cap latency.
-    if (Array.isArray(parsed?.brain_queries) && parsed.brain_queries.length && usedModel !== 'cloud-fallback') {
+    if (Array.isArray(parsed?.brain_queries) && parsed.brain_queries.length && usedModel !== 'cloud-fallback' && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
       try {
         const qs = parsed.brain_queries.slice(0, 3);
         const results = [];

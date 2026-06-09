@@ -12,7 +12,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser]             = useState(null);
   const [profile, setProfile]       = useState(null);
-  const [token, setToken]           = useState(() => sessionStorage.getItem('wd-token'));
+  const [token, setToken]           = useState(() => localStorage.getItem('wd-token'));
   const [loading, setLoading]       = useState(true);
   // True once fetchProfile has resolved at least once for the current session.
   // Lets routing guards distinguish "still fetching" from "fetched, no profile".
@@ -36,12 +36,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   const storeSession = useCallback((accessToken) => {
-    sessionStorage.setItem('wd-token', accessToken);
+    localStorage.setItem('wd-token', accessToken);
     setToken(accessToken);
   }, []);
 
   const clearSession = useCallback(() => {
-    sessionStorage.removeItem('wd-token');
+    localStorage.removeItem('wd-token');
     setToken(null);
     setUser(null);
     setProfile(null);
@@ -63,7 +63,7 @@ export function AuthProvider({ children }) {
       }
 
       // Restore from sessionStorage
-      const stored = sessionStorage.getItem('wd-token');
+      const stored = localStorage.getItem('wd-token');
       if (stored) {
         const ok = await fetchProfile(stored);
         if (!ok) clearSession();
@@ -139,7 +139,7 @@ export function AuthProvider({ children }) {
     }), []);
 
   const refreshProfile = useCallback(async () => {
-    const stored = sessionStorage.getItem('wd-token');
+    const stored = localStorage.getItem('wd-token');
     if (stored) await fetchProfile(stored);
   }, [fetchProfile]);
 
