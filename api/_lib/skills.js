@@ -227,6 +227,47 @@ export async function learnTargetedSkill(db, { workspaceId, need, llm = null }) 
   } catch { return null; }
 }
 
+// EVENT-TRIGGERED anticipation: a specific new signal just landed (a fresh
+// finding, an upcoming meeting). Decide on the spot whether responding well needs
+// a skill the daemons lack, and learn it now — tighter latency than the nightly
+// pass. Short cooldown + dedupe keep it from storming. Fire-and-forget.
+async function learnedWithin(db, workspaceId, minutes) {
+  const since = new Date(Date.now() - minutes * 60000).toISOString();
+  const { data } = await db.from('brain_skills').select('id').eq('workspace_id', workspaceId).eq('learned_from', 'discovered').gte('created_at', since).limit(1);
+  return (data || []).length > 0;
+}
+export async function anticipateForEvent(db, { workspaceId, signal, llm = null, cooldownMin = 45 }) {
+  try {
+    if (!signal || String(signal).length < 6) return null;
+    if (await learnedWithin(db, workspaceId, cooldownMin)) return null; // anti-storm
+    llm = llm || await resolveLLM(workspaceId, db);
+    if (!llm) return null;
+    const { haveList } = await _companySnapshot(db, workspaceId);
+    const sys = 'You decide if a NEW signal requires a capability the company\'s daemons lack. Be strict — most do not. Return ONLY JSON.';
+    const user = `New signal: "${String(signal).slice(0, 300)}"
+Skills already available: ${haveList || '(none)'}
+If responding well to this signal needs a reusable capability NOT in the list, return {"needed":true,"skill":"short name","query":"search query to learn it"}. Otherwise {"needed":false}.`;
+    const j = extractJson(await callLLM(llm, sys, user, { maxTokens: 300 }));
+    if (!j?.needed || !j.skill) return null;
+    const added = await _learnGaps(db, { workspaceId, llm, gaps: [{ skill: j.skill, query: j.query || j.skill }], category: 'anticipated' });
+    return added[0] || null;
+  } catch { return null; }
+}
+
+// SKILL DECAY / CURATION: keep the library sharp as it grows. Archive self-acquired
+// (discovered/anticipated) workspace skills that have gone unused past a TTL. Never
+// touches seeded, experience-learned, or global skills. No LLM — cheap, cron-safe.
+export async function curateSkills(db, { workspaceId, ttlDays = 30 } = {}) {
+  try {
+    const cutoff = new Date(Date.now() - ttlDays * 864e5).toISOString();
+    const { data } = await db.from('brain_skills')
+      .update({ status: 'archived', updated_at: new Date().toISOString() })
+      .eq('workspace_id', workspaceId).eq('learned_from', 'discovered').eq('status', 'active')
+      .eq('usage_count', 0).lt('created_at', cutoff).select('slug');
+    return { archived: (data || []).length, slugs: (data || []).map(s => s.slug) };
+  } catch (e) { console.warn('[skills] curate failed:', e.message); return { archived: 0 }; }
+}
+
 // Combined proactive pass for the nightly cron: reactive gaps + anticipatory foresight.
 export async function growSkills(db, { workspaceId, force = false } = {}) {
   if (!force && await discoveredRecently(db, workspaceId)) return { ran: false, reason: 'cooldown', added: [] };
@@ -234,7 +275,8 @@ export async function growSkills(db, { workspaceId, force = false } = {}) {
   if (!llm) return { ran: false, reason: 'no_llm', added: [] };
   const a = await discoverSkills(db, { workspaceId, llm, max: 2, force: true });
   const b = await anticipateSkills(db, { workspaceId, llm, max: 2 });
-  return { ran: true, added: [...(a.added || []), ...(b.added || [])] };
+  const curated = await curateSkills(db, { workspaceId });   // prune stale unused self-acquired skills
+  return { ran: true, added: [...(a.added || []), ...(b.added || [])], archived: curated.archived };
 }
 
 // MCP surface helpers (read-only) — the Hermes agent pulls skills from the brain.

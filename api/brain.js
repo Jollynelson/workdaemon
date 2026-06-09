@@ -5,7 +5,7 @@ import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceT
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { unifiedCalendar } from './_lib/calendar.js';
-import { listSkills, getSkill, growSkills } from './_lib/skills.js';
+import { listSkills, getSkill, growSkills, anticipateForEvent } from './_lib/skills.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
@@ -1018,6 +1018,14 @@ export default async function handler(req, res) {
     if (body.action === 'hunt_scan') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       const result = await runHuntScan(workspaceId, db);
+      // EVENT-TRIGGERED anticipation: a fresh finding may need a skill we lack —
+      // learn it now (fire-and-forget, gated) so the daemon is ready next time.
+      if (result?.new_findings > 0) {
+        db.from('hunt_findings').select('pattern').eq('workspace_id', workspaceId).eq('resolved', false)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()
+          .then(({ data }) => data?.pattern && anticipateForEvent(db, { workspaceId, signal: data.pattern }))
+          .catch(() => {});
+      }
       return res.status(200).json(result);
     }
 

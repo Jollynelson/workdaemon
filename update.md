@@ -99,3 +99,41 @@ The JS/api side had no test suite (only the Python `finetuning/` suite, 101 pass
   - `security.test.js` — signed service tokens: round-trip, tampered sig/body, garbage, and cross-secret rejection (the per-company-token IDOR guarantee).
   - `envelope.test.js` — the full `parseJsonResponse` recovery ladder (clean / fenced / prose-wrapped / `<thinking>`-stripped / truncation-repair / one-bad-block salvage / raw-text fallback / empty).
 - So the render fix, per-company token security, and history-scrub logic are now under automated test. **Next candidates:** oauth token parsing, executor per-staff token selection.
+
+## 2026-06-09 · Calendar, autonomous Daemons, and a self-growing Brain Skill Library
+
+Long session, all merged to `main` and deployed (prod DB migrations applied). Commits `acc2b71` → `0fd9fac` (+ this entry).
+
+### 0. Prod data hygiene
+- Deleted all non-demo accounts/workspaces (kept only the Cobalt demo): `scripts/delete_nondemo.mjs` (safety-guarded inverse of `delete_demo.mjs`). 7 workspaces + 5 users + child rows removed.
+
+### 1. Calendar (Google + Microsoft + Notion)
+- `api/_lib/calendar.js` aggregates upcoming events across Google Calendar + Microsoft 365 (live) + a Notion database (pseudo-calendar; Notion has no real calendar API). Mounted at `GET /api/brain?tab=calendar`; new **Calendar** sidebar tab. Needs `GOOGLE_/MICROSOFT_/NOTION_CLIENT_ID`+`_SECRET` on Vercel — see `docs/CALENDAR_OAUTH_SETUP.md`.
+
+### 2. Daemons — n8n-style, brain-native automations
+- Generalized the outreach `agents` engine into autonomous **knowledge daemons**: give one a mission + schedule, it reads the Company Brain and proposes approve-first actions (task/note/draft/alert) that materialize into real tasks/memory/inbox items. `migration_daemons_general.sql` (agents.kind + `daemon_actions` queue); `runKnowledgeDaemon` + `approveAction` in `agent_engine.js`; new **Daemons** sidebar tab.
+
+### 3. Hermes-first daemons
+- `chat.js` was already Hermes-first (shared-gateway auto-onboard). Made the autonomous engine + brain synthesis match: `resolveLLM`/`callLLM` now prefer the shared Hermes gateway with a DeepSeek resilience fallback. Daemons run Hermes by default **once `HERMES_SHARED_GATEWAY_URL` + `HERMES_SHARED_API_KEY` are set on Vercel** (still pending → currently DeepSeek). See `docs/HERMES_DAEMON_DEFAULT.md`.
+
+### 4. Brain Skill Library — the "Skills" pillar
+The brain HOLDS skills and PASSES them to every daemon at runtime (the agentskills.io runtime-injection model — confirmed via the 2026 Hermes-skill sources; NOT fine-tuned into weights).
+- `migration_brain_skills.sql` + `scripts/seed_brain_skills.mjs`: `brain_skills` table (global + per-workspace), seeded with **18 best-practice skills** mapped to the five pillars (Memory · Skills · Soul · Crons · Self-improvement).
+- `api/_lib/skills.js`: relevant-skill selection + prompt rendering (injected into the autonomous daemon engine AND `api/chat.js`), MCP exposure (`?action=mcp&tool=list_skills|get_skill` → the Hermes agent pulls the same library), and a **SKILLS tab** in the Brain page.
+
+### 5. Self-growing skills (reactive → autonomous → anticipatory)
+- **Learn from approvals:** `learnSkillFromAction` distills a reusable skill when you approve/edit a daemon action.
+- **Discover online:** `discoverSkills` finds current capability gaps, searches the web (Brave), and learns grounded skills with source URLs. `migration_brain_skills_discovered.sql` adds `learned_from='discovered'`.
+- **Anticipate (super brain):** `anticipateSkills` forecasts skills the company will need in 1–3 months — from trajectory, upcoming calendar, open signals, and rising question topics — and pre-learns them before anyone asks.
+- **Self-extend (super daemon):** a knowledge daemon that hits a capability it lacks mid-run names the `skill_gap`; `learnTargetedSkill` learns it on the spot.
+- **Event-triggered:** a fresh hunt finding fires `anticipateForEvent` → learns a needed skill immediately (gated/deduped).
+- **Decay/curation:** `curateSkills` archives self-acquired skills that go unused past a 30-day TTL (never touches seeded/experience/global).
+- Wiring: `growSkills` (reactive + anticipatory + curation) runs in the nightly brain cron per workspace (cooldown-gated) and behind the **"Discover skills online"** button. Discovery needs `BRAVE_SEARCH_API_KEY` (set in prod).
+- Verified live on Cobalt: seeded 18; learn-loop minted a skill from an approval; discovery learned 3 gap skills; anticipation forecast EBITDA-modeling / win-loss-battlecards / SOC2-automation; self-extension + event-trigger + curation all confirmed.
+
+### Also
+- Installed the `social` / `content-strategy` / `video` marketing skills into the repo (`.agents/skills/`, `skills-lock.json`).
+
+### Open items (yours, not code)
+- Set Calendar OAuth creds on Vercel (`docs/CALENDAR_OAUTH_SETUP.md`).
+- Set `HERMES_SHARED_*` env + keep the gateway warm to flip all daemons to Hermes (`docs/HERMES_DAEMON_DEFAULT.md`).
