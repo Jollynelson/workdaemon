@@ -105,45 +105,16 @@ async function discoveredRecently(db, workspaceId, days = DISCOVERY_COOLDOWN_DAY
   return (data || []).length > 0;
 }
 
-export async function discoverSkills(db, { workspaceId, llm = null, max = 3, force = false } = {}) {
-  if (!force && await discoveredRecently(db, workspaceId)) return { ran: false, reason: 'cooldown', added: [] };
-  llm = llm || await resolveLLM(workspaceId, db);
-  if (!llm) return { ran: false, reason: 'no_llm', added: [] };
-
-  // 1. What does this company need? Use its context + objectives + current library.
-  const [{ data: ws }, { data: agents }, { data: have }] = await Promise.all([
-    db.from('workspaces').select('name, industry, context').eq('id', workspaceId).single(),
-    db.from('agents').select('objective').eq('workspace_id', workspaceId).limit(10),
-    db.from('brain_skills').select('name,slug').or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(200),
-  ]);
-  const ctx = ws?.context && typeof ws.context === 'object'
-    ? Object.entries(ws.context).filter(([, v]) => v && typeof v === 'string').map(([k, v]) => `${k}: ${v}`).join('\n') : '';
-  const objectives = (agents || []).map(a => a.objective).filter(Boolean).join(' · ');
-  const haveList = (have || []).map(s => s.name).join(', ');
-
-  const gapSys = 'You identify the highest-leverage agent SKILLS a company is missing. A skill is a reusable capability/playbook (e.g. "cohort retention analysis", "PLG onboarding teardown"). Return ONLY JSON.';
-  const gapUser = `Company: ${ws?.name || ''} (${ws?.industry || ''})
-Context:\n${ctx || '(none)'}
-Daemon missions: ${objectives || '(none)'}
-Skills already in the library: ${haveList || '(none)'}
-
-Name up to ${max} skills this company's daemons are MISSING that would most improve their work — capabilities NOT already covered above. For each, give a web search query that would surface how to do it well.
-Return JSON {"gaps":[{"skill":"short skill name","why":"one line","query":"a search query to learn it"}]}.`;
-  const gapTxt = await callLLM(llm, gapSys, gapUser, { maxTokens: 700 });
-  const gaps = (extractJson(gapTxt)?.gaps || []).slice(0, max);
-  if (!gaps.length) return { ran: true, added: [], reason: 'no_gaps' };
-
+// Shared: turn a list of {skill, query} gaps into learned, web-grounded skills.
+async function _learnGaps(db, { workspaceId, llm, gaps, category = 'discovered' }) {
   const added = [];
   for (const g of gaps) {
     try {
-      // 2. Go online: search for how to do this skill well.
       const res = await braveSearch(g.query || g.skill, { count: 6 });
       if (!res.snippets.length) continue;
       const corpus = res.snippets.map((s, i) => `[${i}] ${s.title}\n${s.description}\n${s.url}`).join('\n\n');
-
-      // 3. Distill a grounded, reusable skill from what it found.
       const sys = 'You write agent skills (SKILL.md playbooks) grounded in web research. Return ONLY JSON. No fluff — a concrete, reusable playbook.';
-      const user = `Turn the best of this research into ONE reusable skill for "${g.skill}".
+      const user = `Turn the best of this research into ONE reusable skill for "${g.skill}".${g.why ? ` (Needed because: ${g.why})` : ''}
 RESEARCH:\n${corpus}\n
 Return JSON {"name":"short skill name","trigger_description":"when to use it (one sentence)","body":"4-6 line actionable playbook grounded in the research","tags":["..."],"pillar":"skills|content|research|growth|productivity|knowledge|devops|memory","source_idx":the [i] of the most useful source}.`;
       const txt = await callLLM(llm, sys, user, { maxTokens: 700 });
@@ -151,27 +122,119 @@ Return JSON {"name":"short skill name","trigger_description":"when to use it (on
       if (!j?.name || !j.body) continue;
       const slug = slugify(j.name);
       if (!slug) continue;
-
-      // 4. Dedupe (global or workspace already has it).
       const { data: dupe } = await db.from('brain_skills').select('id')
         .eq('slug', slug).or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(1).maybeSingle();
       if (dupe) continue;
-
       const src = res.snippets[j.source_idx]?.url || res.snippets[0]?.url || g.query || null;
       const { error } = await db.from('brain_skills').insert({
-        workspace_id: workspaceId, slug, name: j.name, pillar: j.pillar || 'skills', category: 'discovered',
+        workspace_id: workspaceId, slug, name: j.name, pillar: j.pillar || 'skills', category,
         trigger_description: j.trigger_description || j.name, body: j.body,
         tags: Array.isArray(j.tags) ? j.tags.slice(0, 8) : [], source_url: src,
-        learned_from: 'discovered', confidence: 0.5,
+        learned_from: 'discovered', confidence: category === 'anticipated' ? 0.45 : 0.5,
       });
-      if (!error) added.push({ slug, name: j.name, source_url: src });
-    } catch (e) { console.warn('[skills] discover gap failed:', e.message); }
+      if (!error) added.push({ slug, name: j.name, category, source_url: src });
+    } catch (e) { console.warn('[skills] learnGap failed:', e.message); }
   }
   if (added.length) {
     await recordSignal(db, { workspaceId, domain: 'agent', subjectType: 'skill_discovery', subjectId: workspaceId,
-      signal: 'discovered', value: added.length, meta: { slugs: added.map(a => a.slug) } }).catch(() => {});
+      signal: 'discovered', value: added.length, meta: { slugs: added.map(a => a.slug), category } }).catch(() => {});
   }
-  return { ran: true, added };
+  return added;
+}
+
+async function _companySnapshot(db, workspaceId) {
+  const [{ data: ws }, { data: agents }, { data: have }] = await Promise.all([
+    db.from('workspaces').select('name, industry, context').eq('id', workspaceId).single(),
+    db.from('agents').select('objective').eq('workspace_id', workspaceId).limit(10),
+    db.from('brain_skills').select('name').or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(200),
+  ]);
+  const ctx = ws?.context && typeof ws.context === 'object'
+    ? Object.entries(ws.context).filter(([, v]) => v && typeof v === 'string').map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+  return { ws: ws || {}, ctx, objectives: (agents || []).map(a => a.objective).filter(Boolean).join(' · '), haveList: (have || []).map(s => s.name).join(', ') };
+}
+
+// REACTIVE: skills the company is missing for what it's doing NOW.
+export async function discoverSkills(db, { workspaceId, llm = null, max = 3, force = false } = {}) {
+  if (!force && await discoveredRecently(db, workspaceId)) return { ran: false, reason: 'cooldown', added: [] };
+  llm = llm || await resolveLLM(workspaceId, db);
+  if (!llm) return { ran: false, reason: 'no_llm', added: [] };
+  const { ws, ctx, objectives, haveList } = await _companySnapshot(db, workspaceId);
+  const sys = 'You identify the highest-leverage agent SKILLS a company is missing. A skill is a reusable capability/playbook. Return ONLY JSON.';
+  const user = `Company: ${ws.name || ''} (${ws.industry || ''})
+Context:\n${ctx || '(none)'}
+Daemon missions: ${objectives || '(none)'}
+Skills already in the library: ${haveList || '(none)'}
+
+Name up to ${max} skills this company's daemons are MISSING that would most improve their work NOW — capabilities NOT already covered. For each, give a web search query to learn it.
+Return JSON {"gaps":[{"skill":"short name","why":"one line","query":"search query"}]}.`;
+  const gaps = (extractJson(await callLLM(llm, sys, user, { maxTokens: 700 }))?.gaps || []).slice(0, max);
+  if (!gaps.length) return { ran: true, added: [], reason: 'no_gaps' };
+  return { ran: true, added: await _learnGaps(db, { workspaceId, llm, gaps, category: 'discovered' }) };
+}
+
+// ANTICIPATORY (the "super brain"): forecast skills the company will need SOON —
+// before anyone asks — from its trajectory, upcoming calendar, market trends, and
+// what its people are just starting to ask about. Pre-learns them ahead of need.
+export async function anticipateSkills(db, { workspaceId, llm = null, max = 3 } = {}) {
+  llm = llm || await resolveLLM(workspaceId, db);
+  if (!llm) return { ran: false, reason: 'no_llm', added: [] };
+  const { ws, ctx, objectives, haveList } = await _companySnapshot(db, workspaceId);
+  // Forward signals: upcoming calendar, recent external findings, emerging question topics.
+  let upcoming = '', findings = '', questions = '';
+  try {
+    const { unifiedCalendar } = await import('./calendar.js');
+    const cal = await unifiedCalendar(db, workspaceId);
+    upcoming = (cal.events || []).slice(0, 12).map(e => `${new Date(e.start).toISOString().slice(0, 10)} ${e.title}`).join('\n');
+  } catch { /* calendar optional */ }
+  try {
+    const { data: f } = await db.from('hunt_findings').select('pattern').eq('workspace_id', workspaceId).eq('resolved', false).order('created_at', { ascending: false }).limit(10);
+    findings = (f || []).map(x => `- ${x.pattern}`).join('\n');
+  } catch { /* */ }
+  try {
+    const since = new Date(Date.now() - 21 * 864e5).toISOString();
+    const { data: q } = await db.from('brain_interactions').select('user_message').eq('workspace_id', workspaceId).gte('created_at', since).order('created_at', { ascending: false }).limit(30);
+    questions = (q || []).map(x => (x.user_message || '').slice(0, 90)).filter(Boolean).slice(0, 20).join('\n');
+  } catch { /* */ }
+
+  const sys = 'You are a foresight engine for an AI company brain. You predict capabilities a company will need SOON — before they realize it — and pre-equip its daemons. Return ONLY JSON.';
+  const user = `Company: ${ws.name || ''} (${ws.industry || ''})
+Context (stage, priorities, projects):\n${ctx || '(none)'}
+Daemon missions: ${objectives || '(none)'}
+UPCOMING CALENDAR:\n${upcoming || '(none connected)'}
+OPEN FINDINGS / SIGNALS:\n${findings || '(none)'}
+WHAT PEOPLE ARE STARTING TO ASK:\n${questions || '(none)'}
+Skills already in the library: ${haveList || '(none)'}
+
+Forecast up to ${max} skills this company will likely NEED in the next 1–3 months but does NOT yet have and probably hasn't realized it needs — based on trajectory, what's on the calendar, emerging signals, and rising questions. Be specific and forward-looking, not generic. For each, a search query to learn it.
+Return JSON {"gaps":[{"skill":"short name","why":"why they'll need it soon","query":"search query"}]}.`;
+  const gaps = (extractJson(await callLLM(llm, sys, user, { maxTokens: 800 }))?.gaps || []).slice(0, max);
+  if (!gaps.length) return { ran: true, added: [], reason: 'no_gaps' };
+  return { ran: true, added: await _learnGaps(db, { workspaceId, llm, gaps, category: 'anticipated' }) };
+}
+
+// SUPER DAEMON self-extension: a daemon hit a capability it lacked mid-run — learn
+// that ONE skill now (deduped) so the next run is stronger. Fire-and-forget.
+export async function learnTargetedSkill(db, { workspaceId, need, llm = null }) {
+  try {
+    if (!need || String(need).length < 4) return null;
+    const slug = slugify(need);
+    const { data: dupe } = await db.from('brain_skills').select('id').eq('slug', slug).or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(1).maybeSingle();
+    if (dupe) return null;
+    llm = llm || await resolveLLM(workspaceId, db);
+    if (!llm) return null;
+    const added = await _learnGaps(db, { workspaceId, llm, gaps: [{ skill: need, query: need }], category: 'discovered' });
+    return added[0] || null;
+  } catch { return null; }
+}
+
+// Combined proactive pass for the nightly cron: reactive gaps + anticipatory foresight.
+export async function growSkills(db, { workspaceId, force = false } = {}) {
+  if (!force && await discoveredRecently(db, workspaceId)) return { ran: false, reason: 'cooldown', added: [] };
+  const llm = await resolveLLM(workspaceId, db);
+  if (!llm) return { ran: false, reason: 'no_llm', added: [] };
+  const a = await discoverSkills(db, { workspaceId, llm, max: 2, force: true });
+  const b = await anticipateSkills(db, { workspaceId, llm, max: 2 });
+  return { ran: true, added: [...(a.added || []), ...(b.added || [])] };
 }
 
 // MCP surface helpers (read-only) — the Hermes agent pulls skills from the brain.

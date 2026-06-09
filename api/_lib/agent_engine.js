@@ -5,7 +5,7 @@
 import { braveSearch, resolveLLM, callLLM, extractJson } from './research.js';
 import { CHANNELS, getChannel, isSuppressed, normAddress, complianceFooter } from './channels/index.js';
 import { recordSignal, distillAgentInsights, pickVariant } from './learning.js';
-import { relevantSkills, renderSkillsBlock, bumpSkillUsage, learnSkillFromAction } from './skills.js';
+import { relevantSkills, renderSkillsBlock, bumpSkillUsage, learnSkillFromAction, learnTargetedSkill } from './skills.js';
 
 const DEFAULTS = { cadenceHours: 24, maxTargetsPerRun: 10, maxDraftsPerRun: 5 };
 
@@ -155,11 +155,15 @@ ${avoid}
 
 Propose up to ${cfg.maxActionsPerRun} high-value actions that advance the mission, each grounded in the context/findings above.
 Allowed types: "task" (work to assign), "note" (a fact/insight to save to memory), "draft" (a message/post/doc to write), "alert" (something a human should see now).
-Return JSON {"actions":[{"type":..., "title":"short imperative title", "body":"the task detail / note / draft text", "rationale":"one sentence: which context or finding makes this worth doing now", "assignee_role": "ceo|sales|product|engineering|marketing|hr|finance|null"}]}.
+Return JSON {"actions":[{"type":..., "title":"short imperative title", "body":"the task detail / note / draft text", "rationale":"one sentence: which context or finding makes this worth doing now", "assignee_role": "ceo|sales|product|engineering|marketing|hr|finance|null"}], "skill_gap": "if a specific capability/playbook you LACKED would have made this run materially better, name it in 2-5 words (else null)"}.
 Only propose what the context actually supports. Fewer, sharper actions beat filler.`;
     const txt = await callLLM(llm, sys, user, { maxTokens: 1600 });
     const parsed = extractJson(txt);
     const actions = Array.isArray(parsed?.actions) ? parsed.actions : [];
+    // SUPER DAEMON: if the daemon noticed a capability it lacked, the brain goes
+    // and learns that skill now (deduped, fire-and-forget) so the next run is better.
+    const gap = parsed?.skill_gap && typeof parsed.skill_gap === 'string' && parsed.skill_gap.toLowerCase() !== 'null' ? parsed.skill_gap.trim() : null;
+    if (gap) { logLines.push(`Self-extension: learning "${gap}"`); learnTargetedSkill(db, { workspaceId: agent.workspace_id, need: gap, llm }).catch(() => {}); }
     const VALID = new Set(['task', 'note', 'draft', 'alert', 'message']);
 
     for (const a of actions.slice(0, cfg.maxActionsPerRun)) {

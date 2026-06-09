@@ -5,7 +5,7 @@ import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceT
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { unifiedCalendar } from './_lib/calendar.js';
-import { listSkills, getSkill, discoverSkills } from './_lib/skills.js';
+import { listSkills, getSkill, growSkills } from './_lib/skills.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
@@ -711,10 +711,11 @@ export default async function handler(req, res) {
         catch (e) { console.error('[brain] auditBrain ws=%s:', w.id, e.message); }
         try { if (elapsed() < BUDGET_MS) await runDaemonLearning(cronDb, w.id); }
         catch (e) { console.error('[brain] runDaemonLearning ws=%s:', w.id, e.message); }
-        // The brain teaches itself: discover + learn new skills from the web
-        // (cooldown-gated inside, so it runs at most every few days per workspace).
-        try { if (elapsed() < BUDGET_MS) await discoverSkills(cronDb, { workspaceId: w.id, max: 3 }); }
-        catch (e) { console.error('[brain] discoverSkills ws=%s:', w.id, e.message); }
+        // The brain teaches itself — reactively (current gaps) AND anticipatorily
+        // (forecasts what it'll need next from trajectory/calendar/signals), learning
+        // skills before anyone asks. Cooldown-gated inside (~every few days/workspace).
+        try { if (elapsed() < BUDGET_MS) await growSkills(cronDb, { workspaceId: w.id }); }
+        catch (e) { console.error('[brain] growSkills ws=%s:', w.id, e.message); }
       }
       // SELF-IMPROVEMENT (platform): propose fixes for recurring code errors
       // (global, propose-only, ~weekly-gated, never opens a PR).
@@ -1020,11 +1021,11 @@ export default async function handler(req, res) {
       return res.status(200).json(result);
     }
 
-    // ── Autonomous skill discovery: the brain finds + learns new skills online ──
+    // ── Proactive skill growth: reactive gaps + anticipatory foresight ─────────
     if (body.action === 'discover_skills') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
       if (!(await enforceRateLimit(res, { key: `discover:${workspaceId}`, max: 4, windowSec: 3600 }))) return;
-      const result = await discoverSkills(db, { workspaceId, max: 3, force: true });
+      const result = await growSkills(db, { workspaceId, force: true });
       return res.status(200).json(result);
     }
 
