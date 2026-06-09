@@ -134,6 +134,7 @@ The brain HOLDS skills and PASSES them to every daemon at runtime (the agentskil
 ### Also
 - Installed the `social` / `content-strategy` / `video` marketing skills into the repo (`.agents/skills/`, `skills-lock.json`).
 
-### Open items (yours, not code)
+### Open items (yours, not code) — DEFERRED, owner to tackle later
+The only two things still gated (documented, not code). Owner said: "I would tackle it later."
 - Set Calendar OAuth creds on Vercel (`docs/CALENDAR_OAUTH_SETUP.md`).
 - Set `HERMES_SHARED_*` env + keep the gateway warm to flip all daemons to Hermes (`docs/HERMES_DAEMON_DEFAULT.md`).
