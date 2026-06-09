@@ -50,6 +50,16 @@ const icons = {
       <path d="M9 9h.01M15 9h.01M9 15h.01M15 15h.01M12 12h.01" />
     </svg>
   ),
+  calendar: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
+  daemons: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="8" width="16" height="12" rx="2" /><path d="M12 8V4" /><circle cx="12" cy="3" r="1" /><path d="M9 13h.01M15 13h.01" /><path d="M8 20v2M16 20v2" />
+    </svg>
+  ),
   settings: (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
@@ -269,6 +279,8 @@ export default function Sidebar({
           <div style={{ marginBottom: 24 }}>
             <p className="wd-label" style={{ padding: '0 12px', marginBottom: 8 }}>WORKSPACE</p>
             <NavItem to="/app/daemon"       icon={icons.daemon}       label="My Daemon"    onClick={handleNavClick} />
+            <NavItem to="/app/daemons"      icon={icons.daemons}      label="Daemons"      onClick={handleNavClick} />
+            <NavItem to="/app/calendar"     icon={icons.calendar}     label="Calendar"     onClick={handleNavClick} />
             <NavItem to="/app/tasks"        icon={icons.tasks}        label="Tasks"        badge={taskCount || null} onClick={handleNavClick} />
             <NavItem to="/app/inbox"        icon={icons.inbox}        label="Inbox"        badge={inboxCount || null} onClick={handleNavClick} />
             <NavItem to="/app/integrations" icon={icons.integrations} label="Integrations" onClick={handleNavClick} />

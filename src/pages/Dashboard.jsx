@@ -2354,6 +2354,308 @@ function AssignComposer({ members, token, onDone }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CALENDAR — unified Google + Microsoft + Notion-database view
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAL_PROVIDERS = [
+  { id: 'google',    label: 'Google Calendar', color: '#1a73e8' },
+  { id: 'microsoft', label: 'Microsoft 365',   color: '#0078d4' },
+  { id: 'notion',    label: 'Notion (database)', color: '#191919' },
+];
+
+async function startOAuth(token, provider) {
+  const r = await fetch('/api/workspace/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: 'oauth_start', provider }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (d.url) window.location.href = d.url;
+  else alert(d.error || `${provider} is not configured yet (missing client credentials).`);
+}
+
+function CalendarPage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const { token } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/brain?tab=calendar', { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Failed to load');
+      setData(await r.json()); setError(null);
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { if (token) load(); }, [token, load]);
+
+  const connected = new Set(data?.connected || []);
+  const events = data?.events || [];
+  const groups = [];
+  let lastDay = null;
+  for (const ev of events) {
+    const day = new Date(ev.start).toDateString();
+    if (day !== lastDay) { groups.push({ day, events: [] }); lastDay = day; }
+    groups[groups.length - 1].events.push(ev);
+  }
+  const fmtTime = (ev) => ev.allDay ? 'All day'
+    : new Date(ev.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const fmtDay = (s) => new Date(s).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const provColor = (p) => (CAL_PROVIDERS.find(x => x.id === p) || {}).color || '#4172f5';
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg }}>
+      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+        <p className="wd-label-blue" style={{ marginBottom: 6 }}>SCHEDULING</p>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 18 }}>Calendar</h1>
+
+        {/* Connect row */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+          {CAL_PROVIDERS.map(p => {
+            const on = connected.has(p.id);
+            return (
+              <button key={p.id} type="button" disabled={on} onClick={() => startOAuth(token, p.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderRadius: 9,
+                  background: on ? c.stat : c.card, border: `1px solid ${on ? '#10b981' : c.cardBorder}`,
+                  cursor: on ? 'default' : 'pointer', color: c.text, fontFamily: 'var(--inter)', fontSize: 13,
+                }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: on ? '#10b981' : provColor(p.id) }} />
+                {on ? `${p.label} · connected` : `Connect ${p.label}`}
+              </button>
+            );
+          })}
+        </div>
+
+        {data?.errors && Object.keys(data.errors).length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <BlockAlert block={{ level: 'warning', content: 'Some calendars could not be read: ' + Object.entries(data.errors).map(([k, v]) => `${k} (${v})`).join(', ') }} />
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={56} />)}</div>
+        ) : error ? (
+          <BlockAlert block={{ level: 'danger', content: `Failed to load calendar: ${error}` }} />
+        ) : connected.size === 0 ? (
+          <EmptyState icon="◷" title="No calendar connected" subtitle="Connect Google, Microsoft, or a Notion database above to see your upcoming events here — and let your daemons reason over your schedule." />
+        ) : events.length === 0 ? (
+          <EmptyState icon="◷" title="No upcoming events" subtitle="Nothing in the next 30 days across your connected calendars." />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {groups.map(g => (
+              <div key={g.day}>
+                <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.12em', marginBottom: 9 }}>{fmtDay(g.day).toUpperCase()}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {g.events.map((ev, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 12, padding: '11px 14px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 9, alignItems: 'center' }}>
+                      <span style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, background: provColor(ev.provider), flexShrink: 0 }} />
+                      <div style={{ minWidth: 76, fontFamily: 'var(--mono)', fontSize: 11, color: c.text2 }}>{fmtTime(ev)}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--inter)', fontSize: 14, color: c.text, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
+                        {(ev.location || (ev.attendees || []).length > 0) && (
+                          <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, marginTop: 2 }}>
+                            {ev.location || ''}{ev.location && ev.attendees?.length ? ' · ' : ''}{ev.attendees?.length ? `${ev.attendees.length} guest${ev.attendees.length > 1 ? 's' : ''}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.08em', color: provColor(ev.provider), textTransform: 'uppercase' }}>{ev.provider}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DAEMONS — autonomous knowledge automations (n8n-style, brain-native)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DAEMON_SCHEDULES = [
+  { label: 'Every hour',     cron: '0 * * * *' },
+  { label: 'Every 6 hours',  cron: '0 */6 * * *' },
+  { label: 'Daily (8am)',    cron: '0 8 * * *' },
+  { label: 'Weekly (Mon)',   cron: '0 8 * * 1' },
+];
+
+function AutoDaemonsPage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const { token } = useAuth();
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [selected, setSelected] = useState(null);   // detail payload
+  const [form, setForm] = useState({ name: '', objective: '', schedule: '0 8 * * *' });
+
+  const api = useCallback(async (body) => {
+    const r = await fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    return r.json().catch(() => ({}));
+  }, [token]);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/agents', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json().catch(() => ({}));
+      setAgents(d.agents || []);
+    } finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { if (token) load(); }, [token, load]);
+
+  const openDetail = async (id) => {
+    const r = await fetch(`/api/agents?id=${id}`, { headers: { Authorization: `Bearer ${token}` } });
+    setSelected(await r.json().catch(() => null));
+  };
+
+  const create = async () => {
+    if (!form.name.trim() || !form.objective.trim()) return;
+    setBusy(true);
+    await api({ action: 'create', kind: 'knowledge', name: form.name.trim(), objective: form.objective.trim(), schedule: form.schedule });
+    setForm({ name: '', objective: '', schedule: '0 8 * * *' }); setShowCreate(false);
+    await load(); setBusy(false);
+  };
+  const runNow = async (id) => { setBusy(true); await api({ action: 'run', id }); await load(); if (selected?.agent?.id === id) await openDetail(id); setBusy(false); };
+  const toggle = async (a) => { setBusy(true); await api({ action: a.status === 'active' ? 'pause' : 'resume', id: a.id }); await load(); setBusy(false); };
+  const decide = async (action, actionId) => { setBusy(true); await api({ action, actionId }); if (selected?.agent?.id) await openDetail(selected.agent.id); setBusy(false); };
+
+  const proposed = (selected?.actions || []).filter(a => a.status === 'proposed');
+  const history  = (selected?.actions || []).filter(a => a.status !== 'proposed');
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg }}>
+      <div style={{ maxWidth: 860, margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}>
+          <div>
+            <p className="wd-label-blue" style={{ marginBottom: 6 }}>AUTONOMOUS</p>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Daemons</h1>
+          </div>
+          <button type="button" onClick={() => { setShowCreate(s => !s); setSelected(null); }}
+            style={{ padding: '9px 16px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+            {showCreate ? 'Cancel' : '+ New daemon'}
+          </button>
+        </div>
+        <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text3, marginBottom: 22, maxWidth: 560 }}>
+          Autonomous workers that run on a schedule, read your Company Brain, and propose actions for you to approve — like an automation builder, but grounded in what your company already knows.
+        </p>
+
+        {/* Create form */}
+        {showCreate && (
+          <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: 18, marginBottom: 24 }}>
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>NAME</label>
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Outreach Daemon, Competitor Watch"
+              style={{ width: '100%', margin: '6px 0 14px', padding: '10px 12px', borderRadius: 8, background: c.inputBg, border: `1px solid ${c.inputBorder}`, color: c.text, fontFamily: 'var(--inter)', fontSize: 14, boxSizing: 'border-box' }} />
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>MISSION — what should it do, on its own?</label>
+            <textarea value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))} rows={3}
+              placeholder="e.g. Find mid-market finance teams evaluating Ramp and draft a tailored intro for each."
+              style={{ width: '100%', margin: '6px 0 14px', padding: '10px 12px', borderRadius: 8, background: c.inputBg, border: `1px solid ${c.inputBorder}`, color: c.text, fontFamily: 'var(--inter)', fontSize: 14, resize: 'vertical', boxSizing: 'border-box' }} />
+            <label style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.1em' }}>SCHEDULE</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '8px 0 16px' }}>
+              {DAEMON_SCHEDULES.map(s => (
+                <button key={s.cron} type="button" onClick={() => setForm(f => ({ ...f, schedule: s.cron }))}
+                  style={{ padding: '7px 12px', borderRadius: 8, fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer',
+                    background: form.schedule === s.cron ? 'rgba(65,114,245,0.12)' : c.stat,
+                    border: `1px solid ${form.schedule === s.cron ? '#4172f5' : c.cardBorder}`, color: form.schedule === s.cron ? '#4172f5' : c.text2 }}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" disabled={busy || !form.name.trim() || !form.objective.trim()} onClick={create}
+              style={{ padding: '10px 18px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (busy || !form.name.trim() || !form.objective.trim()) ? 0.5 : 1 }}>
+              {busy ? 'Creating…' : 'Create daemon'}
+            </button>
+          </div>
+        )}
+
+        {/* Detail view */}
+        {selected?.agent && (
+          <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: 18, marginBottom: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+              <h2 style={{ fontFamily: 'var(--inter)', fontSize: 17, fontWeight: 600, color: c.text }}>{selected.agent.name}</h2>
+              <button type="button" onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: c.text3, cursor: 'pointer', fontSize: 18 }}>×</button>
+            </div>
+            <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginBottom: 14 }}>{selected.agent.objective}</p>
+
+            {proposed.length > 0 ? (
+              <>
+                <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.12em', marginBottom: 10 }}>PROPOSED ACTIONS — APPROVE TO EXECUTE</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                  {proposed.map(act => (
+                    <div key={act.id} style={{ padding: '12px 14px', background: c.stat, border: `1px solid ${c.cardBorder}`, borderRadius: 9 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 5 }}>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.08em', color: '#4172f5', textTransform: 'uppercase', border: '1px solid rgba(65,114,245,0.3)', borderRadius: 4, padding: '1px 5px' }}>{act.type}</span>
+                        <span style={{ fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, color: c.text }}>{act.title}</span>
+                      </div>
+                      {act.body && <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, margin: '0 0 6px', whiteSpace: 'pre-wrap' }}>{act.body}</p>}
+                      {act.rationale && <p style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, fontStyle: 'italic', margin: '0 0 8px' }}>Why: {act.rationale}</p>}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" disabled={busy} onClick={() => decide('approve_action', act.id)}
+                          style={{ padding: '6px 14px', borderRadius: 7, background: '#10b981', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer' }}>Approve</button>
+                        <button type="button" disabled={busy} onClick={() => decide('reject_action', act.id)}
+                          style={{ padding: '6px 14px', borderRadius: 7, background: 'transparent', border: `1px solid ${c.cardBorder}`, color: c.text2, fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer' }}>Dismiss</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text3 }}>No actions awaiting approval. Run the daemon to generate proposals.</p>
+            )}
+
+            {history.length > 0 && (
+              <details style={{ marginTop: 16 }}>
+                <summary style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.12em', cursor: 'pointer' }}>HISTORY ({history.length})</summary>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                  {history.map(a => (
+                    <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontFamily: 'var(--inter)', fontSize: 13, color: c.text2 }}>
+                      <span style={{ color: a.status === 'done' ? '#10b981' : a.status === 'rejected' ? c.text3 : '#ef4444' }}>{a.status === 'done' ? '✓' : a.status === 'rejected' ? '–' : '×'}</span>
+                      <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.title}</span>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3 }}>{a.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* List */}
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} height={64} />)}</div>
+        ) : agents.length === 0 && !showCreate ? (
+          <EmptyState icon="◎" title="No daemons yet" subtitle="Create your first autonomous daemon — give it a mission and a schedule, and it will propose brain-grounded actions for you to approve." cta="+ New daemon" onCta={() => setShowCreate(true)} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {agents.map(a => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: c.card, border: `1px solid ${selected?.agent?.id === a.id ? '#4172f5' : c.cardBorder}`, borderRadius: 11, cursor: 'pointer' }}
+                onClick={() => openDetail(a.id)}>
+                <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: a.status === 'active' ? '#10b981' : c.text4 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--inter)', fontSize: 15, fontWeight: 500, color: c.text }}>{a.name}
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 8, color: c.text3, marginLeft: 8, letterSpacing: '0.06em' }}>{a.kind === 'knowledge' ? 'KNOWLEDGE' : 'OUTREACH'}</span>
+                  </div>
+                  <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>{a.objective}</div>
+                </div>
+                <button type="button" disabled={busy} onClick={e => { e.stopPropagation(); runNow(a.id); }}
+                  style={{ padding: '6px 12px', borderRadius: 7, background: c.stat, border: `1px solid ${c.cardBorder}`, color: c.text2, fontFamily: 'var(--inter)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Run now</button>
+                <button type="button" disabled={busy} onClick={e => { e.stopPropagation(); toggle(a); }}
+                  style={{ padding: '6px 12px', borderRadius: 7, background: 'transparent', border: `1px solid ${c.cardBorder}`, color: c.text3, fontFamily: 'var(--inter)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>{a.status === 'active' ? 'Pause' : 'Resume'}</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TasksPage() {
   const c = useC();
   const { isMobile } = useViewport();
@@ -3764,6 +4066,8 @@ export default function Dashboard() {
         <Routes>
           <Route path="/"            element={<Navigate to="daemon" replace />} />
           <Route path="daemon"       element={<DaemonPage onMenu={openMenu} onChatChange={setInChat} />} />
+          <Route path="daemons"      element={<AutoDaemonsPage />} />
+          <Route path="calendar"     element={<CalendarPage />} />
           <Route path="brain"        element={<AdminRoute isAdmin={isAdmin}><BrainPage /></AdminRoute>} />
           <Route path="tasks"        element={<TasksPage />} />
           <Route path="inbox"        element={<InboxPage />} />

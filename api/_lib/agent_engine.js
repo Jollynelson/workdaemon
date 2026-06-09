@@ -96,8 +96,102 @@ Return JSON {"subject": "short email subject (email only, else null)", "body": "
   return extractJson(txt) || { subject: null, body: txt };
 }
 
-// ── ONE RUN of an agent's loop ───────────────────────────────────────────────
+// ── KNOWLEDGE DAEMON: read the Company Brain on a schedule, propose actions ───
+// The n8n-style, knowledge-native path. No prospecting — it grounds itself in the
+// company's own context + findings + memory and proposes concrete actions
+// (tasks/notes/drafts/alerts) into daemon_actions for approve-first execution.
+async function gatherBrainContext(db, agent) {
+  const [{ data: ws }, { data: findings }, { data: recentActs }] = await Promise.all([
+    db.from('workspaces').select('name, industry, context').eq('id', agent.workspace_id).single(),
+    db.from('hunt_findings').select('pattern, recommendation, severity, affected_roles')
+      .eq('workspace_id', agent.workspace_id).eq('resolved', false)
+      .order('created_at', { ascending: false }).limit(12),
+    db.from('daemon_actions').select('title')
+      .eq('agent_id', agent.id).in('status', ['proposed', 'approved', 'done'])
+      .order('created_at', { ascending: false }).limit(30),
+  ]);
+  return { ws: ws || {}, findings: findings || [], priorTitles: (recentActs || []).map(a => a.title) };
+}
+
+export async function runKnowledgeDaemon(db, agent) {
+  const cfg = { maxActionsPerRun: 5, ...(agent.config || {}) };
+  const { data: run } = await db.from('agent_runs').insert({
+    agent_id: agent.id, workspace_id: agent.workspace_id, status: 'running', phase: 'plan',
+  }).select().single();
+  const metrics = { proposed: 0 };
+  const logLines = [];
+  try {
+    const llm = await resolveLLM(agent.workspace_id, db);
+    if (!llm) throw new Error('No LLM configured for workspace');
+
+    await db.from('agent_runs').update({ phase: 'research' }).eq('id', run.id);
+    const { ws, findings, priorTitles } = await gatherBrainContext(db, agent);
+    const ctx = ws.context && typeof ws.context === 'object'
+      ? Object.entries(ws.context).filter(([, v]) => v && typeof v === 'string').map(([k, v]) => `${k}: ${v}`).join('\n')
+      : String(ws.context || '');
+    const findingsBlock = findings.length
+      ? findings.map(f => `- [${f.severity}] ${f.pattern} → ${f.recommendation || ''}`).join('\n')
+      : '(no open findings)';
+    const avoid = priorTitles.length ? `\nDo NOT repeat any of these already-proposed actions:\n- ${priorTitles.join('\n- ')}` : '';
+
+    await db.from('agent_runs').update({ phase: 'draft' }).eq('id', run.id);
+    const sys = `You are an autonomous operations daemon for the company "${ws.name || 'the company'}". `
+      + `You act on the company's own knowledge to advance one mission. You DON'T chat — you propose concrete, `
+      + `grounded actions a human will approve. Return ONLY JSON.`;
+    const user = `Mission: "${agent.objective}"
+
+COMPANY CONTEXT:
+${ctx || '(none provided)'}
+
+OPEN BRAIN FINDINGS:
+${findingsBlock}
+${avoid}
+
+Propose up to ${cfg.maxActionsPerRun} high-value actions that advance the mission, each grounded in the context/findings above.
+Allowed types: "task" (work to assign), "note" (a fact/insight to save to memory), "draft" (a message/post/doc to write), "alert" (something a human should see now).
+Return JSON {"actions":[{"type":..., "title":"short imperative title", "body":"the task detail / note / draft text", "rationale":"one sentence: which context or finding makes this worth doing now", "assignee_role": "ceo|sales|product|engineering|marketing|hr|finance|null"}]}.
+Only propose what the context actually supports. Fewer, sharper actions beat filler.`;
+    const txt = await callLLM(llm, sys, user, { maxTokens: 1600 });
+    const parsed = extractJson(txt);
+    const actions = Array.isArray(parsed?.actions) ? parsed.actions : [];
+    const VALID = new Set(['task', 'note', 'draft', 'alert', 'message']);
+
+    for (const a of actions.slice(0, cfg.maxActionsPerRun)) {
+      const type = VALID.has(a.type) ? a.type : 'task';
+      const title = String(a.title || '').trim().slice(0, 200);
+      if (!title) continue;
+      await db.from('daemon_actions').insert({
+        agent_id: agent.id, workspace_id: agent.workspace_id, run_id: run.id,
+        type, title, body: String(a.body || '').slice(0, 4000),
+        rationale: a.rationale ? String(a.rationale).slice(0, 500) : null,
+        payload: { assignee_role: a.assignee_role || null }, status: 'proposed',
+      });
+      metrics.proposed++;
+    }
+    logLines.push(`Proposed ${metrics.proposed} actions grounded in ${findings.length} findings`);
+
+    const cadenceHours = cfg.cadenceHours || 24;
+    const nextRun = new Date(Date.now() + cadenceHours * 3600 * 1000).toISOString();
+    await db.from('agents').update({ last_run_at: new Date().toISOString(), next_run_at: nextRun }).eq('id', agent.id);
+    await db.from('agent_runs').update({
+      status: 'done', phase: 'measure', metrics, log: logLines.join('\n'), finished_at: new Date().toISOString(),
+    }).eq('id', run.id);
+    return { ok: true, runId: run.id, metrics };
+  } catch (e) {
+    await db.from('agent_runs').update({
+      status: 'error', error: e.message, log: logLines.join('\n'), finished_at: new Date().toISOString(),
+    }).eq('id', run.id);
+    await recordSignal(db, {
+      workspaceId: agent.workspace_id, domain: 'codebase', subjectType: 'error', subjectId: 'agent_engine.runKnowledgeDaemon',
+      signal: 'error', meta: { where: 'agent_engine.runKnowledgeDaemon', message: e.message },
+    });
+    return { ok: false, runId: run.id, error: e.message };
+  }
+}
+
+// ── ONE RUN of an agent's loop (dispatch by kind) ────────────────────────────
 export async function runAgent(db, agent) {
+  if (agent.kind === 'knowledge') return runKnowledgeDaemon(db, agent);
   const cfg = { ...DEFAULTS, ...(agent.config || {}) };
   const { data: run } = await db.from('agent_runs').insert({
     agent_id: agent.id, workspace_id: agent.workspace_id, status: 'running', phase: 'plan',
@@ -214,6 +308,73 @@ export async function runAgent(db, agent) {
     });
     return { ok: false, runId: run.id, error: e.message };
   }
+}
+
+// ── Approve a proposed knowledge-daemon action → materialize it ──────────────
+// Resolve an assignee_role hint to a workspace member (best-effort, substring match).
+async function resolveRoleUser(db, workspaceId, role) {
+  if (!role) return null;
+  const { data: members } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const ids = (members || []).map(m => m.user_id);
+  if (!ids.length) return null;
+  const { data: profs } = await db.from('profiles').select('id, role').in('id', ids);
+  const r = String(role).toLowerCase();
+  const hit = (profs || []).find(p => (p.role || '').toLowerCase().includes(r));
+  return hit?.id || null;
+}
+
+export async function approveAction(db, { workspaceId, actionId, userId, edits = {} }) {
+  const { data: act } = await db.from('daemon_actions')
+    .select('*, agents(name)').eq('id', actionId).eq('workspace_id', workspaceId).single();
+  if (!act) return { ok: false, error: 'Action not found' };
+  if (act.status !== 'proposed') return { ok: false, error: `Action already ${act.status}` };
+  const title = edits.title ?? act.title;
+  const body = edits.body ?? act.body;
+  let result = '';
+  try {
+    if (act.type === 'task') {
+      const assignee = await resolveRoleUser(db, workspaceId, act.payload?.assignee_role);
+      const { data: task } = await db.from('tasks').insert({
+        workspace_id: workspaceId, title, description: body, status: 'todo', priority: 'P2',
+        assignee_id: assignee, created_by: userId, routed_by_brain: true,
+      }).select('id').single();
+      if (assignee) await db.from('inbox_items').insert({
+        workspace_id: workspaceId, user_id: assignee, type: 'task', source: 'daemon',
+        title: `${act.agents?.name || 'A daemon'} assigned you: ${title}`, body: body || '',
+        metadata: { task_id: task?.id, event_type: 'assignment', from: act.agents?.name }, read: false,
+      });
+      result = `task ${task?.id || ''}`;
+    } else if (act.type === 'note') {
+      await db.from('daemon_memory').insert({
+        user_id: userId, workspace_id: workspaceId, key: 'daemon-note-' + Math.random().toString(36).slice(2, 8),
+        value: body || title, memory_type: 'insight',
+      });
+      result = 'saved to memory';
+    } else { // draft | message | alert → land in the approver's inbox
+      await db.from('inbox_items').insert({
+        workspace_id: workspaceId, user_id: userId, type: 'alert', source: 'daemon',
+        title: `${act.agents?.name || 'Daemon'}: ${title}`, body: body || '',
+        metadata: { event_type: act.type, daemon: act.agents?.name, draft: act.type !== 'alert' ? body : null }, read: false,
+      });
+      result = 'sent to inbox';
+    }
+    await db.from('daemon_actions').update({
+      status: 'done', approved_by: userId, title, body, result, acted_at: new Date().toISOString(),
+    }).eq('id', actionId);
+    await recordSignal(db, { workspaceId, domain: 'agent', subjectType: 'daemon_action', subjectId: actionId, signal: 'approved', meta: { agent_id: act.agent_id, type: act.type } });
+    return { ok: true, result };
+  } catch (e) {
+    await db.from('daemon_actions').update({ status: 'failed', result: e.message }).eq('id', actionId);
+    return { ok: false, error: e.message };
+  }
+}
+
+export async function rejectAction(db, { workspaceId, actionId, userId }) {
+  const { data: act } = await db.from('daemon_actions').select('agent_id, type, status').eq('id', actionId).eq('workspace_id', workspaceId).single();
+  if (!act) return { ok: false, error: 'Action not found' };
+  await db.from('daemon_actions').update({ status: 'rejected', approved_by: userId, acted_at: new Date().toISOString() }).eq('id', actionId);
+  await recordSignal(db, { workspaceId, domain: 'agent', subjectType: 'daemon_action', subjectId: actionId, signal: 'rejected', meta: { agent_id: act.agent_id, type: act.type } });
+  return { ok: true };
 }
 
 // ── Cron: run every active agent whose next_run_at is due ─────────────────────

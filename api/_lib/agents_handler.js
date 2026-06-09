@@ -10,7 +10,7 @@
 //   POST /api/agents {action:create|update|pause|resume|run|approve|reject}
 import { requireAuth, adminClient } from './supabase.js';
 import { enforceRateLimit, fail } from './security.js';
-import { runAgent, runDueAgents, approveMessage } from './agent_engine.js';
+import { runAgent, runDueAgents, approveMessage, approveAction, rejectAction } from './agent_engine.js';
 import { normAddress } from './channels/index.js';
 import { recordSignal } from './learning.js';
 
@@ -24,8 +24,9 @@ async function isMember(userId, workspaceId, db) {
   return data ?? null;
 }
 
-const ROLES = ['sales', 'social', 'support', 'research', 'custom'];
+const ROLES = ['sales', 'social', 'support', 'research', 'custom', 'knowledge'];
 const CHANNEL_KEYS = ['email', 'x', 'linkedin'];
+const KINDS = ['outreach', 'knowledge'];
 
 export async function agentsHandler(req, res) {
   // ── Cron: run due agents ───────────────────────────────────────────────────
@@ -79,12 +80,13 @@ export async function agentsHandler(req, res) {
         const { data: agent } = await db.from('agents')
           .select('*').eq('id', req.query.id).eq('workspace_id', workspaceId).single();
         if (!agent) return res.status(404).json({ error: 'Agent not found' });
-        const [{ data: runs }, { data: targets }, { data: queue }] = await Promise.all([
+        const [{ data: runs }, { data: targets }, { data: queue }, { data: actions }] = await Promise.all([
           db.from('agent_runs').select('*').eq('agent_id', agent.id).order('started_at', { ascending: false }).limit(10),
           db.from('outreach_targets').select('*').eq('agent_id', agent.id).order('score', { ascending: false }).limit(100),
           db.from('outreach_messages').select('*, outreach_targets(company,person_name)').eq('agent_id', agent.id).in('status', ['draft', 'approved', 'failed']).order('created_at', { ascending: false }).limit(100),
+          db.from('daemon_actions').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(100),
         ]);
-        return res.status(200).json({ agent, runs: runs || [], targets: targets || [], queue: queue || [] });
+        return res.status(200).json({ agent, runs: runs || [], targets: targets || [], queue: queue || [], actions: actions || [] });
       }
       const { data: agents } = await db.from('agents')
         .select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
@@ -100,10 +102,11 @@ export async function agentsHandler(req, res) {
         const name = String(body.name || '').trim();
         const objective = String(body.objective || '').trim();
         if (!name || !objective) return res.status(400).json({ error: 'name and objective are required' });
-        const role = ROLES.includes(body.role) ? body.role : 'sales';
+        const kind = KINDS.includes(body.kind) ? body.kind : 'outreach';
+        const role = ROLES.includes(body.role) ? body.role : (kind === 'knowledge' ? 'knowledge' : 'sales');
         const channels = Array.isArray(body.channels) ? body.channels.filter(c => CHANNEL_KEYS.includes(c)) : [];
         const { data: agent, error } = await db.from('agents').insert({
-          workspace_id: workspaceId, created_by: user.id, name, role, objective,
+          workspace_id: workspaceId, created_by: user.id, name, kind, role, objective,
           channels, kpi: body.kpi || {}, config: body.config || {},
           autonomy: body.autonomy === 'auto_send' ? 'auto_send' : 'approve_first',
           schedule: body.schedule || '0 8 * * *',
@@ -162,6 +165,18 @@ export async function agentsHandler(req, res) {
           meta: { agent_id: rmsg?.agent_id, variant_id: rmsg?.variant_id, source_query: rmsg?.outreach_targets?.source_query, channel: rmsg?.channel },
         });
         return res.status(200).json({ ok: true });
+      }
+
+      // ── Knowledge-daemon proposed actions ───────────────────────────────────
+      if (action === 'approve_action') {
+        if (!body.actionId) return res.status(400).json({ error: 'actionId required' });
+        const result = await approveAction(db, { workspaceId, actionId: body.actionId, userId: user.id, edits: body.edits || {} });
+        return res.status(result.ok ? 200 : 400).json(result);
+      }
+      if (action === 'reject_action') {
+        if (!body.actionId) return res.status(400).json({ error: 'actionId required' });
+        const result = await rejectAction(db, { workspaceId, actionId: body.actionId, userId: user.id });
+        return res.status(result.ok ? 200 : 400).json(result);
       }
 
       if (action === 'suppress') {

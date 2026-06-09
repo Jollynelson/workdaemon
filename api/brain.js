@@ -4,6 +4,7 @@ import { researchRole, researchCompany, scanOneWorkspace, SCAN_COLUMNS } from '.
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
+import { unifiedCalendar } from './_lib/calendar.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
@@ -852,6 +853,17 @@ export default async function handler(req, res) {
       for (const f of findings || []) modeCount[f.hunt_mode] = (modeCount[f.hunt_mode] || 0) + 1;
 
       return res.status(200).json({ findings: findings || [], stats, mode_counts: modeCount });
+    }
+
+    // ── Unified calendar (Google + Microsoft + Notion-database) ───────────────
+    if (tab === 'calendar') {
+      try {
+        const cal = await unifiedCalendar(db, workspaceId);
+        return res.status(200).json(cal);
+      } catch (e) {
+        console.error('[brain] calendar error:', e.message);
+        return res.status(200).json({ connected: [], providers: ['google', 'microsoft', 'notion'], events: [], errors: { _: e.message } });
+      }
     }
 
     // ── Agent profiles (admin) ────────────────────────────────────────────────
