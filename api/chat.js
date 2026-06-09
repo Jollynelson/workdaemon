@@ -988,9 +988,9 @@ export default async function handler(req, res) {
   };
 
   // Wall-clock budget for the whole LLM phase. Optional extra hops (escalation,
-  // brain-pull) are skipped once we're close to the function's maxDuration so a
-  // slow first answer can't push the turn into a platform 504.
-  const phaseDeadline = Date.now() + 38000;
+  // brain-pull) are skipped once we're close to the function's maxDuration (60s)
+  // so a slow first answer can't push the turn into a platform 504.
+  const phaseDeadline = Date.now() + 50000;
   const budgetLeft = () => phaseDeadline - Date.now();
 
   try {
