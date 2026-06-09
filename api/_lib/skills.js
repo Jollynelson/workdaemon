@@ -3,7 +3,8 @@
 // skills for a task, renderSkillsBlock() formats them for prompt injection, and
 // learnSkillFromAction() distills NEW skills from approved work (self-improvement).
 // Provider-agnostic: feeds the in-app DeepSeek daemons AND the Hermes agent (MCP).
-import { resolveLLM, callLLM, extractJson } from './research.js';
+import { resolveLLM, callLLM, extractJson, braveSearch } from './research.js';
+import { recordSignal } from './learning.js';
 
 const STOP = new Set(['the','a','an','and','or','for','to','of','in','on','with','your','our','this','that','is','are','be','it','as','at','by','from','about']);
 function tokens(s) {
@@ -86,6 +87,91 @@ Otherwise return {"worth_saving": false}.`;
     console.warn('[skills] learnSkillFromAction failed:', e.message);
     return null;
   }
+}
+
+// ── AUTONOMOUS SKILL DISCOVERY ───────────────────────────────────────────────
+// The brain finds + learns NEW skills from the web on its own: identify the
+// capability gaps for this company, search the web for how to do them well,
+// distill each into a SKILL.md-style skill grounded in real sources. Discovered
+// skills are workspace-scoped, badged 'discovered' + lower confidence so humans
+// can see (and prune) what the brain taught itself.
+const DISCOVERY_COOLDOWN_DAYS = 3;
+
+// Has this workspace discovered a skill recently? (rate-limit autonomous runs.)
+async function discoveredRecently(db, workspaceId, days = DISCOVERY_COOLDOWN_DAYS) {
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  const { data } = await db.from('brain_skills').select('id')
+    .eq('workspace_id', workspaceId).eq('learned_from', 'discovered').gte('created_at', since).limit(1);
+  return (data || []).length > 0;
+}
+
+export async function discoverSkills(db, { workspaceId, llm = null, max = 3, force = false } = {}) {
+  if (!force && await discoveredRecently(db, workspaceId)) return { ran: false, reason: 'cooldown', added: [] };
+  llm = llm || await resolveLLM(workspaceId, db);
+  if (!llm) return { ran: false, reason: 'no_llm', added: [] };
+
+  // 1. What does this company need? Use its context + objectives + current library.
+  const [{ data: ws }, { data: agents }, { data: have }] = await Promise.all([
+    db.from('workspaces').select('name, industry, context').eq('id', workspaceId).single(),
+    db.from('agents').select('objective').eq('workspace_id', workspaceId).limit(10),
+    db.from('brain_skills').select('name,slug').or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(200),
+  ]);
+  const ctx = ws?.context && typeof ws.context === 'object'
+    ? Object.entries(ws.context).filter(([, v]) => v && typeof v === 'string').map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+  const objectives = (agents || []).map(a => a.objective).filter(Boolean).join(' · ');
+  const haveList = (have || []).map(s => s.name).join(', ');
+
+  const gapSys = 'You identify the highest-leverage agent SKILLS a company is missing. A skill is a reusable capability/playbook (e.g. "cohort retention analysis", "PLG onboarding teardown"). Return ONLY JSON.';
+  const gapUser = `Company: ${ws?.name || ''} (${ws?.industry || ''})
+Context:\n${ctx || '(none)'}
+Daemon missions: ${objectives || '(none)'}
+Skills already in the library: ${haveList || '(none)'}
+
+Name up to ${max} skills this company's daemons are MISSING that would most improve their work — capabilities NOT already covered above. For each, give a web search query that would surface how to do it well.
+Return JSON {"gaps":[{"skill":"short skill name","why":"one line","query":"a search query to learn it"}]}.`;
+  const gapTxt = await callLLM(llm, gapSys, gapUser, { maxTokens: 700 });
+  const gaps = (extractJson(gapTxt)?.gaps || []).slice(0, max);
+  if (!gaps.length) return { ran: true, added: [], reason: 'no_gaps' };
+
+  const added = [];
+  for (const g of gaps) {
+    try {
+      // 2. Go online: search for how to do this skill well.
+      const res = await braveSearch(g.query || g.skill, { count: 6 });
+      if (!res.snippets.length) continue;
+      const corpus = res.snippets.map((s, i) => `[${i}] ${s.title}\n${s.description}\n${s.url}`).join('\n\n');
+
+      // 3. Distill a grounded, reusable skill from what it found.
+      const sys = 'You write agent skills (SKILL.md playbooks) grounded in web research. Return ONLY JSON. No fluff — a concrete, reusable playbook.';
+      const user = `Turn the best of this research into ONE reusable skill for "${g.skill}".
+RESEARCH:\n${corpus}\n
+Return JSON {"name":"short skill name","trigger_description":"when to use it (one sentence)","body":"4-6 line actionable playbook grounded in the research","tags":["..."],"pillar":"skills|content|research|growth|productivity|knowledge|devops|memory","source_idx":the [i] of the most useful source}.`;
+      const txt = await callLLM(llm, sys, user, { maxTokens: 700 });
+      const j = extractJson(txt);
+      if (!j?.name || !j.body) continue;
+      const slug = slugify(j.name);
+      if (!slug) continue;
+
+      // 4. Dedupe (global or workspace already has it).
+      const { data: dupe } = await db.from('brain_skills').select('id')
+        .eq('slug', slug).or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`).limit(1).maybeSingle();
+      if (dupe) continue;
+
+      const src = res.snippets[j.source_idx]?.url || res.snippets[0]?.url || g.query || null;
+      const { error } = await db.from('brain_skills').insert({
+        workspace_id: workspaceId, slug, name: j.name, pillar: j.pillar || 'skills', category: 'discovered',
+        trigger_description: j.trigger_description || j.name, body: j.body,
+        tags: Array.isArray(j.tags) ? j.tags.slice(0, 8) : [], source_url: src,
+        learned_from: 'discovered', confidence: 0.5,
+      });
+      if (!error) added.push({ slug, name: j.name, source_url: src });
+    } catch (e) { console.warn('[skills] discover gap failed:', e.message); }
+  }
+  if (added.length) {
+    await recordSignal(db, { workspaceId, domain: 'agent', subjectType: 'skill_discovery', subjectId: workspaceId,
+      signal: 'discovered', value: added.length, meta: { slugs: added.map(a => a.slug) } }).catch(() => {});
+  }
+  return { ran: true, added };
 }
 
 // MCP surface helpers (read-only) — the Hermes agent pulls skills from the brain.

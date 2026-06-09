@@ -1836,14 +1836,32 @@ function SkillsTab({ token, c, isMobile }) {
   const [skills, setSkills] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [note, setNote] = useState(null);
 
-  useEffect(() => {
-    if (!token) return;
-    fetch('/api/brain?tab=skills', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json()).then(d => setSkills(d.skills || [])).catch(() => {}).finally(() => setLoading(false));
+  const load = useCallback(() => {
+    if (!token) return Promise.resolve();
+    return fetch('/api/brain?tab=skills', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(d => setSkills(d.skills || [])).catch(() => {});
   }, [token]);
+  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+
+  const discover = async () => {
+    setDiscovering(true); setNote(null);
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'discover_skills' }),
+      });
+      const d = await r.json().catch(() => ({}));
+      const added = d.added || [];
+      setNote(added.length ? `Learned ${added.length} new skill${added.length > 1 ? 's' : ''}: ${added.map(a => a.name).join(', ')}` : (d.reason === 'cooldown' ? 'Recently discovered — try again later.' : 'No new skills found this time.'));
+      await load();
+    } catch { setNote('Discovery failed — try again.'); } finally { setDiscovering(false); }
+  };
 
   const learned = skills.filter(s => s.learned_from === 'experience').length;
+  const discovered = skills.filter(s => s.learned_from === 'discovered').length;
   const byPillar = {};
   for (const s of skills) (byPillar[s.pillar] ||= []).push(s);
 
@@ -1851,7 +1869,16 @@ function SkillsTab({ token, c, isMobile }) {
 
   return (
     <div>
-      <BlockAlert block={{ level: 'info', title: 'THE SKILLS PILLAR', content: `The brain holds ${skills.length} skills and passes the relevant ones to every daemon at runtime — and to the Hermes agent over MCP. ${learned} were learned from your approvals. Daemons get smarter as you use them.` }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        <BlockAlert block={{ level: 'info', title: 'THE SKILLS PILLAR', content: `The brain holds ${skills.length} skills and passes the relevant ones to every daemon at runtime — and to the Hermes agent over MCP. ${learned} learned from your approvals, ${discovered} discovered online by the brain itself.` }} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <button type="button" onClick={discover} disabled={discovering}
+          style={{ padding: '9px 16px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: discovering ? 'default' : 'pointer', opacity: discovering ? 0.6 : 1 }}>
+          {discovering ? 'Searching the web…' : '✦ Discover skills online'}
+        </button>
+        {note && <span style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2 }}>{note}</span>}
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 18 }}>
         {Object.entries(byPillar).map(([pillar, list]) => (
           <div key={pillar}>
@@ -1865,12 +1892,18 @@ function SkillsTab({ token, c, isMobile }) {
                     {s.learned_from === 'experience' && (
                       <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.06em', color: '#10b981', border: '1px solid rgba(16,185,129,0.35)', borderRadius: 4, padding: '1px 5px' }}>LEARNED</span>
                     )}
+                    {s.learned_from === 'discovered' && (
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.06em', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 4, padding: '1px 5px' }}>DISCOVERED</span>
+                    )}
                     <span style={{ flex: 1 }} />
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3 }}>{s.usage_count || 0}×</span>
                   </div>
                   <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, marginTop: 3 }}>{s.trigger_description}</div>
                   {open === s.id && s.body && (
-                    <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${c.cardBorder}`, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{s.body}</div>
+                    <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${c.cardBorder}`, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                      {s.body}
+                      {s.source_url && <div style={{ marginTop: 8 }}><a href={s.source_url} target="_blank" rel="noreferrer" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#4172f5' }}>source ↗</a></div>}
+                    </div>
                   )}
                 </div>
               ))}
