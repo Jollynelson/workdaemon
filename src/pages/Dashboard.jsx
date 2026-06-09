@@ -1824,6 +1824,64 @@ function AgentProfileCard({ agent, token, onUpdated, c }) {
   );
 }
 
+// Brain Skill Library — the "Skills" pillar. Skills the brain has learned and
+// passes to every daemon (and the Hermes agent via MCP). Grouped by pillar;
+// experience-learned skills are badged so you can see the brain getting smarter.
+const PILLAR_LABELS = {
+  knowledge: 'Knowledge', research: 'Research', content: 'Content', growth: 'Growth',
+  productivity: 'Productivity', devops: 'Ops', memory: 'Memory', crons: 'Cadence',
+  soul: 'Identity', self_improvement: 'Self-Improvement', skills: 'Core',
+};
+function SkillsTab({ token, c, isMobile }) {
+  const [skills, setSkills] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(null);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch('/api/brain?tab=skills', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(d => setSkills(d.skills || [])).catch(() => {}).finally(() => setLoading(false));
+  }, [token]);
+
+  const learned = skills.filter(s => s.learned_from === 'experience').length;
+  const byPillar = {};
+  for (const s of skills) (byPillar[s.pillar] ||= []).push(s);
+
+  if (loading) return <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} height={48} />)}</div>;
+
+  return (
+    <div>
+      <BlockAlert block={{ level: 'info', title: 'THE SKILLS PILLAR', content: `The brain holds ${skills.length} skills and passes the relevant ones to every daemon at runtime — and to the Hermes agent over MCP. ${learned} were learned from your approvals. Daemons get smarter as you use them.` }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 18 }}>
+        {Object.entries(byPillar).map(([pillar, list]) => (
+          <div key={pillar}>
+            <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.12em', marginBottom: 9 }}>{(PILLAR_LABELS[pillar] || pillar).toUpperCase()}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {list.map(s => (
+                <div key={s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
+                  style={{ padding: '12px 14px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 10, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, color: c.text }}>{s.name}</span>
+                    {s.learned_from === 'experience' && (
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.06em', color: '#10b981', border: '1px solid rgba(16,185,129,0.35)', borderRadius: 4, padding: '1px 5px' }}>LEARNED</span>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3 }}>{s.usage_count || 0}×</span>
+                  </div>
+                  <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, marginTop: 3 }}>{s.trigger_description}</div>
+                  {open === s.id && s.body && (
+                    <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${c.cardBorder}`, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{s.body}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AgentsTab({ token, c, isMobile }) {
   const [agents, setAgents]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2076,6 +2134,7 @@ function BrainPage() {
     { key: 'overview',      label: 'OVERVIEW' },
     { key: 'patterns',      label: 'PATTERNS' },
     { key: 'graph',         label: 'GRAPH' },
+    { key: 'skills',        label: 'SKILLS' },
     { key: 'integrations',  label: 'INTEGRATIONS' },
     { key: 'agents',        label: 'TEAM AGENTS' },
     { key: 'security',      label: 'SECURITY' },
@@ -2122,6 +2181,7 @@ function BrainPage() {
         {activeTab === 'patterns'     && <HuntTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'graph'        && <GraphTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'integrations' && <IntegrationsTab c={c} isMobile={isMobile} />}
+        {activeTab === 'skills'       && <SkillsTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'agents'       && <AgentsTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'security'     && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

@@ -10,6 +10,7 @@ import { graphSummary } from './brain.js';
 import { retrieveDocuments } from './_lib/ingestion.js';
 import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
+import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -868,6 +869,15 @@ export default async function handler(req, res) {
   try { learningContext = await buildDaemonLearningContext(db, { workspaceId, userId: user.id }); }
   catch (e) { console.warn('[chat] learning context failed:', e.message); }
 
+  // SKILLS pillar: the brain passes its learned skills to this daemon, picked for
+  // the current question. Same library the autonomous daemons + Hermes agent use.
+  let skillsContext = '';
+  try {
+    const skills = await relevantSkills(db, { workspaceId, objective: newMsg?.content || '', limit: 6 });
+    skillsContext = renderSkillsBlock(skills);
+    bumpSkillUsage(db, skills.map(s => s.slug), workspaceId);
+  } catch (e) { console.warn('[chat] skills context failed:', e.message); }
+
   const sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -877,7 +887,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext + graphContext + docsContext + learningContext;
+  ) + daemonEventsContext + patternsContext + graphContext + docsContext + learningContext + skillsContext;
 
   // Resolve AI provider key
   let keyRow = null;

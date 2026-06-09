@@ -5,6 +5,7 @@
 import { braveSearch, resolveLLM, callLLM, extractJson } from './research.js';
 import { CHANNELS, getChannel, isSuppressed, normAddress, complianceFooter } from './channels/index.js';
 import { recordSignal, distillAgentInsights, pickVariant } from './learning.js';
+import { relevantSkills, renderSkillsBlock, bumpSkillUsage, learnSkillFromAction } from './skills.js';
 
 const DEFAULTS = { cadenceHours: 24, maxTargetsPerRun: 10, maxDraftsPerRun: 5 };
 
@@ -134,10 +135,15 @@ export async function runKnowledgeDaemon(db, agent) {
       : '(no open findings)';
     const avoid = priorTitles.length ? `\nDo NOT repeat any of these already-proposed actions:\n- ${priorTitles.join('\n- ')}` : '';
 
+    // SKILLS pillar: the brain passes its learned skills to the daemon at runtime.
+    const skills = await relevantSkills(db, { workspaceId: agent.workspace_id, objective: agent.objective, limit: 7 });
+    const skillsBlock = renderSkillsBlock(skills);
+    bumpSkillUsage(db, skills.map(s => s.slug), agent.workspace_id);
+
     await db.from('agent_runs').update({ phase: 'draft' }).eq('id', run.id);
     const sys = `You are an autonomous operations daemon for the company "${ws.name || 'the company'}". `
       + `You act on the company's own knowledge to advance one mission. You DON'T chat — you propose concrete, `
-      + `grounded actions a human will approve. Return ONLY JSON.`;
+      + `grounded actions a human will approve. Return ONLY JSON.${skillsBlock}`;
     const user = `Mission: "${agent.objective}"
 
 COMPANY CONTEXT:
@@ -362,6 +368,9 @@ export async function approveAction(db, { workspaceId, actionId, userId, edits =
       status: 'done', approved_by: userId, title, body, result, acted_at: new Date().toISOString(),
     }).eq('id', actionId);
     await recordSignal(db, { workspaceId, domain: 'agent', subjectType: 'daemon_action', subjectId: actionId, signal: 'approved', meta: { agent_id: act.agent_id, type: act.type } });
+    // SELF-IMPROVEMENT: the brain may distill a reusable skill from this approved work.
+    const wasEdited = (edits.title != null && edits.title !== act.title) || (edits.body != null && edits.body !== act.body);
+    learnSkillFromAction(db, { workspaceId, action: { ...act, title, body }, wasEdited, userId }).catch(() => {});
     return { ok: true, result };
   } catch (e) {
     await db.from('daemon_actions').update({ status: 'failed', result: e.message }).eq('id', actionId);

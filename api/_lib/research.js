@@ -87,7 +87,7 @@ export async function resolveLLM(workspaceId, db) {
     const row = keys?.find(k => k.use_case === 'reasoning')
              ?? keys?.find(k => k.use_case === 'default')
              ?? keys?.[0];
-    if (row?.api_key && ['anthropic', 'openai', 'openrouter', 'deepseek'].includes(row.provider)) {
+    if (row?.api_key && ['anthropic', 'openai', 'openrouter', 'deepseek', 'hermes'].includes(row.provider)) {
       return { ...row, api_key: decryptSecret(row.api_key) };
     }
 
@@ -100,7 +100,19 @@ export async function resolveLLM(workspaceId, db) {
       return { provider: 'openrouter', api_key: decryptSecret(ws.openrouter_key), model: ws.openrouter_model };
     }
   }
-  // Env fallbacks — DeepSeek first (cheapest capable synthesiser available here).
+  // Env fallbacks. HERMES FIRST: daemons run on the shared Hermes gateway by
+  // default (mirrors api/chat.js auto-onboard), so the autonomous daemon engine
+  // and brain synthesis use the same Hermes agent the conversational daemon does.
+  // DeepSeek/cloud remain as resilience (see callLLM 'hermes' fallback) and for
+  // companies where the gateway env isn't set.
+  if (process.env.HERMES_SHARED_GATEWAY_URL && process.env.HERMES_SHARED_API_KEY) {
+    return {
+      provider: 'hermes',
+      endpoint: process.env.HERMES_SHARED_GATEWAY_URL,
+      api_key:  process.env.HERMES_SHARED_API_KEY,
+      model:    process.env.HERMES_SHARED_MODEL || 'hermes-agent',
+    };
+  }
   if (process.env.DEEPSEEK_API_KEY) {
     return {
       provider: 'deepseek',
@@ -165,6 +177,24 @@ export async function callLLM({ provider, api_key, model, endpoint }, sys, user,
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Anthropic error');
       return d.content?.find(b => b.type === 'text')?.text ?? '';
+    }
+    // Per-company / shared Hermes agent gateway (OpenAI-compatible). Resilience:
+    // a self-hosted gateway hiccup or cold-start must NEVER break brain synthesis,
+    // so on failure we fall back to a cloud synthesiser when one is available.
+    case 'hermes': {
+      const msgs = [{ role: 'system', content: sys }, { role: 'user', content: user }];
+      try {
+        const client = new OpenAI({ baseURL: (endpoint || '').replace(/\/$/, ''), apiKey: api_key || 'hermes' });
+        const r = await client.chat.completions.create({ model: model || 'hermes', max_tokens: maxTokens, messages: msgs });
+        return r.choices[0]?.message?.content ?? '';
+      } catch (e) {
+        if (process.env.DEEPSEEK_API_KEY) {
+          const client = new OpenAI({ baseURL: (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, ''), apiKey: process.env.DEEPSEEK_API_KEY });
+          const r = await client.chat.completions.create({ model: 'deepseek-chat', max_tokens: maxTokens, messages: msgs });
+          return r.choices[0]?.message?.content ?? '';
+        }
+        throw e;
+      }
     }
     default:
       throw new Error(`Unsupported synthesis provider: ${provider}`);

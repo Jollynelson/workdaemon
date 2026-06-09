@@ -5,6 +5,7 @@ import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceT
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { unifiedCalendar } from './_lib/calendar.js';
+import { listSkills, getSkill } from './_lib/skills.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
@@ -782,6 +783,18 @@ export default async function handler(req, res) {
         }));
         return res.status(200).json({ query: q, results });
       }
+      // Skills pillar — the Hermes agent pulls the brain's learned skills.
+      if (tool === 'list_skills') {
+        const skills = await listSkills(mdb, boundWs, { pillar: req.query?.pillar || null });
+        return res.status(200).json({ skills });
+      }
+      if (tool === 'get_skill') {
+        const slug = String(req.query?.slug || '').replace(/[^a-z0-9-]/gi, '').slice(0, 60);
+        if (!slug) return res.status(400).json({ error: 'slug required' });
+        const skill = await getSkill(mdb, boundWs, slug);
+        if (!skill) return res.status(404).json({ error: 'skill not found' });
+        return res.status(200).json({ skill });
+      }
       return res.status(400).json({ error: 'unknown tool' });
     } catch (e) {
       console.error('[brain] mcp tool=%s error:', tool, e.message);
@@ -864,6 +877,15 @@ export default async function handler(req, res) {
         console.error('[brain] calendar error:', e.message);
         return res.status(200).json({ connected: [], providers: ['google', 'microsoft', 'notion'], events: [], errors: { _: e.message } });
       }
+    }
+
+    // ── Brain Skill Library (the "Skills" pillar) ─────────────────────────────
+    if (tab === 'skills') {
+      const { data: skills } = await db.from('brain_skills')
+        .select('id,slug,name,pillar,category,trigger_description,body,tags,source_url,learned_from,confidence,usage_count,workspace_id')
+        .eq('status', 'active').or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`)
+        .order('learned_from', { ascending: false }).order('pillar');
+      return res.status(200).json({ skills: skills || [] });
     }
 
     // ── Agent profiles (admin) ────────────────────────────────────────────────
