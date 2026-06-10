@@ -101,6 +101,22 @@ function htmlToText(html) {
     .trim();
 }
 
+// Pull URLs (and bare domains like "betatenant.com") out of a user message so
+// the daemon can read them directly — no trigger words needed. Emails excluded
+// (the char before the domain is '@', which the boundary class rejects).
+const URL_RE = /\bhttps?:\/\/[^\s<>()"']+/gi;
+const DOMAIN_RE = /(?:^|[\s,;:("'<])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|app|dev|co|so|xyz|me|info|biz|us|uk|ca|au|de|fr|ng|in|eu|tech|site|online|store|shop))(?=[\s,;:)"'>!?]|\.?\s|\.?$)/gi;
+export function extractUrls(text, max = 3) {
+  const s = String(text || '');
+  const found = [];
+  for (const m of s.matchAll(URL_RE)) found.push(m[0].replace(/[.,;:!?)]+$/, ''));
+  for (const m of s.matchAll(DOMAIN_RE)) {
+    const d = m[1].toLowerCase();
+    if (!found.some(u => u.includes(d))) found.push(`https://${d}`);
+  }
+  return [...new Set(found)].slice(0, max);
+}
+
 export async function fetchPageText(url, { maxChars = 4000, timeoutMs = 6000 } = {}) {
   let safe;
   try { safe = await assertSafeUrl(url); } catch { return null; } // SSRF / bad URL

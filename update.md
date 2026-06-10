@@ -239,3 +239,47 @@ Tracked here so they survive sessions. Owner decisions first, then code tasks.
   OAuth creds on Vercel (`docs/CALENDAR_OAUTH_SETUP.md`) and `HERMES_SHARED_*`
   env + warm gateway (`docs/HERMES_DAEMON_DEFAULT.md`) — these gate Calendar
   connect and Hermes-for-all-daemons respectively.
+
+## 2026-06-10 (cont.) · Daemon web agency + self-seeding brain (the "unable to search online" fix)
+
+Dogfooding caught the daemon claiming "On it. Let me check betatenant.com" and
+never checking. Root causes + fixes (all in `api/chat.js` / `api/_lib/prompt.js`
+/ `api/_lib/research.js`):
+
+1. **Bare "search online" built an EMPTY query** (trigger words were stripped,
+   nothing remained) → returned "no results" *without ever calling the search
+   API*, which the model dressed up as "no Crunchbase/LinkedIn mentions"
+   (fabricated). Now an empty cleaned query falls back to researching the
+   company itself (name + industry + description).
+2. **"no website betatenant.com" matched NO trigger word** ("website" ≠ \bweb\b,
+   bare domains weren't detected) → no fetch ran at all. Now `extractUrls()`
+   (research.js) detects URLs + bare domains in every message and the pages
+   are fetched directly (`fetchPageText`, SSRF-guarded) → injected as LIVE
+   PAGE READS. Failures are injected too ("you attempted X, it's unreachable —
+   say so plainly").
+3. **Intelligence over keywords**: the `brain_queries` agentic loop gained two
+   tools — `{"tool":"web","q":…}` (live search on anything) and
+   `{"tool":"read_url","url":…}` — so the MODEL decides when it needs external
+   info, on any topic, no trigger list. Prompt updated accordingly.
+4. **NO FAKE PROMISES rule** in the prompt: "On it / let me check / I'll look
+   into it" is banned — fetch now via the tools, or state plainly what was
+   attempted and what came back.
+5. **The brain compounds ("learning exponentially")**:
+   - every page read or searched this turn (user-pasted URLs, trigger
+     searches, agent web/read_url pulls) is upserted into
+     `workspace_documents` (source `web`, embedded) → the NEXT question
+     retrieves it from the brain without re-fetching.
+   - **company_facts self-seeding**: when an ADMIN tells the daemon company
+     facts in chat (what it builds, customers, stage, metrics…), the model
+     emits a `company_facts` object and the workspace context fields are
+     filled (empty-only; notes append) — chat onboarding now seeds the shared
+     Company Brain instead of dying in one user's memory.
+   Skills were already wired (relevantSkills injection + bumpSkillUsage +
+   cron growSkills); web knowledge + company facts now feed the same
+   compounding loop.
+
+Why Beta Tenant's brain looked empty: it's a test workspace that predates the
+onboarding auto-research (shipped 06-10), has no real website, and the daily
+cron skips inactive workspaces. With these changes the chat itself seeds it.
+
+Tests: 53 passing (extractUrls suite + prompt-contract assertions added).

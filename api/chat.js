@@ -1,12 +1,12 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody } from './_lib/security.js';
-import { webResearch } from './_lib/research.js';
+import { webResearch, fetchPageText, extractUrls } from './_lib/research.js';
 import { callProvider, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
 import { buildDaemonSystemPrompt } from './_lib/prompt.js';
 import { extractTopicTags } from './_lib/topics.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
-import { retrieveDocuments } from './_lib/ingestion.js';
+import { retrieveDocuments, upsertDocuments } from './_lib/ingestion.js';
 import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
@@ -39,6 +39,12 @@ async function runWebSearch(userText, { wsName, wsIndustry, companyDesc }) {
       queries.push([wsName, wsIndustry, companyDesc].filter(Boolean).join(' ').slice(0, 200));
     }
   }
+  // Bare "search online" (trigger words only, no topic) used to produce an EMPTY
+  // query → "no results" without ever calling the search API. The clear intent
+  // is "research my company" — fall back to a company query.
+  if (!queries.length && wsName) {
+    queries.push([wsName, wsIndustry, companyDesc, 'company'].filter(Boolean).join(' ').slice(0, 200));
+  }
   if (!queries.length) return { grounded: false, snippets: [] };
   // webResearch reads the actual pages (Tavily, or Brave + page-extract) so the
   // daemon grounds on real content, not 200-char blurbs. Fully timeout-bounded.
@@ -62,6 +68,21 @@ function buildWebContext(web, { attempted }) {
   return '';
 }
 
+// The user pasted URLs / a domain → we fetched those pages NOW. Successes are
+// injected as untrusted page text; failures are stated explicitly so the model
+// reports the outcome instead of promising "let me check" (it can't act later).
+function buildPageReadContext(reads, failedUrls) {
+  let out = '';
+  if (reads.length) {
+    const lines = reads.map((r, i) => `${i + 1}. ${r.url}\n   ${r.content}`).join('\n');
+    out += `\nLIVE PAGE READS — you fetched these URLs from the user's message just now; this is their real current content:\n${delimitUntrusted(lines, 9000)}\nGround your answer in this content and cite the domain inline.\n`;
+  }
+  if (failedUrls.length) {
+    out += `\nPAGE FETCH FAILED: you attempted to fetch ${failedUrls.join(', ')} just now and got no usable content (site unreachable, empty, or not public). Say this plainly — do NOT pretend it loaded and do NOT promise to "check it later"; you cannot act between turns. Ask the user for the right URL or the facts directly.\n`;
+  }
+  return out;
+}
+
 // ── Agentic Company-Brain lookup (server-side, workspace-scoped) ──────────────
 // Runs a brain query the agent asked for, against THIS workspace's brain. Called
 // from the proxy loop — multi-tenant by construction (workspaceId comes from the
@@ -83,6 +104,27 @@ async function runBrainQuery(db, workspaceId, userId, q) {
   if (tool === 'search') {
     const r = await retrieveDocuments(db, workspaceId, String(q?.q || '').slice(0, 200), userId, 6).catch(() => ({ visible: [] }));
     return { tool, q: q?.q, results: (r.visible || []).map(d => ({ title: d.title, source: d.source, snippet: (d.content || '').slice(0, 600) })) };
+  }
+  // Agent-initiated web retrieval: the MODEL decides when it needs fresh
+  // external info — any topic, no trigger words. Results are also returned to
+  // the caller's webIngest (via the `ingest` array) so they compound into the
+  // brain's document store.
+  if (tool === 'web') {
+    const query = String(q?.q || '').slice(0, 200);
+    if (!query) return { tool, error: 'q required' };
+    const r = await webResearch([query], { count: 5, readPages: 2 }).catch(() => ({ snippets: [] }));
+    const results = (r.snippets || []).slice(0, 5).map(s => ({
+      title: s.title, url: s.url, content: (s.content || s.description || '').slice(0, 1500),
+    }));
+    const ingest = results.filter(s => s.url && s.content).map(s => ({ external_id: s.url, doc_type: 'webpage', title: s.title || s.url, content: s.content, url: s.url }));
+    return { tool, q: query, results, ingest };
+  }
+  if (tool === 'read_url') {
+    const url = String(q?.url || q?.q || '').slice(0, 500);
+    if (!url) return { tool, error: 'url required' };
+    const content = await fetchPageText(url, { maxChars: 3500 }).catch(() => null);
+    if (!content) return { tool, url, error: 'unreachable, empty, or not public — tell the user plainly' };
+    return { tool, url, content, ingest: [{ external_id: url, doc_type: 'webpage', title: url, content, url }] };
   }
   return { tool, error: 'unknown tool' };
 }
@@ -306,21 +348,45 @@ export default async function handler(req, res) {
     });
   }
 
-  // Live web search: when the latest user message asks for fresh/external info,
-  // fetch results now and ground the answer in them (retrieval augmentation).
+  // Live web retrieval for this turn. Two fast paths run BEFORE the model:
+  //   1. URLs / bare domains in the message → fetch those pages directly
+  //      (no trigger words needed — "no website betatenant.com" now reads it).
+  //   2. Trigger-worded questions → web search (existing path).
+  // Beyond these, the MODEL decides for itself via brain_queries web/read_url
+  // (see runBrainQuery) — so intent, not keywords, is the real trigger.
+  // Everything retrieved is queued for ingestion into the Company Brain's
+  // document store so knowledge compounds instead of evaporating per-turn.
   let webContext = '';
-  if (newMsgNormalized?.role === 'user' && wantsWebSearch(newMsgNormalized.content)) {
-    try {
-      const wsObj = Array.isArray(profile?.workspaces) ? profile.workspaces[0] : profile?.workspaces;
-      const web = await runWebSearch(newMsgNormalized.content, {
-        wsName:      wsObj?.name,
-        wsIndustry:  wsObj?.industry,
-        companyDesc: wsObj?.context?.description,
-      });
-      webContext = buildWebContext(web, { attempted: true });
-      console.log('[chat] web search grounded=%s snippets=%d', !!web?.grounded, web?.snippets?.length || 0);
-    } catch (e) {
-      console.warn('[chat] web search failed:', e.message);
+  const webIngest = []; // { external_id, title, content, url } → workspace_documents
+  if (newMsgNormalized?.role === 'user') {
+    const urls = extractUrls(newMsgNormalized.content, 3);
+    if (urls.length) {
+      try {
+        const pages = await Promise.all(urls.map(u => fetchPageText(u, { maxChars: 3500 }).catch(() => null)));
+        const reads = urls.map((u, i) => ({ url: u, content: pages[i] }));
+        const ok = reads.filter(r => r.content);
+        const failed = reads.filter(r => !r.content).map(r => r.url);
+        webContext += buildPageReadContext(ok, failed);
+        for (const r of ok) webIngest.push({ external_id: r.url, doc_type: 'webpage', title: r.url, content: r.content, url: r.url });
+        console.log('[chat] page reads ok=%d failed=%d', ok.length, failed.length);
+      } catch (e) { console.warn('[chat] page reads failed:', e.message); }
+    }
+    if (wantsWebSearch(newMsgNormalized.content)) {
+      try {
+        const wsObj = Array.isArray(profile?.workspaces) ? profile.workspaces[0] : profile?.workspaces;
+        const web = await runWebSearch(newMsgNormalized.content, {
+          wsName:      wsObj?.name,
+          wsIndustry:  wsObj?.industry,
+          companyDesc: wsObj?.context?.description,
+        });
+        webContext += buildWebContext(web, { attempted: true });
+        for (const s of (web?.snippets || [])) {
+          if (s.url && s.content) webIngest.push({ external_id: s.url, doc_type: 'webpage', title: s.title || s.url, content: s.content, url: s.url });
+        }
+        console.log('[chat] web search grounded=%s snippets=%d', !!web?.grounded, web?.snippets?.length || 0);
+      } catch (e) {
+        console.warn('[chat] web search failed:', e.message);
+      }
     }
   }
 
@@ -552,7 +618,13 @@ export default async function handler(req, res) {
       try {
         const qs = parsed.brain_queries.slice(0, 3);
         const results = [];
-        for (const q of qs) results.push(await runBrainQuery(db, workspaceId, user.id, q));
+        for (const q of qs) {
+          const r = await runBrainQuery(db, workspaceId, user.id, q);
+          // Web results the agent pulled also compound into the brain's
+          // document store; strip the ingest payload from what the model sees.
+          if (Array.isArray(r.ingest)) { webIngest.push(...r.ingest); delete r.ingest; }
+          results.push(r);
+        }
         const followup = [
           ...trimmed,
           { role: 'assistant', content: JSON.stringify({ brain_queries: qs }) },
@@ -607,6 +679,51 @@ export default async function handler(req, res) {
             }));
             await db.from('daemon_memory').upsert(rows, { onConflict: 'user_id,key' });
           }
+        }
+
+        // 3b. Compound web knowledge into the Company Brain: every page this
+        // turn read or searched (user-pasted URLs, trigger searches, and the
+        // agent's own web/read_url pulls) lands in workspace_documents, so the
+        // NEXT question retrieves it from the brain without re-fetching.
+        if (workspaceId && webIngest.length) {
+          const seen = new Set();
+          const docs = webIngest.filter(d => d.external_id && !seen.has(d.external_id) && seen.add(d.external_id));
+          try {
+            const r = await upsertDocuments(db, workspaceId, 'web', docs);
+            console.log('[chat] web ingest: %d page(s) → brain', r.upserted);
+          } catch (e) { console.error('[chat] web ingest:', e.message); }
+        }
+
+        // 3c. SELF-SEEDING COMPANY BRAIN: when an admin tells the daemon facts
+        // about the company (what it builds, customers, stage…), the model
+        // emits a company_facts object and we fill the workspace context —
+        // the same fields the Brain page's form edits. Only admins can seed,
+        // only EMPTY fields are filled (never overwrite admin-entered truth);
+        // new notes append. This is how chat onboarding becomes durable,
+        // workspace-wide knowledge instead of one user's memory.
+        if (workspaceId && parsed.company_facts && typeof parsed.company_facts === 'object' && !Array.isArray(parsed.company_facts)) {
+          try {
+            const { data: member } = await db.from('workspace_members')
+              .select('role').eq('user_id', user.id).eq('workspace_id', workspaceId).single();
+            if (member?.role === 'admin') {
+              const FIELDS = ['description', 'stage', 'revenue', 'headcount', 'priorities', 'projects', 'metrics', 'customers', 'competitors', 'notes'];
+              const { data: wsRow } = await db.from('workspaces').select('context').eq('id', workspaceId).single();
+              const ctx = (wsRow?.context && typeof wsRow.context === 'object') ? { ...wsRow.context } : {};
+              let changed = 0;
+              for (const f of FIELDS) {
+                const v = parsed.company_facts[f];
+                if (v == null || typeof v === 'object') continue;
+                const s = String(v).trim().slice(0, 600);
+                if (!s) continue;
+                if (!ctx[f] || !String(ctx[f]).trim()) { ctx[f] = s; changed++; }
+                else if (f === 'notes' && !String(ctx.notes).includes(s)) { ctx.notes = `${ctx.notes} · ${s}`.slice(0, 1500); changed++; }
+              }
+              if (changed) {
+                await db.from('workspaces').update({ context: ctx }).eq('id', workspaceId);
+                console.log('[chat] company_facts: %d field(s) seeded into workspace context', changed);
+              }
+            }
+          } catch (e) { console.error('[chat] company_facts:', e.message); }
         }
 
         // 4. Log to brain_interactions (skip session pings)
