@@ -224,21 +224,30 @@ def gateway():
     import sys
     api_base = os.environ.get("WORKDAEMON_API_BASE", "")
     brain_token = os.environ.get("BRAIN_MCP_TOKEN", "")
-    if api_base and brain_token:
+    if api_base:
+        # Two auth modes (see brain_mcp.py): a static BRAIN_MCP_TOKEN binds a
+        # DEDICATED gateway to one workspace; on the SHARED gateway there is no
+        # env token — each agent passes the short-lived signed token the proxy
+        # put in its system message as the tools' access_token parameter, and
+        # the API binds the workspace from the token's signature.
         _hermes("mcp", "remove", "brain", check=False)
         # `mcp add` discovers the tools then asks "Enable all N tools? [Y/n/select]"
         # on a TTY — with no TTY it cancels and saves nothing. Feed "y" so all three
         # brain tools are enabled non-interactively.
+        env_args = [f"WORKDAEMON_API_BASE={api_base}"]
+        if brain_token:
+            env_args.append(f"BRAIN_MCP_TOKEN={brain_token}")
         _hermes(
             "mcp", "--accept-hooks", "add", "brain",
             "--command", sys.executable,
             "--args", "/root/hermes/brain_mcp.py",
-            "--env", f"WORKDAEMON_API_BASE={api_base}", f"BRAIN_MCP_TOKEN={brain_token}",
+            "--env", *env_args,
             input="y\n", text=True, check=False,
         )
-        print(">>> brain MCP wired (stdio):", _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
+        print(">>> brain MCP wired (stdio, %s):" % ("dedicated token" if brain_token else "per-turn signed tokens"),
+              _hermes("mcp", "list", capture_output=True, text=True).stdout, flush=True)
     else:
-        print(">>> brain MCP NOT wired (WORKDAEMON_API_BASE / BRAIN_MCP_TOKEN unset)", flush=True)
+        print(">>> brain MCP NOT wired (WORKDAEMON_API_BASE unset)", flush=True)
     # ── GitHub MCP tool ───────────────────────────────────────────────────────
     # The agent acts on GitHub itself (list/read/search + create issues/PRs within
     # the token's scope) via the npx GitHub MCP server as a local stdio subprocess.

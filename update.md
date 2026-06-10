@@ -317,3 +317,42 @@ Routing after this deploy: **Cobalt** → dedicated brain-MCP gateway (unchanged
 (per-staff memory via X-Hermes-Session-Key, per-staff identity via the system
 prompt, Brain via context injection + the brain_queries pull loop) · DeepSeek
 remains only as the resilience fallback.
+
+## 2026-06-10 (cont.) · Per-company brain tokens on the SHARED gateway + the all-seeing ingest fix
+
+### Shared-gateway agents now pull their own company's Brain via MCP ✅
+The last spec gap from the Hermes flip: shared-gateway agents had Brain context
+only via proxy injection; active MCP pull was Cobalt-only (its static token binds
+one workspace — impossible to share). Design shipped (live-verified):
+
+- **Per-turn signed tokens**: chat.js mints `signServiceToken({scope:'brain_mcp',
+  workspace_id}, {expiresInSec:900})` on every Hermes turn and places it in the
+  agent's system message as BRAIN ACCESS TOKEN (never to be printed).
+- **brain_mcp.py tools take `access_token`** (param overrides the env token, so
+  Cobalt's dedicated mode is unchanged). modal_app.py registers the brain MCP
+  whenever WORKDAEMON_API_BASE is set — no static token required on the shared
+  gateway. `hermes-shared` Modal secret recreated with WORKDAEMON_API_BASE.
+- **IDOR-safe by construction**: the workspace binding lives INSIDE the HMAC
+  signature — the agent/model cannot mint or alter a token, so prompt injection
+  can at worst leak ~15 min of read access to the SAME workspace the user
+  already belongs to. Cross-tenant = forging the signature = impossible.
+- **Live proof**: locally-minted Beta Tenant token → live API 200 (real
+  context), expired token → 401; then the SHARED gateway agent called
+  `company_context` itself with the param token and answered from Beta
+  Tenant's actual brain notes in 14.2s end-to-end (inside the 35s hermes
+  budget). The signing chain matches prod (ENCRYPTION_KEY fallback; local ==
+  prod key, proven empirically).
+- Note: `vercel env pull` shows `""` for SENSITIVE-type vars (write-only) —
+  earlier panic about "empty prod env" was only the HERMES_SHARED_* pair
+  (encrypted-type values DO pull; sensitive don't).
+
+### All-seeing Brain: per-user tool connections now swept (owner directive)
+"The brain ingests everything — even tools users connect their daemons to —
+and selects what to train/store." Gap found: the daily cron only ran a
+connector when the WORKSPACE had connected it; tools connected only by
+individual staff (user_integrations) were never swept. The scan loop now
+derives providers from workspace_integrations ∪ user_integrations and no
+longer skips on a missing workspace token (connectors like Slack sweep each
+staff member's own token inside ingest()). Directive recorded in memory
+(decision-brain-all-seeing): every new data source must wire into ingestion;
+access-scoping controls who SEES, not whether the Brain ingests.

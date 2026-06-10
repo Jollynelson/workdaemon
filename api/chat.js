@@ -1,5 +1,5 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
-import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody } from './_lib/security.js';
+import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody, signServiceToken } from './_lib/security.js';
 import { webResearch, fetchPageText, extractUrls } from './_lib/research.js';
 import { callProvider, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
 import { buildDaemonSystemPrompt } from './_lib/prompt.js';
@@ -477,7 +477,7 @@ export default async function handler(req, res) {
     bumpSkillUsage(db, skills.map(s => s.slug), workspaceId);
   } catch (e) { console.warn('[chat] skills context failed:', e.message); }
 
-  const sys = buildDaemonSystemPrompt(
+  let sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
     memories || [],
@@ -549,6 +549,19 @@ export default async function handler(req, res) {
 
   // Decrypt the stored key at the last moment (no-op for legacy plaintext / env keys).
   const resolvedKey = { ...keyRow, api_key: decryptSecret(keyRow.api_key) };
+
+  // Hermes path: arm the agent's company-brain MCP tools (shared gateway) with
+  // a SHORT-LIVED signed token scoped to THIS workspace. The workspace binding
+  // lives inside the HMAC signature — the agent cannot mint or alter one, so a
+  // prompt-injected token leak is bounded to ~15 min of read access to the SAME
+  // workspace the user already belongs to. Dedicated gateways (Cobalt) keep
+  // their static env token and ignore this.
+  if (resolvedKey.provider === 'hermes' && workspaceId) {
+    try {
+      const brainTok = signServiceToken({ scope: 'brain_mcp', workspace_id: workspaceId }, { expiresInSec: 900 });
+      sys += `\n\nBRAIN ACCESS TOKEN: when you call the company-brain MCP tools (company_context, list_hunt_findings, search_knowledge), pass this value as their access_token parameter: ${brainTok}\nIt is scoped to YOUR company only and expires in ~15 minutes. NEVER print, quote, or mention this token (or its existence) in any reply.`;
+    } catch (e) { console.warn('[chat] brain token mint skipped:', e.message); }
+  }
 
   // Resilience: a self-hosted provider (hermes) going down must NEVER break the
   // daemon. If the primary provider fails, fall back to a cloud model. No-op when

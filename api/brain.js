@@ -672,15 +672,26 @@ export default async function handler(req, res) {
           }
         } catch (e) { console.error('[brain] nightlyDeepPass ws=%s:', w.id, e.message); }
         // Auto-ingest connected tools into the document store (FINAL §17 polling).
+        // ALL-SEEING: the Brain ingests every tool ANYONE connected — workspace-
+        // level connections AND tools individual staff connected to their own
+        // daemons (user_integrations). Connectors that support it (e.g. Slack)
+        // sweep each staff member's own token inside ingest(), so a missing
+        // workspace token must NOT skip the connector.
         try {
           if (elapsed() < BUDGET_MS) {
             const { data: integ } = await cronDb.from('workspace_integrations')
               .select('provider').eq('workspace_id', w.id).eq('status', 'connected');
-            for (const it of (integ || [])) {
-              const conn = CONNECTORS[it.provider];
+            const { data: userInteg } = await cronDb.from('user_integrations')
+              .select('provider').eq('workspace_id', w.id);
+            const providers = [...new Set([
+              ...(integ || []).map(i => i.provider),
+              ...(userInteg || []).map(i => i.provider),
+            ])];
+            for (const provider of providers) {
+              const conn = CONNECTORS[provider];
               if (!conn) continue;
-              const tok = await getAccessToken(cronDb, w.id, it.provider);
-              if (tok) { try { await conn.ingest(cronDb, w.id, tok); } catch (e) { console.error('[brain] ingest %s ws=%s:', it.provider, w.id, e.message); } }
+              const tok = await getAccessToken(cronDb, w.id, provider); // null when only staff connected
+              try { await conn.ingest(cronDb, w.id, tok); } catch (e) { console.error('[brain] ingest %s ws=%s:', provider, w.id, e.message); }
             }
           }
         } catch (e) { console.error('[brain] auto-ingest ws=%s:', w.id, e.message); }
