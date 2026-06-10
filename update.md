@@ -138,3 +138,79 @@ The brain HOLDS skills and PASSES them to every daemon at runtime (the agentskil
 The only two things still gated (documented, not code). Owner said: "I would tackle it later."
 - Set Calendar OAuth creds on Vercel (`docs/CALENDAR_OAUTH_SETUP.md`).
 - Set `HERMES_SHARED_*` env + keep the gateway warm to flip all daemons to Hermes (`docs/HERMES_DAEMON_DEFAULT.md`).
+
+## 2026-06-10 · Repo audit → hardening pass (branch `audit/hardening`, NOT yet merged)
+
+A full principal-level audit of the repo (4 phases: map → findings → strategy →
+task plan), then the plan executed. **Everything below is committed on the
+`audit/hardening` branch — review + merge to main to deploy.** 45 tests passing,
+lint 0 errors, build clean at every commit.
+
+### Milestone 0 — safety net (didn't exist before)
+- **CI**: `.github/workflows/ci.yml` — every push/PR runs `npm ci` + lint +
+  test + build. main auto-deploys to prod, so this is the first machine
+  between a typo and live users.
+- **ESLint**: flat config (`eslint.config.js`), pragmatic ruleset; `npm run
+  lint` = 0 errors / 17 warnings. react-hooks v7 compiler rules deferred.
+- **Migration ledger**: 33 unordered root `migration_*.sql` → numbered
+  `migrations/NNN_name.sql` (ordered by git-add date). `run_migration.mjs`
+  now keeps a `schema_migrations` table: `up` / `status` / `--baseline` /
+  refuses re-apply + out-of-order. **Prod DB baselined 33/33** (no SQL re-run).
+  This kills the "prod under-migrated, nobody knew" failure class (06-02).
+- **Tenant-isolation tests** (`api/__tests__/isolation.test.js`): real inbox /
+  chat-history / brain-MCP handlers driven against a two-workspace in-memory
+  fixture — cross-user reads return nothing, scoped updates are no-ops,
+  forged/wrong-scope MCP tokens 401.
+
+### Milestone 1 — security & correctness
+- **Fail-closed secrets**: removed the hardcoded `'workdaemon-dev-secret'`
+  fallback in `security.js` + `oauth.js`. No secret env → signing THROWS
+  (was: silently forgeable brain-MCP tokens + OAuth state). Prod unaffected
+  (chain still ends at ENCRYPTION_KEY, which is set).
+- **Service tokens**: now stamp `iat`, support `{ expiresInSec }` → `exp`
+  honored at verify. Old tokens stay valid. Legacy `BRAIN_MCP_TOKEN` compare
+  is now constant-time. `verifyState` no longer throws on mismatched-length
+  signatures. In-memory rate-limit map capped (10k buckets).
+- **Auth sessions**: password logins now hand the session to the Supabase SDK
+  (`setSession`) so the refresh token rotates — sessions no longer hard-expire
+  after ~1h; `TOKEN_REFRESHED` keeps the stored token in sync.
+- **react-router CVE** (open redirect, GHSA-2j2x-hqr9-3h42) fixed via
+  `npm audit fix`. Remaining 2 moderates are esbuild-via-vite (dev-only;
+  needs a Vite major bump — deferred).
+
+### Milestone 2 — structure
+- **chat.js decomposed** (1,197 → 697 lines): prompt builder →
+  `api/_lib/prompt.js` (now unit-tested: injection sanitization, hunt
+  routing, connected-tool truth), 9-provider dispatcher →
+  `api/_lib/providers.js`, `extractTopicTags` → `api/_lib/topics.js`
+  (was duplicated verbatim in chat.js + brain.js).
+- **Dashboard.jsx split** (5,024 → 119-line shell): `src/lib/{theme,hooks,
+  daemonApi}`, `src/components/{ui,blocks}.jsx`, 13 lazy-loaded page modules
+  in `src/pages/app/`. Vite now code-splits per route (pages are 4–35kB
+  chunks). Pure mechanical move; dead `PlaceholderPage` dropped.
+- **Dead chat paths removed**: the direct-browser Anthropic call
+  (`anthropic-dangerous-direct-browser-access` + client-built prompt, gated
+  on a `wd_apiKey` nothing sets) and the client `buildDaemonPrompt` are gone —
+  the server (`api/_lib/prompt.js`) is the only prompt author.
+
+### Repo hygiene
+- Deleted: `workdaemon-ui/` (stale duplicate of src/, untouched since the
+  initial commit), `notion/`, both committed code zips, and the `apps/` +
+  `packages/` monorepo husks (~300MB of orphaned build artifacts).
+- Root package renamed `workdaemon-ui` → `workdaemon`.
+- **`.env.example` now documents the FULL env surface** (~70 vars incl. all
+  OAuth client pairs; was 15) with required-vs-optional marked.
+- **`README.md`** added: entry path (STATUS.md first) + operational cautions.
+- `pg` declared as a devDependency (scripts imported it undeclared).
+
+### Deferred (decisions for the owner, from the audit's Open Questions)
+- **Vercel Pro?** The 12-function cap is the single constraint most
+  distorting the API architecture (multiplexed mega-endpoints). Pay $20/mo
+  or write an ADR blessing multiplexing permanently.
+- **Python track** (`finetuning/ hermes/ backend/`): quarantine/split/keep —
+  left untouched (Modal deploy paths reference current locations).
+- **Error reporting** (Sentry or a Vercel log-drain alert): needs an account
+  decision; today a prod 500-storm is only visible in Vercel logs.
+- **Per-workspace token revocation** before more companies share the Hermes
+  gateway (current remedy = rotate the global secret, breaks all).
+- Vite major bump for the dev-only esbuild moderates.
