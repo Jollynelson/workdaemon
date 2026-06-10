@@ -14,6 +14,11 @@ const icons = {
       <path d="M10.5 6C4 7 1 13 1.5 17.5C1.5 20.5 3.5 22.5 6.5 21.5Q9 20.5 10.5 18.5Q12 16.5 13.5 18.5Q15 20.5 17.5 21.5C20.5 22.5 22.5 20.5 22.5 17.5C23 13 20 7 13.5 6" />
     </svg>
   ),
+  skills: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
+    </svg>
+  ),
   tasks: (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
@@ -280,6 +285,7 @@ export default function Sidebar({
             <p className="wd-label" style={{ padding: '0 12px', marginBottom: 8 }}>WORKSPACE</p>
             <NavItem to="/app/daemon"       icon={icons.daemon}       label="My Daemon"    onClick={handleNavClick} />
             <NavItem to="/app/daemons"      icon={icons.daemons}      label="Daemons"      onClick={handleNavClick} />
+            <NavItem to="/app/skills"       icon={icons.skills}       label="Skills"       onClick={handleNavClick} />
             <NavItem to="/app/calendar"     icon={icons.calendar}     label="Calendar"     onClick={handleNavClick} />
             <NavItem to="/app/tasks"        icon={icons.tasks}        label="Tasks"        badge={taskCount || null} onClick={handleNavClick} />
             <NavItem to="/app/inbox"        icon={icons.inbox}        label="Inbox"        badge={inboxCount || null} onClick={handleNavClick} />
@@ -306,7 +312,9 @@ export default function Sidebar({
 
         {/* User footer */}
         <div style={{ padding: '10px 10px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#0d0d10' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 8px', borderRadius: 7, transition: 'background 0.12s' }}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 8px', borderRadius: 7, transition: 'background 0.12s', cursor: 'pointer' }}
+            title="Open profile"
+            onClick={() => { navigate('/app/profile'); handleNavClick?.(); }}
             onMouseEnter={e => { e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
             <div style={{
@@ -331,7 +339,7 @@ export default function Sidebar({
             </div>
             <button
               type="button"
-              onClick={async () => { await logout(); navigate('/login'); }}
+              onClick={async (e) => { e.stopPropagation(); await logout(); navigate('/login'); }}
               title="Sign out"
               style={{
                 background: 'none', border: 'none',

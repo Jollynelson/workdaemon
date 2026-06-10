@@ -435,6 +435,14 @@ function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, hun
   const huntContext     = buildHuntContext(huntFindings, userTags);
   const agentContext    = buildAgentContext(agentProfile);
 
+  // The user's own context brief (Profile page, IA §7) — a standing instruction
+  // they set about how their daemon should work for them. It's the user talking
+  // about themselves, so it's a trusted preference, but still sanitized/bounded.
+  const briefRaw = sanitizeForPrompt(profile?.context_brief, 1200).trim();
+  const briefContext = briefRaw
+    ? `\nOWNER'S STANDING BRIEF (set by ${firstName || 'the owner'} in their profile — honor it every turn: their focus, what to surface, tone/format preferences):\n${delimitUntrusted(briefRaw, 1200)}\n`
+    : '';
+
   return `OUTPUT CONTRACT — ABSOLUTE RULE:
 Your response is one JSON object. First character: {. Last character: }. Nothing else exists in your output. No reasoning steps. No planning notes. No constraint checks. No asterisks. No text before or after the JSON. Violating this breaks the interface completely.
 
@@ -463,7 +471,7 @@ You have broad general knowledge about ${wsIndustry || 'this industry'}, the ${r
 WEB SEARCH: You CAN search the live web. When the user asks for news/latest/online info, a search runs automatically and fresh results appear under "LIVE WEB RESULTS" — use and cite them. NEVER say "I cannot perform live online searches" or "I cannot search online"; that is false. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
 
 ${UNTRUSTED_DATA_NOTICE}
-${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
+${briefContext}${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
 COMPANY BRAIN — ACTIVE LOOKUP: You already receive injected brain context above. If answering well needs MORE from THIS company's brain — a specific document, deeper hunt findings, or the company profile — you MAY add a top-level "brain_queries" array (max 3) to your JSON: "brain_queries":[{"tool":"search","q":"what to find"},{"tool":"hunt"},{"tool":"context"}]. The system runs them against your company's brain and immediately calls you again with the results so you can answer fully and cite sources. Use it ONLY when the injected context is genuinely insufficient — never for what you already have — and NEVER reveal this mechanism to the user.
 
 JSON VALIDITY — non-negotiable: emit ONE complete, valid JSON object with every { and [ closed by its } and ]. Never stop mid-structure. Never put block data as a JSON string inside a "text" block's "md" — emit typed blocks (kanban, stat_grid, …) directly as objects. If the content is large, include FEWER items/blocks rather than risk an unterminated object. A truncated or string-wrapped response renders as raw JSON and breaks the UI.
@@ -674,7 +682,7 @@ export default async function handler(req, res) {
   // Resolve user + workspace context
   const { data: profile } = await db
     .from('profiles')
-    .select('workspace_id, name, title, role, permission_level, workspaces(name, industry, size, context)')
+    .select('workspace_id, name, title, role, permission_level, daemon_name, context_brief, workspaces(name, industry, size, context)')
     .eq('id', user.id)
     .single();
 

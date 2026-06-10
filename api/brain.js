@@ -1037,6 +1037,26 @@ export default async function handler(req, res) {
       return res.status(200).json(result);
     }
 
+    // ── Add a custom skill to the workspace library (Skills page, IA §5.3) ─────
+    if (body.action === 'add_skill') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      if (!(await enforceRateLimit(res, { key: `add_skill:${workspaceId}`, max: 30, windowSec: 3600 }))) return;
+      const name = String(body.name || '').trim().slice(0, 120);
+      const desc = String(body.trigger_description || body.description || '').trim().slice(0, 400);
+      const bodyText = String(body.body || desc).trim().slice(0, 4000);
+      if (!name) return res.status(400).json({ error: 'name required' });
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) + '-' + Math.random().toString(36).slice(2, 6);
+      const { data: row, error } = await db.from('brain_skills').insert({
+        workspace_id: workspaceId, slug, name,
+        pillar: body.pillar || 'custom', category: body.category || 'Custom',
+        trigger_description: desc || name, body: bodyText,
+        tags: Array.isArray(body.tags) ? body.tags.slice(0, 8) : [],
+        status: 'active', learned_from: 'custom', confidence: 0.9, usage_count: 0,
+      }).select('id,slug,name,pillar,category,trigger_description,tags,learned_from,usage_count').single();
+      if (error) return res.status(500).json({ error: 'Could not save skill' });
+      return res.status(200).json({ ok: true, skill: row });
+    }
+
     // ── Resolve / reopen finding ──────────────────────────────────────────────
     if (body.action === 'resolve_finding') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });

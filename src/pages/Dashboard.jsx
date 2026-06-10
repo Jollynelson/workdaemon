@@ -3,7 +3,7 @@ import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/layout/Sidebar.jsx';
 import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useTheme, useViewport } from '../context/ThemeContext.jsx';
-import { useAuth } from '../context/AuthContext.jsx';
+import { useAuth, supabase } from '../context/AuthContext.jsx';
 import { brainApi } from '../lib/brainApi.js';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
@@ -4080,6 +4080,310 @@ function IntegrationsPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SKILLS — capability library (IA §5.3). Attachable to every Daemon.
+// ─────────────────────────────────────────────────────────────────────────────
+function SkillsPage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const { token } = useAuth();
+  const [skills, setSkills]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding]   = useState(false);
+  const [form, setForm]       = useState({ name: '', trigger_description: '' });
+  const [busy, setBusy]       = useState(false);
+  const [banner, setBanner]   = useState(null);
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch('/api/brain?tab=skills', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setSkills(d.skills || []);
+    } catch {}
+    setLoading(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!form.name.trim()) return;
+    setBusy(true);
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'add_skill', name: form.name, trigger_description: form.trigger_description }),
+      });
+      const d = await r.json();
+      if (r.ok) { setAdding(false); setForm({ name: '', trigger_description: '' }); setBanner({ ok: true, text: `Added “${d.skill?.name}”.` }); load(); }
+      else setBanner({ ok: false, text: d.error === 'Admin only' ? 'Only workspace admins can add shared skills.' : (d.error || 'Could not add skill.') });
+    } catch { setBanner({ ok: false, text: 'Network error.' }); }
+    setBusy(false);
+  };
+
+  // Group by category so the library reads as sections (IA §5.3 grid).
+  const groups = {};
+  for (const s of skills) { const k = s.category || s.pillar || 'General'; (groups[k] = groups[k] || []).push(s); }
+  const cats = Object.keys(groups).sort();
+
+  const srcBadge = (s) => s.learned_from === 'custom' ? { t: 'CUSTOM', col: '#a855f7' }
+    : s.learned_from === 'web' || s.source_url ? { t: 'LEARNED', col: '#4172f5' }
+    : { t: 'BUILT-IN', col: c.text4 };
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
+      <div style={{ maxWidth: 980, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <p className="wd-label-blue" style={{ marginBottom: 6 }}>CAPABILITIES</p>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>Skills</h1>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6, lineHeight: 1.6, maxWidth: 600 }}>
+              Reusable capabilities your Daemons draw on — personal and autonomous. The Company Brain keeps this library sharp and applies the right skill automatically per task.
+            </p>
+          </div>
+          <button type="button" onClick={() => { setAdding(a => !a); setBanner(null); }}
+            style={{ padding: '9px 16px', borderRadius: 9, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
+              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5' }}>
+            + Custom skill
+          </button>
+        </div>
+
+        {banner && (
+          <div style={{ marginTop: 16, padding: '11px 14px', borderRadius: 9, fontFamily: 'var(--dmsans)', fontSize: 13,
+            background: banner.ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${banner.ok ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+            color: banner.ok ? '#10b981' : '#ef4444' }}>{banner.ok ? '✓ ' : '✗ '}{banner.text}</div>
+        )}
+
+        {adding && (
+          <div style={{ marginTop: 16, padding: 16, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Skill name — e.g. Weekly metrics digest"
+              style={{ padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none' }} />
+            <textarea value={form.trigger_description} onChange={e => setForm(f => ({ ...f, trigger_description: e.target.value }))} rows={3}
+              placeholder="What it does and when to use it — e.g. Every Friday, check Linear for overdue tickets and draft a message to the PM."
+              style={{ padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none', resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setAdding(false)} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Cancel</button>
+              <button type="button" onClick={save} disabled={busy || !form.name.trim()}
+                style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || !form.name.trim() ? 0.6 : 1 }}>
+                {busy ? 'Saving…' : 'Add skill'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ marginTop: 22, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+            {Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} height={120} />)}
+          </div>
+        ) : skills.length === 0 ? (
+          <div style={{ marginTop: 40, textAlign: 'center' }}>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 15, color: c.text3 }}>No skills yet — add a custom one to get started.</p>
+          </div>
+        ) : cats.map(cat => (
+          <div key={cat} style={{ marginTop: 26 }}>
+            <p className="wd-label-blue" style={{ marginBottom: 10 }}>{cat.toUpperCase()}</p>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+              {groups[cat].map(s => {
+                const b = srcBadge(s);
+                return (
+                  <div key={s.id} style={{ padding: 15, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#4172f5' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /></svg>
+                      </div>
+                      <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text, lineHeight: 1.2 }}>{s.name}</div>
+                    </div>
+                    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, lineHeight: 1.5, flex: 1 }}>{s.trigger_description || '—'}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.06em', color: b.col, border: `1px solid ${b.col}33`, borderRadius: 5, padding: '2px 6px' }}>{b.t}</span>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: c.text4 }}>{s.usage_count > 0 ? `used ${s.usage_count}×` : 'ready'}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE — identity + daemon config + notifications + security (IA §7)
+// ─────────────────────────────────────────────────────────────────────────────
+const PERM_LABELS = { 1: 'Copilot — reads, summarises, suggests', 2: 'Assistant — drafts actions for your approval', 3: 'Autonomous — executes and reports back' };
+const ROLE_TYPES = ['CEO/Founder', 'PM', 'Developer', 'Designer', 'HR', 'Finance', 'Sales', 'Other'];
+const ALERT_TYPES = [
+  ['task_assigned', 'Task assigned to me'],
+  ['action_done', 'Daemon action completed'],
+  ['broadcast', 'Broadcast received'],
+  ['approval', 'Approval needed'],
+  ['proactive', 'Proactive alert flagged'],
+];
+
+function ProfileField({ label, children }) {
+  const c = useC();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <label style={{ fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: c.text3 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function ProfilePage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const navigate = useNavigate();
+  const { user, profile, token, refreshProfile } = useAuth();
+
+  const inputSt = { padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' };
+  const cardSt  = { background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: isMobile ? 16 : 20, display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 };
+  const sectionLabel = (t) => <p className="wd-label-blue" style={{ margin: '26px 0 0' }}>{t}</p>;
+
+  const [form, setForm] = useState({ name: '', title: '', role: '', daemon_name: '', context_brief: '' });
+  const [prefs, setPrefs] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    setForm({
+      name: profile.name || '', title: profile.title || '', role: profile.role || '',
+      daemon_name: profile.daemon_name || '', context_brief: profile.context_brief || '',
+    });
+    setPrefs(profile.notif_prefs || { email: true, task_assigned: true, approval: true });
+  }, [profile]);
+
+  const permLevel = profile?.permission_level ?? 2;
+  const company   = profile?.workspaces?.name || '—';
+  const initial   = (form.name || user?.email || '?').charAt(0).toUpperCase();
+
+  const save = async (extra = {}) => {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/auth/me', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...form, notif_prefs: prefs, ...extra }),
+      });
+      if (r.ok) { setBanner({ ok: true, text: 'Saved.' }); await refreshProfile?.(); }
+      else { const d = await r.json().catch(() => ({})); setBanner({ ok: false, text: d.error || 'Could not save.' }); }
+    } catch { setBanner({ ok: false, text: 'Network error.' }); }
+    setBusy(false);
+  };
+
+  const sendReset = async () => {
+    if (!user?.email) return;
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(user.email, { redirectTo: `${window.location.origin}/login` });
+    setBanner(error ? { ok: false, text: error.message } : { ok: true, text: `Password reset link sent to ${user.email}.` });
+    setBusy(false);
+  };
+
+  const togglePref = (k) => setPrefs(p => ({ ...p, [k]: !p[k] }));
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
+      <div style={{ maxWidth: 680, margin: '0 auto' }}>
+        <p className="wd-label-blue" style={{ marginBottom: 6 }}>PROFILE</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ width: 52, height: 52, borderRadius: 14, background: '#4172f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initial}</div>
+          <div>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 19 : 23, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>{form.name || 'Your profile'}</h1>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginTop: 3 }}>{[form.title, company].filter(Boolean).join(' · ')}</p>
+          </div>
+        </div>
+
+        {banner && (
+          <div style={{ marginTop: 16, padding: '11px 14px', borderRadius: 9, fontFamily: 'var(--dmsans)', fontSize: 13,
+            background: banner.ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${banner.ok ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+            color: banner.ok ? '#10b981' : '#ef4444' }}>{banner.ok ? '✓ ' : '✗ '}{banner.text}</div>
+        )}
+
+        {/* Identity */}
+        {sectionLabel('IDENTITY')}
+        <div style={cardSt}>
+          <ProfileField label="Full name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={inputSt} /></ProfileField>
+          <ProfileField label="Role title"><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. CEO & Founder" style={inputSt} /></ProfileField>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
+            <ProfileField label="Email (read-only)"><input value={user?.email || ''} readOnly style={{ ...inputSt, opacity: 0.6, cursor: 'not-allowed' }} /></ProfileField>
+            <ProfileField label="Company (read-only)"><input value={company} readOnly style={{ ...inputSt, opacity: 0.6, cursor: 'not-allowed' }} /></ProfileField>
+          </div>
+        </div>
+
+        {/* Daemon configuration */}
+        {sectionLabel('DAEMON CONFIGURATION')}
+        <div style={cardSt}>
+          <ProfileField label="Daemon display name"><input value={form.daemon_name} onChange={e => setForm(f => ({ ...f, daemon_name: e.target.value }))} placeholder={`${(form.name || 'Your').split(' ')[0]}'s Daemon`} style={inputSt} /></ProfileField>
+          <ProfileField label="Role type — shapes your daemon's focus">
+            <select value={ROLE_TYPES.includes(form.role) ? form.role : 'Other'} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} style={{ ...inputSt, cursor: 'pointer' }}>
+              {ROLE_TYPES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </ProfileField>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '11px 13px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 9 }}>
+            <div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: c.text }}>Permission level {permLevel}</div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>{PERM_LABELS[permLevel]}</div>
+            </div>
+            {permLevel < 3 && (
+              <button type="button" onClick={() => setBanner({ ok: true, text: 'Upgrade request noted — an admin will review it in Team settings.' })}
+                style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap' }}>Request upgrade</button>
+            )}
+          </div>
+          <ProfileField label="Daemon context brief — read at the start of every session">
+            <textarea value={form.context_brief} onChange={e => setForm(f => ({ ...f, context_brief: e.target.value }))} rows={3}
+              placeholder="e.g. I'm leading the Q3 launch. Prefer concise updates. Flag only blockers, not status."
+              style={{ ...inputSt, resize: 'vertical' }} />
+          </ProfileField>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => save()} disabled={busy}
+              style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+
+        {/* Notifications */}
+        {sectionLabel('NOTIFICATIONS')}
+        <div style={cardSt}>
+          {[['email', 'Email notifications'], ...ALERT_TYPES].map(([k, label]) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text }}>{label}</span>
+              <button type="button" onClick={() => togglePref(k)}
+                style={{ width: 40, height: 23, borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0, position: 'relative', transition: 'background 0.15s', background: prefs[k] ? '#4172f5' : c.subtleBorder }}>
+                <span style={{ position: 'absolute', top: 2, left: prefs[k] ? 19 : 2, width: 19, height: 19, borderRadius: '50%', background: '#fff', transition: 'left 0.15s' }} />
+              </button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => save()} disabled={busy} style={{ ...mkGhostBtn(c), padding: '8px 16px', fontSize: 13 }}>Save notifications</button>
+          </div>
+        </div>
+
+        {/* Personal integrations */}
+        {sectionLabel('PERSONAL INTEGRATIONS')}
+        <div style={{ ...cardSt, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text3 }}>Connect tools so your daemon can act on your behalf.</span>
+          <button type="button" onClick={() => navigate('/app/integrations')} style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Manage →</button>
+        </div>
+
+        {/* Security */}
+        {sectionLabel('SECURITY')}
+        <div style={{ ...cardSt, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 }}>
+          <div>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>Password</div>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>We'll email you a secure reset link.</div>
+          </div>
+          <button type="button" onClick={sendReset} disabled={busy} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Reset password</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHELL COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4160,6 +4464,7 @@ export default function Dashboard() {
           <Route path="/"            element={<Navigate to="daemon" replace />} />
           <Route path="daemon"       element={<DaemonPage onMenu={openMenu} onChatChange={setInChat} />} />
           <Route path="daemons"      element={<AutoDaemonsPage />} />
+          <Route path="skills"       element={<SkillsPage />} />
           <Route path="calendar"     element={<CalendarPage />} />
           <Route path="brain"        element={<AdminRoute isAdmin={isAdmin}><BrainPage /></AdminRoute>} />
           <Route path="tasks"        element={<TasksPage />} />
@@ -4168,6 +4473,7 @@ export default function Dashboard() {
           <Route path="overview"     element={<AdminRoute isAdmin={isAdmin}><OverviewPage /></AdminRoute>} />
           <Route path="team"         element={<AdminRoute isAdmin={isAdmin}><PlaceholderPage label="ADMIN" title="Team Management" /></AdminRoute>} />
           <Route path="audit"        element={<AdminRoute isAdmin={isAdmin}><PlaceholderPage label="ADMIN" title="Audit Log" /></AdminRoute>} />
+          <Route path="profile"      element={<ProfilePage />} />
           <Route path="settings"     element={<SettingsPage />} />
         </Routes>
       </div>
