@@ -4384,6 +4384,197 @@ function ProfilePage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEAM — members + daemon permission levels (admin, IA §6.2)
+// ─────────────────────────────────────────────────────────────────────────────
+const LEVEL_SHORT = { 1: 'L1 · Copilot', 2: 'L2 · Assistant', 3: 'L3 · Autonomous' };
+
+function TeamPage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const { token, profile } = useAuth();
+  const [team, setTeam] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(null);
+  const [banner, setBanner] = useState(null);
+  const inviteCode = profile?.workspaces?.invite_code;
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch('/api/brain?tab=team', { headers: { Authorization: `Bearer ${token}` } });
+      const d = await r.json();
+      setTeam(d.team || []);
+    } catch {}
+    setLoading(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const setLevel = async (user_id, level) => {
+    setBusy(user_id);
+    setTeam(t => t.map(m => m.user_id === user_id ? { ...m, permission_level: level } : m));
+    await fetch('/api/brain', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action: 'set_permission_level', user_id, permission_level: level }),
+    }).catch(() => {});
+    setBusy(null);
+  };
+
+  const copyInvite = () => {
+    if (!inviteCode) return;
+    const link = `${window.location.origin}/join/${inviteCode}`;
+    navigator.clipboard?.writeText(link);
+    setBanner({ ok: true, text: 'Invite link copied to clipboard.' });
+  };
+
+  const th = { fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.06em', color: c.text4, textAlign: 'left', padding: '0 12px 8px', fontWeight: 600 };
+  const td = { fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text, padding: '12px', borderTop: `1px solid ${c.cardBorder}`, verticalAlign: 'middle' };
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
+      <div style={{ maxWidth: 900, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <p className="wd-label-blue" style={{ marginBottom: 6 }}>ADMIN</p>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>Team</h1>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6 }}>Manage members and their daemon permission levels.</p>
+          </div>
+          <button type="button" onClick={copyInvite} disabled={!inviteCode}
+            style={{ padding: '9px 16px', borderRadius: 9, cursor: inviteCode ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', flexShrink: 0,
+              background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5', opacity: inviteCode ? 1 : 0.5 }}>
+            + Invite member
+          </button>
+        </div>
+
+        {banner && (
+          <div style={{ marginTop: 16, padding: '11px 14px', borderRadius: 9, fontFamily: 'var(--dmsans)', fontSize: 13, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981' }}>✓ {banner.text}</div>
+        )}
+
+        <div style={{ marginTop: 20, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: '14px 8px', overflowX: 'auto' }}>
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={48} />)
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+              <thead><tr><th style={th}>MEMBER</th><th style={th}>ROLE</th><th style={th}>DAEMON LEVEL</th><th style={th}>STATUS</th><th style={th}>ACTIVITY</th></tr></thead>
+              <tbody>
+                {team.map(m => (
+                  <tr key={m.user_id}>
+                    <td style={td}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: '#4172f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{m.name.charAt(0).toUpperCase()}</div>
+                        <span style={{ fontWeight: 600 }}>{m.name}</span>
+                        {m.workspace_role === 'admin' && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, color: '#4172f5', border: '1px solid rgba(65,114,245,0.3)', borderRadius: 4, padding: '1px 5px' }}>ADMIN</span>}
+                      </div>
+                    </td>
+                    <td style={{ ...td, color: c.text3 }}>{m.title || '—'}</td>
+                    <td style={td}>
+                      <select value={m.permission_level} disabled={busy === m.user_id} onChange={e => setLevel(m.user_id, Number(e.target.value))}
+                        style={{ padding: '6px 10px', borderRadius: 7, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 12.5, cursor: 'pointer', outline: 'none' }}>
+                        <option value={1}>{LEVEL_SHORT[1]}</option><option value={2}>{LEVEL_SHORT[2]}</option><option value={3}>{LEVEL_SHORT[3]}</option>
+                      </select>
+                    </td>
+                    <td style={td}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: m.status === 'active' ? '#10b981' : '#f59e0b' }}>{m.status.toUpperCase()}</span>
+                    </td>
+                    <td style={{ ...td, color: c.text4, fontFamily: 'var(--mono)', fontSize: 11 }}>{m.interaction_count > 0 ? `${m.interaction_count} turns` : '—'}</td>
+                  </tr>
+                ))}
+                {team.length === 0 && <tr><td style={{ ...td, color: c.text4 }} colSpan={5}>No members yet.</td></tr>}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT LOG — company-wide daemon actions (admin, IA §6.4)
+// ─────────────────────────────────────────────────────────────────────────────
+function AuditPage() {
+  const c = useC();
+  const { isMobile } = useViewport();
+  const { token } = useAuth();
+  const [log, setLog] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [resultFilter, setResultFilter] = useState('all');
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const r = await fetch('/api/brain?tab=audit', { headers: { Authorization: `Bearer ${token}` } });
+        const d = await r.json();
+        setLog(d.log || []);
+      } catch {}
+      setLoading(false);
+    })();
+  }, [token]);
+
+  const rows = resultFilter === 'all' ? log : log.filter(r => r.result === resultFilter);
+  const fmt = (t) => t ? new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  const resColor = (r) => r === 'done' || r === 'approved' ? '#10b981' : r === 'failed' || r === 'rejected' ? '#ef4444' : c.text3;
+
+  const exportCsv = () => {
+    const head = ['timestamp', 'member', 'daemon', 'action', 'type', 'result'];
+    const lines = [head.join(',')].concat(rows.map(r =>
+      [r.created_at, r.member || '', r.daemon || '', r.action || '', r.type || '', r.result || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'workdaemon-audit.csv'; a.click();
+  };
+
+  const th = { fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.06em', color: c.text4, textAlign: 'left', padding: '0 12px 8px', fontWeight: 600 };
+  const td = { fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text, padding: '11px 12px', borderTop: `1px solid ${c.cardBorder}`, verticalAlign: 'top' };
+
+  return (
+    <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
+      <div style={{ maxWidth: 980, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <p className="wd-label-blue" style={{ marginBottom: 6 }}>ADMIN</p>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>Audit Log</h1>
+            <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6 }}>Every daemon action across the company, newest first.</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select value={resultFilter} onChange={e => setResultFilter(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 13, cursor: 'pointer', outline: 'none' }}>
+              <option value="all">All results</option><option value="done">Done</option><option value="approved">Approved</option><option value="proposed">Proposed</option><option value="rejected">Rejected</option><option value="failed">Failed</option>
+            </select>
+            <button type="button" onClick={exportCsv} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Export CSV</button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 20, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: '14px 8px', overflowX: 'auto' }}>
+          {loading ? (
+            Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} height={40} />)
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+              <thead><tr><th style={th}>WHEN</th><th style={th}>MEMBER · DAEMON</th><th style={th}>ACTION</th><th style={th}>TYPE</th><th style={th}>RESULT</th></tr></thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id} onClick={() => setExpanded(expanded === r.id ? null : r.id)} style={{ cursor: r.rationale ? 'pointer' : 'default' }}>
+                    <td style={{ ...td, color: c.text3, fontFamily: 'var(--mono)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmt(r.created_at)}</td>
+                    <td style={{ ...td, color: c.text3 }}>{[r.member, r.daemon].filter(Boolean).join(' · ') || '—'}</td>
+                    <td style={td}>
+                      {r.action}
+                      {expanded === r.id && r.rationale && <div style={{ marginTop: 6, fontSize: 12, color: c.text3, lineHeight: 1.5, fontStyle: 'italic' }}>{r.rationale}</div>}
+                    </td>
+                    <td style={{ ...td, color: c.text3, fontFamily: 'var(--mono)', fontSize: 11 }}>{r.type}</td>
+                    <td style={td}><span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: resColor(r.result) }}>{String(r.result || '').toUpperCase()}</span></td>
+                  </tr>
+                ))}
+                {rows.length === 0 && <tr><td style={{ ...td, color: c.text4 }} colSpan={5}>No daemon actions logged yet.</td></tr>}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHELL COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4471,8 +4662,8 @@ export default function Dashboard() {
           <Route path="inbox"        element={<InboxPage />} />
           <Route path="integrations" element={<IntegrationsPage />} />
           <Route path="overview"     element={<AdminRoute isAdmin={isAdmin}><OverviewPage /></AdminRoute>} />
-          <Route path="team"         element={<AdminRoute isAdmin={isAdmin}><PlaceholderPage label="ADMIN" title="Team Management" /></AdminRoute>} />
-          <Route path="audit"        element={<AdminRoute isAdmin={isAdmin}><PlaceholderPage label="ADMIN" title="Audit Log" /></AdminRoute>} />
+          <Route path="team"         element={<AdminRoute isAdmin={isAdmin}><TeamPage /></AdminRoute>} />
+          <Route path="audit"        element={<AdminRoute isAdmin={isAdmin}><AuditPage /></AdminRoute>} />
           <Route path="profile"      element={<ProfilePage />} />
           <Route path="settings"     element={<SettingsPage />} />
         </Routes>

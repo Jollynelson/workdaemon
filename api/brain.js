@@ -932,6 +932,57 @@ export default async function handler(req, res) {
       return res.status(200).json({ agents });
     }
 
+    // ── Team management (admin, IA §6.2) ──────────────────────────────────────
+    if (tab === 'team') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const { data: members } = await db
+        .from('workspace_members').select('user_id, role, joined_at').eq('workspace_id', workspaceId);
+      const userIds = (members || []).map(m => m.user_id);
+      const [{ data: profs }, { data: aps }] = await Promise.all([
+        db.from('profiles').select('id, name, title, role, permission_level, onboarded, updated_at').in('id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']),
+        db.from('app_agent_profiles').select('user_id, access_level, interaction_count').eq('workspace_id', workspaceId),
+      ]);
+      const apMap = Object.fromEntries((aps || []).map(p => [p.user_id, p]));
+      const memMap = Object.fromEntries((members || []).map(m => [m.user_id, m]));
+      const team = (profs || []).map(p => ({
+        user_id: p.id, name: p.name || 'Unknown', title: p.title || p.role || '',
+        workspace_role: memMap[p.id]?.role || 'member',
+        permission_level: p.permission_level ?? 2,
+        access_level: apMap[p.id]?.access_level || 'junior',
+        interaction_count: apMap[p.id]?.interaction_count || 0,
+        status: p.onboarded ? 'active' : 'invited',
+        joined_at: memMap[p.id]?.joined_at || null,
+        last_active: p.updated_at || null,
+      }));
+      return res.status(200).json({ team });
+    }
+
+    // ── Audit log: company-wide daemon actions (admin, IA §6.4) ───────────────
+    if (tab === 'audit') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const { data: actions } = await db
+        .from('daemon_actions')
+        .select('id, type, title, status, created_at, agent_id, rationale')
+        .eq('workspace_id', workspaceId)
+        .order('created_at', { ascending: false }).limit(200);
+      const agentIds = [...new Set((actions || []).map(a => a.agent_id).filter(Boolean))];
+      let agentMap = {};
+      if (agentIds.length) {
+        const { data: agents } = await db.from('agents').select('id, name, user_id').in('id', agentIds);
+        const ownerIds = [...new Set((agents || []).map(a => a.user_id).filter(Boolean))];
+        const { data: owners } = ownerIds.length
+          ? await db.from('profiles').select('id, name').in('id', ownerIds) : { data: [] };
+        const ownerName = Object.fromEntries((owners || []).map(o => [o.id, o.name]));
+        agentMap = Object.fromEntries((agents || []).map(a => [a.id, { name: a.name, owner: ownerName[a.user_id] || null }]));
+      }
+      const log = (actions || []).map(a => ({
+        id: a.id, created_at: a.created_at, type: a.type, action: a.title, result: a.status,
+        member: agentMap[a.agent_id]?.owner || null, daemon: agentMap[a.agent_id]?.name || '—',
+        rationale: a.rationale || null,
+      }));
+      return res.status(200).json({ log });
+    }
+
     // ── Company context (existing default) ────────────────────────────────────
     const { data: ws, error } = await db
       .from('workspaces')
@@ -1035,6 +1086,21 @@ export default async function handler(req, res) {
       if (!(await enforceRateLimit(res, { key: `discover:${workspaceId}`, max: 4, windowSec: 3600 }))) return;
       const result = await growSkills(db, { workspaceId, force: true });
       return res.status(200).json(result);
+    }
+
+    // ── Change a member's daemon permission level (admin, IA §6.2) ────────────
+    if (body.action === 'set_permission_level') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const targetId = String(body.user_id || '');
+      const level = Number(body.permission_level);
+      if (!targetId || ![1, 2, 3].includes(level)) return res.status(400).json({ error: 'user_id + permission_level (1|2|3) required' });
+      // Scope to this workspace: only members of the caller's workspace can be changed.
+      const { data: member } = await db.from('workspace_members')
+        .select('user_id').eq('workspace_id', workspaceId).eq('user_id', targetId).maybeSingle();
+      if (!member) return res.status(404).json({ error: 'Not a member of this workspace' });
+      const { error } = await db.from('profiles').update({ permission_level: level, updated_at: new Date().toISOString() }).eq('id', targetId);
+      if (error) return res.status(500).json({ error: 'Could not update level' });
+      return res.status(200).json({ ok: true });
     }
 
     // ── Add a custom skill to the workspace library (Skills page, IA §5.3) ─────
