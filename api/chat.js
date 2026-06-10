@@ -138,7 +138,9 @@ async function prewarmHermes(db, userId) {
     if (!profile?.workspace_id) return;
     const { data: keys } = await db.from('workspace_api_keys')
       .select('endpoint').eq('workspace_id', profile.workspace_id).eq('provider', 'hermes').limit(1);
-    const ep = keys?.[0]?.endpoint;
+    // Keyless workspaces run on the SHARED Hermes gateway (the platform
+    // default daemon) — prewarm that one for them.
+    const ep = keys?.[0]?.endpoint || process.env.HERMES_SHARED_GATEWAY_URL;
     if (!ep) return;
     fetch(ep.replace(/\/$/, ''), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
   } catch { /* prewarm is best-effort */ }

@@ -20,6 +20,10 @@ export function reasoningParams(model) {
 // the platform killed it → 504 after minutes. Capping each call means a stall
 // throws fast and the cloud fallback / configured-model retry takes over.
 export const LLM_CALL_TIMEOUT_MS = Number(process.env.CHAT_LLM_TIMEOUT_MS) || 24000;
+// Hermes is an AGENT runtime, not a bare LLM — a turn may run its own tool loop
+// (MCP brain pulls, web). Give it more headroom than cloud chat models, while
+// still leaving room inside the 50s phase budget for the DeepSeek fallback.
+const HERMES_CALL_TIMEOUT_MS = Number(process.env.HERMES_LLM_TIMEOUT_MS) || 35000;
 
 export function withTimeout(promise, ms, label) {
   let t;
@@ -30,7 +34,8 @@ export function withTimeout(promise, ms, label) {
 }
 
 export function callProvider(cfg, sys, messages, identity = {}) {
-  return withTimeout(callProviderInner(cfg, sys, messages, identity), LLM_CALL_TIMEOUT_MS, `provider:${cfg.provider}`);
+  const ms = cfg.provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
+  return withTimeout(callProviderInner(cfg, sys, messages, identity), ms, `provider:${cfg.provider}`);
 }
 
 async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {

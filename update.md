@@ -283,3 +283,37 @@ onboarding auto-research (shipped 06-10), has no real website, and the daily
 cron skips inactive workspaces. With these changes the chat itself seeds it.
 
 Tests: 53 passing (extractUrls suite + prompt-contract assertions added).
+
+## 2026-06-10 (cont.) · Hermes IS the default daemon now — the broken last mile fixed
+
+Owner re-affirmed the spec decision (FINAL BuildSpec / soul): a company signs up
+→ gets a Brain; each staff gets their own agent (daemon) → **Hermes by default**.
+The architecture for this shipped 06-07 (PR #38 auto-onboard) but was silently
+dead. Root cause found and fixed:
+
+- **`HERMES_SHARED_GATEWAY_URL` / `HERMES_SHARED_API_KEY` on Vercel Production
+  were EMPTY STRINGS** — created 3 days ago by the documented Vercel-CLI stdin
+  flake. chat.js treats empty as unset → every keyless workspace silently fell
+  through to DeepSeek. (Reproduced the flake live: `vercel env add` via stdin
+  saved "" again.) Fixed via the **Vercel REST API** (`POST /v10/projects/…/env
+  ?upsert=true`, token from the CLI's auth.json) — verified non-empty via
+  `vercel env pull`. RULE: never set Vercel env via CLI stdin; always REST.
+- **Warm pool**: redeployed `workdaemon-hermes-shared` with
+  `HERMES_MIN_CONTAINERS=1` → 1 task always running, no 60–90s cold starts.
+  Verified live: `/v1/models` 200 in 1.6s; full agent chat completion in 3.7s
+  (prompt_tokens ~15.6K = the Hermes AGENT runtime scaffolding, underlying
+  reasoning model deepseek-chat via custom provider).
+- **Agent-loop headroom**: `providers.js` gives the hermes provider its own
+  35s call timeout (`HERMES_LLM_TIMEOUT_MS`) vs 24s for bare cloud models —
+  Hermes turns may run their own MCP/tool loop. DeepSeek fallback still fits
+  the 50s phase budget.
+- **Prewarm**: `prewarmHermes` now also pings the SHARED gateway for keyless
+  workspaces (was: only workspaces with a dedicated hermes key row).
+- `docs/specs/workdaemon-soul.md` copied into the repo (was only in Downloads;
+  the other four specs verified identical to the repo copies).
+
+Routing after this deploy: **Cobalt** → dedicated brain-MCP gateway (unchanged)
+· **every other current + future workspace** → shared warm Hermes gateway
+(per-staff memory via X-Hermes-Session-Key, per-staff identity via the system
+prompt, Brain via context injection + the brain_queries pull loop) · DeepSeek
+remains only as the resilience fallback.
