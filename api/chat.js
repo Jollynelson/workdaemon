@@ -664,10 +664,11 @@ export default async function handler(req, res) {
     // grounded fallbacks from the goal book + open findings so the chat never
     // renders a dead end.
     if (!Array.isArray(parsed.suggestions) || !parsed.suggestions.some(s => typeof s === 'string' && s.trim())) {
+      const clip = (s, n) => { s = String(s); if (s.length <= n) return s; const cut = s.slice(0, n); return cut.slice(0, cut.lastIndexOf(' ') > n - 20 ? cut.lastIndexOf(' ') : n) + '…'; };
       const fb = [];
       const g = goalBook?.staff?.[0] || goalBook?.company?.[0];
-      if (g?.title) fb.push(`What's the fastest next step on "${String(g.title).slice(0, 60)}"?`);
-      if (huntFindings[0]?.pattern) fb.push(`Walk me through: ${String(huntFindings[0].pattern).slice(0, 70)}`);
+      if (g?.title) fb.push(`What's the fastest next step on "${clip(g.title, 60)}"?`);
+      if (huntFindings[0]?.pattern) fb.push(`Walk me through: ${clip(huntFindings[0].pattern, 70)}`);
       if (connectedTools.includes('slack')) fb.push("What's happening in Slack today?");
       fb.push('What needs my attention today?', 'Show our goal progress');
       parsed.suggestions = [...new Set(fb)].slice(0, 3);

@@ -268,33 +268,33 @@ export function ChatView({ context, onBack, onMenu }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: c.bg, transition: 'background 0.2s' }}>
 
-      {/* Header — Notion navy hero band */}
-      <div style={{ padding: isMobile ? '0 12px' : '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#0c1428', flexShrink: 0, gap: 8 }}>
+      {/* Header — sits on the canvas; a hairline is enough separation */}
+      <div style={{ padding: isMobile ? '0 12px' : '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${c.headerBorder}`, background: c.headerBg, flexShrink: 0, gap: 8, transition: 'background 0.2s, border-color 0.2s' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 14, minWidth: 0, flex: 1 }}>
           {isMobile && (
-            <button type="button" onClick={onMenu} style={{ width: 32, height: 32, borderRadius: 8, background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', padding: 0, flexShrink: 0, color: 'rgba(255,255,255,0.45)' }}>
+            <button type="button" onClick={onMenu} style={{ width: 32, height: 32, borderRadius: 8, background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer', padding: 0, flexShrink: 0, color: c.text3 }}>
               <span style={{ width: 16, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block' }} />
               <span style={{ width: 16, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block' }} />
               <span style={{ width: 11, height: 1.5, background: 'currentColor', borderRadius: 1, display: 'block', alignSelf: 'flex-start' }} />
             </button>
           )}
-          {onBack && <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />}
+          {onBack && <div style={{ width: 1, height: 16, background: c.hairlineStrong, flexShrink: 0 }} />}
           {onBack && (
-          <button type="button" onClick={onBack} style={{ fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 13, color: 'rgba(255,255,255,0.45)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: 0, letterSpacing: isMobile ? '0.08em' : 0, flexShrink: 0 }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)'; }}>
+          <button type="button" onClick={onBack} style={{ fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 13, color: c.text3, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, padding: 0, letterSpacing: isMobile ? '0.08em' : 0, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.color = c.text; }}
+            onMouseLeave={e => { e.currentTarget.style.color = c.text3; }}>
             ← BACK
           </button>
           )}
-          <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-          <DaemonMark size={16} glow />
-          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#ededef', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
+          <div style={{ width: 1, height: 16, background: c.hairlineStrong, flexShrink: 0 }} />
+          <DaemonMark size={16} glow={c.d} />
+          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
             {context.roleLabel}
           </div>
           {!isMobile && context.company && (
             <>
-              <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>{context.company}</div>
+              <div style={{ width: 1, height: 14, background: c.hairlineStrong, flexShrink: 0 }} />
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text3, whiteSpace: 'nowrap' }}>{context.company}</div>
             </>
           )}
         </div>
@@ -304,20 +304,20 @@ export function ChatView({ context, onBack, onMenu }) {
           disabled={thinking}
           title="Clear chat and start fresh"
           style={{
-            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7,
+            background: c.surface2, border: `1px solid ${c.hairlineStrong}`, borderRadius: 8,
             padding: '5px 10px', cursor: thinking ? 'not-allowed' : 'pointer',
             fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.08em',
-            color: thinking ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.55)', flexShrink: 0,
-            transition: 'all 0.15s',
+            color: thinking ? c.text4 : c.text3, flexShrink: 0,
+            transition: 'background 0.15s, border-color 0.15s, color 0.15s',
           }}
-          onMouseEnter={e => { if (!thinking) { e.currentTarget.style.background = 'rgba(255,255,255,0.14)'; e.currentTarget.style.color = 'rgba(255,255,255,0.85)'; } }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = ''; }}
+          onMouseEnter={e => { if (!thinking) { e.currentTarget.style.background = c.surface3; e.currentTarget.style.color = c.text; } }}
+          onMouseLeave={e => { e.currentTarget.style.background = c.surface2; e.currentTarget.style.color = ''; }}
         >
           NEW
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '5px 10px' : '6px 12px', borderRadius: 20, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', flexShrink: 0 }}>
           <span className="wd-dot" style={{ width: 5, height: 5, background: '#10b981' }} />
-          {!isMobile && <span style={{ fontFamily: 'var(--inter)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.6)', letterSpacing: '0.01em' }}>Online</span>}
+          {!isMobile && <span style={{ fontFamily: 'var(--inter)', fontSize: 11, fontWeight: 500, color: '#10b981', letterSpacing: '0.01em' }}>Online</span>}
         </div>
       </div>
 
