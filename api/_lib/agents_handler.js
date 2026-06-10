@@ -88,9 +88,34 @@ export async function agentsHandler(req, res) {
         ]);
         return res.status(200).json({ agent, runs: runs || [], targets: targets || [], queue: queue || [], actions: actions || [] });
       }
-      const { data: agents } = await db.from('agents')
-        .select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false });
-      return res.status(200).json({ agents: agents || [] });
+      const [{ data: agents }, { data: shares }, { data: members }] = await Promise.all([
+        db.from('agents').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
+        db.from('agent_shares').select('agent_id, shared_with, company_wide, access_level').eq('workspace_id', workspaceId),
+        db.from('profiles').select('id, name, title').eq('workspace_id', workspaceId),
+      ]);
+      const nameOf = Object.fromEntries((members || []).map(m => [m.id, m.name || m.title || 'Teammate']));
+      const sharesByAgent = {};
+      for (const s of shares || []) (sharesByAgent[s.agent_id] = sharesByAgent[s.agent_id] || []).push(s);
+      // Annotate each agent with the caller's relationship: My Daemons (created_by
+      // me → owner) vs Team Daemons (shared with me / company-wide), + my access.
+      const RANK = { viewer: 0, user: 1, editor: 2, owner: 3 };
+      const annotated = (agents || []).map(a => {
+        const mine = a.created_by === user.id;
+        const ash = sharesByAgent[a.id] || [];
+        let my_access = mine ? 'owner' : 'viewer';
+        if (!mine) {
+          for (const s of ash) {
+            const applies = s.company_wide || s.shared_with === user.id;
+            if (applies && RANK[s.access_level] > RANK[my_access]) my_access = s.access_level;
+          }
+        }
+        return {
+          ...a, mine, my_access,
+          // Owners get the share roster (names) to manage access in the dialog.
+          shares: mine ? ash.map(s => ({ ...s, name: s.company_wide ? 'Everyone' : nameOf[s.shared_with] || 'Teammate' })) : undefined,
+        };
+      });
+      return res.status(200).json({ agents: annotated, members: (members || []).map(m => ({ id: m.id, name: nameOf[m.id] })) });
     }
 
     // ── POST: mutations ───────────────────────────────────────────────────────
@@ -113,6 +138,36 @@ export async function agentsHandler(req, res) {
         }).select().single();
         if (error) throw error;
         return res.status(200).json({ ok: true, agent });
+      }
+
+      // ── Team Daemon sharing (IA §5.2.3) — only the owner (creator) manages access.
+      if (action === 'share' || action === 'unshare') {
+        const id = body.id;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        const { data: agent } = await db.from('agents').select('created_by').eq('id', id).eq('workspace_id', workspaceId).single();
+        if (!agent) return res.status(404).json({ error: 'Daemon not found' });
+        if (agent.created_by !== user.id) return res.status(403).json({ error: 'Only the owner can change sharing' });
+        const companyWide = body.company_wide === true;
+        const sharedWith = companyWide ? null : (body.user_id || null);
+        if (!companyWide && !sharedWith) return res.status(400).json({ error: 'user_id or company_wide required' });
+        if (action === 'unshare') {
+          let q = db.from('agent_shares').delete().eq('agent_id', id);
+          q = companyWide ? q.eq('company_wide', true) : q.eq('shared_with', sharedWith);
+          await q;
+          return res.status(200).json({ ok: true });
+        }
+        const level = ['viewer', 'user', 'editor', 'owner'].includes(body.access_level) ? body.access_level : 'viewer';
+        // Replace any existing matching share (delete-then-insert keeps it simple
+        // with the partial unique indexes).
+        let del = db.from('agent_shares').delete().eq('agent_id', id);
+        del = companyWide ? del.eq('company_wide', true) : del.eq('shared_with', sharedWith);
+        await del;
+        const { error } = await db.from('agent_shares').insert({
+          agent_id: id, workspace_id: workspaceId, shared_with: sharedWith, company_wide: companyWide,
+          access_level: level, created_by: user.id,
+        });
+        if (error) return res.status(500).json({ error: 'Could not update sharing' });
+        return res.status(200).json({ ok: true });
       }
 
       if (['update', 'pause', 'resume'].includes(action)) {
