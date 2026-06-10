@@ -2829,6 +2829,9 @@ function AutoDaemonsPage() {
               <button type="button" onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: c.text3, cursor: 'pointer', fontSize: 18 }}>×</button>
             </div>
             <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginBottom: 14 }}>{selected.agent.objective}</p>
+            {selected.my_access && selected.my_access !== 'owner' && (
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#4172f5', letterSpacing: '0.06em', marginBottom: 12 }}>SHARED WITH YOU · {selected.my_access.toUpperCase()} ACCESS</p>
+            )}
 
             {proposed.length > 0 ? (
               <>
@@ -2842,12 +2845,16 @@ function AutoDaemonsPage() {
                       </div>
                       {act.body && <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, margin: '0 0 6px', whiteSpace: 'pre-wrap' }}>{act.body}</p>}
                       {act.rationale && <p style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, fontStyle: 'italic', margin: '0 0 8px' }}>Why: {act.rationale}</p>}
+                      {['user', 'editor', 'owner'].includes(selected.my_access) ? (
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button type="button" disabled={busy} onClick={() => decide('approve_action', act.id)}
                           style={{ padding: '6px 14px', borderRadius: 7, background: '#10b981', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer' }}>Approve</button>
                         <button type="button" disabled={busy} onClick={() => decide('reject_action', act.id)}
                           style={{ padding: '6px 14px', borderRadius: 7, background: 'transparent', border: `1px solid ${c.cardBorder}`, color: c.text2, fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer' }}>Dismiss</button>
                       </div>
+                      ) : (
+                        <p style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text4, margin: 0 }}>Viewer access — approvals go to the daemon's owner.</p>
+                      )}
                     </div>
                   ))}
                 </div>

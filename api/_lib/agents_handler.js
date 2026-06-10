@@ -28,6 +28,29 @@ const ROLES = ['sales', 'social', 'support', 'research', 'custom', 'knowledge'];
 const CHANNEL_KEYS = ['email', 'x', 'linkedin'];
 const KINDS = ['outreach', 'knowledge'];
 
+// Team Daemon access model (IA §5.2.3). Daemons are PRIVATE BY DEFAULT: a user
+// can only see/act on a daemon they created (owner) or that's been shared with
+// them (per-person or company-wide). Returns { agent, access } where access is
+// 'owner'|'editor'|'user'|'viewer' or null (no visibility).
+const ACCESS_RANK = { viewer: 0, user: 1, editor: 2, owner: 3 };
+async function agentAccess(db, agentId, workspaceId, userId, { isAdmin = false } = {}) {
+  const { data: agent } = await db.from('agents').select('*').eq('id', agentId).eq('workspace_id', workspaceId).single();
+  if (!agent) return { agent: null, access: null };
+  if (agent.created_by === userId) return { agent, access: 'owner' };
+  const { data: shares } = await db.from('agent_shares').select('shared_with, company_wide, access_level').eq('agent_id', agentId);
+  let access = null;
+  for (const s of shares || []) {
+    if (s.company_wide || s.shared_with === userId) {
+      if (access === null || ACCESS_RANK[s.access_level] > ACCESS_RANK[access]) access = s.access_level;
+    }
+  }
+  // IA §5.2.3: admins may VIEW any workspace daemon but get no edit rights unless
+  // explicitly shared. So floor an admin's access at 'viewer' (never downgrades).
+  if (access === null && isAdmin) access = 'viewer';
+  return { agent, access };
+}
+const rankGte = (access, min) => access != null && ACCESS_RANK[access] >= ACCESS_RANK[min];
+
 export async function agentsHandler(req, res) {
   // ── Cron: run due agents ───────────────────────────────────────────────────
   if (req.method === 'GET' && req.query?.action === 'run_due') {
@@ -72,21 +95,22 @@ export async function agentsHandler(req, res) {
   if (!workspaceId) return res.status(400).json({ error: 'No workspace' });
   const member = await isMember(user.id, workspaceId, db);
   if (!member) return res.status(403).json({ error: 'Not a workspace member' });
+  const isAdmin = member.role === 'admin';
 
   try {
     // ── GET: list or detail ───────────────────────────────────────────────────
     if (req.method === 'GET') {
       if (req.query?.id) {
-        const { data: agent } = await db.from('agents')
-          .select('*').eq('id', req.query.id).eq('workspace_id', workspaceId).single();
-        if (!agent) return res.status(404).json({ error: 'Agent not found' });
+        // Private by default — owner, shared-with, or admin (view-only) may see it.
+        const { agent, access } = await agentAccess(db, req.query.id, workspaceId, user.id, { isAdmin });
+        if (!agent || access == null) return res.status(404).json({ error: 'Agent not found' });
         const [{ data: runs }, { data: targets }, { data: queue }, { data: actions }] = await Promise.all([
           db.from('agent_runs').select('*').eq('agent_id', agent.id).order('started_at', { ascending: false }).limit(10),
           db.from('outreach_targets').select('*').eq('agent_id', agent.id).order('score', { ascending: false }).limit(100),
           db.from('outreach_messages').select('*, outreach_targets(company,person_name)').eq('agent_id', agent.id).in('status', ['draft', 'approved', 'failed']).order('created_at', { ascending: false }).limit(100),
           db.from('daemon_actions').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(100),
         ]);
-        return res.status(200).json({ agent, runs: runs || [], targets: targets || [], queue: queue || [], actions: actions || [] });
+        return res.status(200).json({ agent, my_access: access, runs: runs || [], targets: targets || [], queue: queue || [], actions: actions || [] });
       }
       const [{ data: agents }, { data: shares }, { data: members }] = await Promise.all([
         db.from('agents').select('*').eq('workspace_id', workspaceId).order('created_at', { ascending: false }),
@@ -98,23 +122,25 @@ export async function agentsHandler(req, res) {
       for (const s of shares || []) (sharesByAgent[s.agent_id] = sharesByAgent[s.agent_id] || []).push(s);
       // Annotate each agent with the caller's relationship: My Daemons (created_by
       // me → owner) vs Team Daemons (shared with me / company-wide), + my access.
-      const RANK = { viewer: 0, user: 1, editor: 2, owner: 3 };
       const annotated = (agents || []).map(a => {
         const mine = a.created_by === user.id;
         const ash = sharesByAgent[a.id] || [];
-        let my_access = mine ? 'owner' : 'viewer';
+        // Private by default: my_access is null unless I own it or it's shared with me.
+        let my_access = mine ? 'owner' : null;
         if (!mine) {
           for (const s of ash) {
             const applies = s.company_wide || s.shared_with === user.id;
-            if (applies && RANK[s.access_level] > RANK[my_access]) my_access = s.access_level;
+            if (applies && (my_access === null || ACCESS_RANK[s.access_level] > ACCESS_RANK[my_access])) my_access = s.access_level;
           }
+          // IA §5.2.3: admins see (view-only) any daemon not otherwise shared to them.
+          if (my_access === null && isAdmin) my_access = 'viewer';
         }
         return {
           ...a, mine, my_access,
           // Owners get the share roster (names) to manage access in the dialog.
           shares: mine ? ash.map(s => ({ ...s, name: s.company_wide ? 'Everyone' : nameOf[s.shared_with] || 'Teammate' })) : undefined,
         };
-      });
+      }).filter(a => a.my_access != null); // hide daemons the caller has no access to
       return res.status(200).json({ agents: annotated, members: (members || []).map(m => ({ id: m.id, name: nameOf[m.id] })) });
     }
 
@@ -173,6 +199,10 @@ export async function agentsHandler(req, res) {
       if (['update', 'pause', 'resume'].includes(action)) {
         const id = body.id;
         if (!id) return res.status(400).json({ error: 'id required' });
+        // Editing config / pausing requires Editor or Owner access.
+        const { agent: tgt, access } = await agentAccess(db, id, workspaceId, user.id);
+        if (!tgt) return res.status(404).json({ error: 'Daemon not found' });
+        if (!rankGte(access, 'editor')) return res.status(403).json({ error: 'You need Editor access to change this daemon' });
         const patch = { updated_at: new Date().toISOString() };
         if (action === 'pause') patch.status = 'paused';
         if (action === 'resume') patch.status = 'active';
@@ -189,15 +219,31 @@ export async function agentsHandler(req, res) {
 
       if (action === 'run') {
         if (!(await enforceRateLimit(res, { key: `agent_run:${user.id}`, max: 10, windowSec: 3600 }))) return;
-        const { data: agent } = await db.from('agents')
-          .select('*').eq('id', body.id).eq('workspace_id', workspaceId).single();
+        // Running requires User access or above (Viewers can look but not trigger).
+        const { agent, access } = await agentAccess(db, body.id, workspaceId, user.id);
         if (!agent) return res.status(404).json({ error: 'Agent not found' });
+        if (!rankGte(access, 'user')) return res.status(403).json({ error: 'You need at least User access to run this daemon' });
         const result = await runAgent(db, agent);
         return res.status(200).json(result);
       }
 
+      // Approving/rejecting a daemon's proposed work = acting on it → needs User+.
+      const canActOnMessageAgent = async (messageId) => {
+        const { data: m } = await db.from('outreach_messages').select('agent_id').eq('id', messageId).eq('workspace_id', workspaceId).maybeSingle();
+        if (!m?.agent_id) return false;
+        const { access } = await agentAccess(db, m.agent_id, workspaceId, user.id);
+        return rankGte(access, 'user');
+      };
+      const canActOnActionAgent = async (actionId) => {
+        const { data: a } = await db.from('daemon_actions').select('agent_id').eq('id', actionId).eq('workspace_id', workspaceId).maybeSingle();
+        if (!a?.agent_id) return false;
+        const { access } = await agentAccess(db, a.agent_id, workspaceId, user.id);
+        return rankGte(access, 'user');
+      };
+
       if (action === 'approve') {
         if (!body.messageId) return res.status(400).json({ error: 'messageId required' });
+        if (!(await canActOnMessageAgent(body.messageId))) return res.status(403).json({ error: 'You need at least User access to act on this daemon' });
         const result = await approveMessage(db, {
           workspaceId, messageId: body.messageId, userId: user.id, edits: body.edits || {},
         });
@@ -206,6 +252,7 @@ export async function agentsHandler(req, res) {
 
       if (action === 'reject') {
         if (!body.messageId) return res.status(400).json({ error: 'messageId required' });
+        if (!(await canActOnMessageAgent(body.messageId))) return res.status(403).json({ error: 'You need at least User access to act on this daemon' });
         // Fetch attribution before updating so the rejection trains the bandit.
         const { data: rmsg } = await db.from('outreach_messages')
           .select('agent_id, variant_id, channel, outreach_targets(source_query)')
@@ -225,14 +272,17 @@ export async function agentsHandler(req, res) {
       // ── Knowledge-daemon proposed actions ───────────────────────────────────
       if (action === 'approve_action') {
         if (!body.actionId) return res.status(400).json({ error: 'actionId required' });
+        if (!(await canActOnActionAgent(body.actionId))) return res.status(403).json({ error: 'You need at least User access to act on this daemon' });
         const result = await approveAction(db, { workspaceId, actionId: body.actionId, userId: user.id, edits: body.edits || {} });
         return res.status(result.ok ? 200 : 400).json(result);
       }
       if (action === 'reject_action') {
         if (!body.actionId) return res.status(400).json({ error: 'actionId required' });
+        if (!(await canActOnActionAgent(body.actionId))) return res.status(403).json({ error: 'You need at least User access to act on this daemon' });
         const result = await rejectAction(db, { workspaceId, actionId: body.actionId, userId: user.id });
         return res.status(result.ok ? 200 : 400).json(result);
       }
+
 
       if (action === 'suppress') {
         const address = normAddress(body.address);
