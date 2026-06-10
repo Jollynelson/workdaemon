@@ -19,6 +19,11 @@ const icons = {
       <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />
     </svg>
   ),
+  bell: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  ),
   tasks: (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
@@ -127,8 +132,10 @@ export default function Sidebar({
   // Live nav badges — open tasks + pending inbox pushes. Hidden when zero.
   const [taskCount, setTaskCount] = useState(0);
   const [inboxCount, setInboxCount] = useState(0);
+  const [inboxRecent, setInboxRecent] = useState([]); // last 5 items for the bell dropdown
+  const [bellOpen, setBellOpen] = useState(false);
   useEffect(() => {
-    if (!token) { setTaskCount(0); setInboxCount(0); return; }
+    if (!token) { setTaskCount(0); setInboxCount(0); setInboxRecent([]); return; }
     let alive = true;
     Promise.allSettled([
       brainApi.tasks({ token }),
@@ -139,8 +146,12 @@ export default function Sidebar({
         const open = (t.value.tasks || []).filter(x => !['done', 'completed', 'cancelled'].includes(x.status));
         setTaskCount(open.length);
       }
-      // Initial unread count from the real inbox (realtime bumps this live below).
-      if (p.status === 'fulfilled') setInboxCount((p.value.items || []).filter(i => i.unread).length);
+      // Initial unread count + recent items from the real inbox (realtime bumps below).
+      if (p.status === 'fulfilled') {
+        const its = p.value.items || [];
+        setInboxCount(its.filter(i => i.unread).length);
+        setInboxRecent(its.slice(0, 5));
+      }
     });
     return () => { alive = false; };
   }, [token]);
@@ -233,6 +244,39 @@ export default function Sidebar({
               <div style={{ fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em', lineHeight: 1 }}>WORKDAEMON</div>
               <div style={{ fontFamily: 'var(--inter)', fontSize: 10, color: isLight ? '#a4a097' : '#585868', letterSpacing: '0.02em', marginTop: 4 }}>Your company, queryable.</div>
             </div>
+            {/* Notification bell (IA §9.1) — badge = unread; click = quick-view */}
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <button type="button" onClick={() => setBellOpen(o => !o)} title="Notifications"
+                style={{ width: 28, height: 28, borderRadius: 7, background: isLight ? 'rgba(59,110,247,0.08)' : 'rgba(255,255,255,0.06)', border: `1px solid ${isLight ? 'rgba(59,110,247,0.18)' : 'rgba(255,255,255,0.1)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: isLight ? 'rgba(15,20,53,0.5)' : 'rgba(255,255,255,0.45)', position: 'relative' }}>
+                {icons.bell}
+                {inboxCount > 0 && <span style={{ position: 'absolute', top: -3, right: -3, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7, background: '#ef4444', color: '#fff', fontFamily: 'var(--mono)', fontSize: 8.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{inboxCount > 9 ? '9+' : inboxCount}</span>}
+              </button>
+              {bellOpen && (
+                <>
+                  <div onClick={() => setBellOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+                  <div style={{ position: 'absolute', top: 34, right: 0, width: 268, zIndex: 61, background: isLight ? '#fff' : '#15151b', border: `1px solid ${isLight ? '#e5e3df' : '#26262e'}`, borderRadius: 11, boxShadow: '0 12px 32px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+                    <div style={{ padding: '10px 13px', borderBottom: `1px solid ${isLight ? '#eee' : '#222'}`, fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.1em', color: isLight ? '#a4a097' : '#585868' }}>NOTIFICATIONS</div>
+                    {inboxRecent.length === 0 ? (
+                      <div style={{ padding: '16px 13px', fontFamily: 'var(--inter)', fontSize: 12.5, color: isLight ? '#a4a097' : '#585868' }}>Nothing new.</div>
+                    ) : inboxRecent.map(it => (
+                      <div key={it.id} onClick={() => { setBellOpen(false); navigate('/app/inbox'); handleNavClick?.(); }}
+                        style={{ padding: '10px 13px', borderBottom: `1px solid ${isLight ? '#f2f1ee' : '#1c1c22'}`, cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'flex-start' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                        {it.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', marginTop: 5, flexShrink: 0 }} />}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontFamily: 'var(--inter)', fontSize: 12.5, fontWeight: 500, color: isLight ? '#1a1a1a' : '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</div>
+                          <div style={{ fontFamily: 'var(--inter)', fontSize: 10.5, color: isLight ? '#a4a097' : '#585868', marginTop: 1 }}>{it.source}{it.time ? ` · ${it.time}` : ''}</div>
+                        </div>
+                      </div>
+                    ))}
+                    <div onClick={() => { setBellOpen(false); navigate('/app/inbox'); handleNavClick?.(); }}
+                      style={{ padding: '9px 13px', textAlign: 'center', cursor: 'pointer', fontFamily: 'var(--inter)', fontSize: 12, fontWeight: 600, color: '#4172f5' }}>View all →</div>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Theme toggle / close button */}
             {isMobile ? (
               <button

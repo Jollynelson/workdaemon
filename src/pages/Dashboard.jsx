@@ -2962,11 +2962,13 @@ function InboxPage() {
     } catch { setProposalState(s => ({ ...s, [item.id]: 'err:network' })); }
   }, [token, markRead]);
 
+  // Tabs per IA §5.6: All · Approvals · Messages · Broadcasts · Alerts.
   const FILTERS = [
-    { key: 'all',      label: 'ALL',      fn: () => true },
-    { key: 'mentions', label: 'MENTIONS', fn: i => i.source === 'Slack' },
-    { key: 'alerts',   label: 'ALERTS',   fn: i => !!i.level },
-    { key: 'updates',  label: 'UPDATES',  fn: i => ['Jira', 'GitHub', 'Linear'].includes(i.source) },
+    { key: 'all',        label: 'ALL',        fn: () => true },
+    { key: 'approvals',  label: 'APPROVALS',  fn: i => i.type === 'approval' || i.metadata?.event_type === 'approval' || i.metadata?.needs_approval },
+    { key: 'messages',   label: 'MESSAGES',   fn: i => i.type === 'message' || ['assignment', 'accepted', 'flag', 'availability'].includes(i.metadata?.event_type) },
+    { key: 'broadcasts', label: 'BROADCASTS', fn: i => i.type === 'broadcast' || i.metadata?.event_type === 'broadcast' },
+    { key: 'alerts',     label: 'ALERTS',     fn: i => !!i.level || i.type === 'alert' || !!i.metadata?.severity },
   ];
 
   const rawItems = data?.items || [];
