@@ -1,7 +1,7 @@
 // Self-improvement substrate. One loop — capture SIGNALS, distill INSIGHTS,
 // adapt behavior — shared by all four surfaces (agents, daemons, brain,
 // codebase). Pure lib (no serverless function) so it stays off Vercel's 12-fn
-// cap; called from agent_engine.js, chat.js, brain.js. See migration_learning.sql.
+// cap; called from agent_engine.js, chat.js, brain.js. See migrations/026_learning.sql.
 import { resolveLLM, callLLM, extractJson } from './research.js';
 
 // ── Signals: cheap, append-only, never block the caller ──────────────────────
