@@ -374,3 +374,35 @@ Owner overrode the privacy-cap default: the Brain ingests full transcripts now.
   get pointer-only via retrieveDocuments and the gateway MCP search tool never
   returns restricted content. (scrub.js was checked: it repairs leaked JSON
   envelopes, not PII — no redaction machinery was bypassed.)
+
+## 2026-06-10 (cont.) · Historical backfill: the Brain went back in time (ALL workspaces)
+
+Owner directive: backfill everything — all ingestions, all tools, learn the
+company's past. Two new idempotent ops scripts (run against prod, ALL
+workspaces — nothing is tailored to any single company):
+
+- `scripts/backfill_chat_transcripts.mjs` — swept ALL 68 historical
+  daemon_messages into 15 per-user daily transcript docs (3 workspaces).
+  Transcript shaping extracted to `api/_lib/transcripts.js`, shared with the
+  live per-turn ingest so formats never drift.
+- `scripts/backfill_brain.mjs` — the full all-seeing pass per workspace,
+  without the cron's 60s budget: connector ingest (workspace ∪ per-user
+  tokens), external market scan, pattern detection, deep pass, knowledge
+  graph, brain self-audit, reindex. Ran on all 3 workspaces: Cobalt Slack
+  re-swept (7 channel docs), 6 new market findings, 9 deep-pass findings,
+  graphs rebuilt (Cobalt 35 nodes/71 edges).
+- **Embeddings fixed to 100%**: two real bugs found while backfilling —
+  (1) reindex batches of ~27 docs blow the embedder's 7s budget → batch 8 +
+  one-by-one fallback; (2) the endpoint REJECTS texts >~6-7K chars outright →
+  embed input capped at 6K (both in api/_lib/ingestion.js). Final coverage:
+  chat 15/15 · slack 7/7 · notion 4/4 · github 2/2.
+- Noted gap: Cobalt's nightlyDeepPass skips ("provider-unsupported") because
+  its workspace key is hermes — deep mining needs a JSON-mode cloud model;
+  it could fall back to the env DeepSeek key. Logged for a future pass.
+
+Scope note (owner asked): EVERYTHING this session is per-workspace generic —
+the chat pipeline, web agency, transcripts, all-seeing cron, Hermes default,
+brain tokens. Beta Tenant was only the VERIFICATION SUBJECT. Future companies
+get all of it at signup automatically (env-fallback Hermes daemon, live
+ingestion from turn one, cron round-robin); the backfill scripts exist for
+importing a company's pre-existing history on demand.

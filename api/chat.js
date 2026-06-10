@@ -7,6 +7,7 @@ import { extractTopicTags } from './_lib/topics.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
 import { graphSummary } from './brain.js';
 import { retrieveDocuments, upsertDocuments } from './_lib/ingestion.js';
+import { transcriptLines, transcriptDoc } from './_lib/transcripts.js';
 import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
@@ -755,29 +756,11 @@ export default async function handler(req, res) {
               .select('role, content')
               .eq('user_id', user.id).gte('created_at', `${dayISO}T00:00:00Z`)
               .order('created_at', { ascending: true }).limit(200);
-            const lines = [];
-            for (const m of (todays || [])) {
-              if (m.role === 'user') { lines.push(`${profile?.name || 'User'}: ${m.content}`); continue; }
-              try {
-                const env = JSON.parse(m.content);
-                const texts = (env.blocks || []).map(b =>
-                  b?.type === 'text' ? b.md :
-                  b?.type === 'alert' ? `[alert] ${b.title}: ${b.content || ''}` :
-                  b?.type === 'action_done' ? b.summary : ''
-                ).filter(Boolean);
-                if (texts.length) lines.push(`Daemon: ${texts.join(' ')}`);
-              } catch { if (m.content) lines.push(`Daemon: ${m.content}`); }
-            }
+            const lines = transcriptLines(todays, profile?.name || 'User');
             if (lines.length) {
-              await upsertDocuments(db, workspaceId, 'chat', [{
-                external_id: `chat-${user.id}-${dayISO}`,
-                doc_type:    'conversation',
-                title:       `Daemon chat — ${profile?.name || 'staff'} — ${dayISO}`,
-                content:     lines.join('\n').slice(-8000), // tail = most recent
-                visibility:  'restricted',
-                allowed_users: [user.id],
-                author:      profile?.name || null,
-              }]);
+              await upsertDocuments(db, workspaceId, 'chat', [
+                transcriptDoc({ userId: user.id, dayISO, ownerName: profile?.name, lines }),
+              ]);
             }
           } catch (e) { console.error('[chat] transcript ingest:', e.message); }
         }

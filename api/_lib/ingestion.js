@@ -94,7 +94,9 @@ export async function upsertDocuments(db, workspaceId, source, docs) {
   }));
   if (!rows.length) return { upserted: 0 };
   // Embed for semantic retrieval (best-effort; rows still upsert without it).
-  const vecs = await embed(rows.map(r => `${r.title}\n${r.content}`));
+  // Cap embed input ~6K chars — the endpoint rejects longer texts outright
+  // (observed live: a 7,988-char transcript failed instantly; 6,000 ok).
+  const vecs = await embed(rows.map(r => `${r.title}\n${r.content}`.slice(0, 6000)));
   if (vecs && vecs.length === rows.length) rows.forEach((r, i) => { r.embedding = vecLiteral(vecs[i]); });
   const { error } = await db.from('workspace_documents').upsert(rows, { onConflict: 'workspace_id,source,external_id' });
   if (error) throw new Error(error.message);
@@ -108,12 +110,23 @@ export async function reindexWorkspace(db, workspaceId) {
     .from('workspace_documents').select('id, title, content').eq('workspace_id', workspaceId);
   if (!docs?.length) return { reindexed: 0, embedded: false };
   let embedded = 0;
-  const BATCH = 32;
+  // Small batches: embed() has a hard 7s budget and 30-doc payloads blow it
+  // (observed live: batch of 27 → 0 embedded; batches of 4-8 succeed).
+  const BATCH = 8;
   for (let i = 0; i < docs.length; i += BATCH) {
     const chunk = docs.slice(i, i + BATCH);
-    const vecs = await embed(chunk.map(d => `${d.title}\n${d.content}`));
-    if (!vecs || vecs.length !== chunk.length) continue;
+    let vecs = await embed(chunk.map(d => `${d.title}\n${d.content}`.slice(0, 6000)));
+    if (!vecs || vecs.length !== chunk.length) {
+      // Batch blew the embed budget (several large docs together) — fall back
+      // to one-by-one so large documents still get embedded instead of skipped.
+      vecs = [];
+      for (const d of chunk) {
+        const v = await embed([`${d.title}\n${d.content}`.slice(0, 6000)]).catch(() => null);
+        vecs.push(v?.[0] ?? null);
+      }
+    }
     for (let j = 0; j < chunk.length; j++) {
+      if (!vecs[j]) continue;
       const { error } = await db.from('workspace_documents').update({ embedding: vecLiteral(vecs[j]) }).eq('id', chunk[j].id);
       if (!error) embedded++;
     }
