@@ -11,6 +11,7 @@ import { transcriptLines, transcriptDoc } from './_lib/transcripts.js';
 import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
+import { activeGoals, goalsPromptBlock } from './_lib/goals.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -249,10 +250,127 @@ export default async function handler(req, res) {
     }
   }
 
-  // Independent per-user / per-workspace context — fetched CONCURRENTLY. These
-  // were previously a serial chain of awaits; each Supabase round-trip adds
-  // ~100-300ms, so running them in parallel cuts the pre-LLM latency materially.
-  const [agentProfileRes, memoriesRes, huntFindingsRes, integRes, dbHistoryRes] = await Promise.all([
+  // The latest message comes straight from the request body — normalize it BEFORE
+  // the context fan-out so retrieval (docs, skills, web) can use it concurrently.
+  const newMsg = messages[messages.length - 1];
+  const newMsgNormalized = newMsg
+    ? {
+        role: newMsg.role === 'user' ? 'user' : 'assistant',
+        // Cap content length to bound payload/cost; the message stays in USER
+        // position (never the system prompt), so it can't override instructions.
+        content: String(newMsg.content || newMsg.text || '').slice(0, 8000),
+      }
+    : null;
+  const isUserTurn = newMsgNormalized?.role === 'user';
+  const wsObj = Array.isArray(profile?.workspaces) ? profile.workspaces[0] : profile?.workspaces;
+
+  // ── ONE concurrent context fan-out ──────────────────────────────────────────
+  // Everything the prompt needs is independent once the profile row is loaded, so
+  // it ALL runs in a single Promise.all: per-user context, company intelligence,
+  // learning, skills, goals, org graph, document retrieval, cross-daemon events,
+  // provider-key resolution AND live web work. The old shape ran ~8 sequential
+  // phases (each a 100ms–3s round-trip); pre-LLM latency now equals the single
+  // slowest item instead of the sum.
+  const webIngest = []; // { external_id, title, content, url } → workspace_documents
+
+  // Cross-daemon events: assignments, capacity flags, acceptances, broadcasts and
+  // availability signals from OTHER staff's daemons that this user hasn't resolved
+  // yet — surfaced at the top of the daemon's next reply
+  // (workdaemon-cross-daemon-communication.md — "queues it at the top of their
+  // next context").
+  const fetchDaemonEvents = async () => {
+    if (!workspaceId) return '';
+    const { data: events } = await db
+      .from('daemon_events')
+      .select('type, payload, from_user_id, created_at')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'pending')
+      .or(`to_user_id.eq.${user.id},to_user_id.is.null`)
+      .neq('from_user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (!events?.length) return '';
+    const senderIds = [...new Set(events.map(e => e.from_user_id).filter(Boolean))];
+    const { data: senders } = senderIds.length
+      ? await db.from('profiles').select('id, name, title').in('id', senderIds)
+      : { data: [] };
+    const nameOf = Object.fromEntries((senders || []).map(s => [s.id, s.name || s.title || 'A teammate']));
+    const lines = events.map(e => {
+      const p = e.payload || {};
+      const who = p.source === 'brain' ? 'The Company Brain' : (nameOf[e.from_user_id] || 'A teammate');
+      if (e.type === 'assignment') return `• ${who} assigned you "${p.title}" (${p.priority || 'P2'}).${p.brief ? ' Brief: ' + p.brief : ''}`;
+      if (e.type === 'flag')       return `• ${who}'s daemon flagged a capacity risk on "${p.title}": ${p.reason}${p.suggestion ? ' — suggests: ' + p.suggestion : ''}`;
+      if (e.type === 'accepted')   return `• ${who}'s daemon accepted "${p.title}".`;
+      if (e.type === 'broadcast')  return `• Company broadcast from ${who}: ${p.message}`;
+      if (e.type === 'availability') return `• ${who} is now ${p.availability}${p.reason ? ' (' + p.reason + ')' : ''}.`;
+      return `• ${who}: ${e.type}`;
+    });
+    return `\nCROSS-DAEMON EVENTS (other staff's daemons signalled YOUR daemon — surface the important ones near the top of your reply with the recommended next step; for an assignment, offer to accept or flag a capacity risk; for a capacity flag, offer options like extend/reassign/reduce scope):\n${delimitUntrusted(lines.join('\n'), 3000)}\n`;
+  };
+
+  // Workspace AI key (BYOK) — resolved concurrently with the rest of the fan-out.
+  const fetchKeyRow = async () => {
+    if (!workspaceId) return null;
+    const { data: keys } = await db
+      .from('workspace_api_keys')
+      .select('provider, api_key, endpoint, model, use_case')
+      .eq('workspace_id', workspaceId)
+      .order('created_at');
+    const row = keys?.find(k => k.use_case === 'reasoning')
+             ?? keys?.find(k => k.use_case === 'default')
+             ?? keys?.[0]
+             ?? null;
+    if (row) return row;
+    const { data: ws } = await db
+      .from('workspaces')
+      .select('openrouter_key, openrouter_model')
+      .eq('id', workspaceId)
+      .single();
+    return ws?.openrouter_key ? { provider: 'openrouter', api_key: ws.openrouter_key, model: ws.openrouter_model } : null;
+  };
+
+  // Live web work for this turn (page reads for pasted URLs + trigger-worded
+  // search). It's the slowest pre-LLM item, so it overlaps every DB read here.
+  // Beyond these fast paths the MODEL pulls the web itself via brain_queries —
+  // intent, not keywords, is the real trigger. Everything retrieved is queued
+  // for ingestion so knowledge compounds instead of evaporating per-turn.
+  const runWebWork = async () => {
+    if (!isUserTurn) return '';
+    let out = '';
+    const urls = extractUrls(newMsgNormalized.content, 3);
+    const [pageReads, search] = await Promise.all([
+      urls.length
+        ? Promise.all(urls.map(u => fetchPageText(u, { maxChars: 3500 }).catch(() => null)))
+        : Promise.resolve([]),
+      wantsWebSearch(newMsgNormalized.content)
+        ? runWebSearch(newMsgNormalized.content, {
+            wsName: wsObj?.name, wsIndustry: wsObj?.industry, companyDesc: wsObj?.context?.description,
+          }).catch(e => { console.warn('[chat] web search failed:', e.message); return null; })
+        : Promise.resolve(null),
+    ]);
+    if (urls.length) {
+      const reads = urls.map((u, i) => ({ url: u, content: pageReads[i] }));
+      const ok = reads.filter(r => r.content);
+      const failed = reads.filter(r => !r.content).map(r => r.url);
+      out += buildPageReadContext(ok, failed);
+      for (const r of ok) webIngest.push({ external_id: r.url, doc_type: 'webpage', title: r.url, content: r.content, url: r.url });
+      console.log('[chat] page reads ok=%d failed=%d', ok.length, failed.length);
+    }
+    if (search) {
+      out += buildWebContext(search, { attempted: true });
+      for (const s of (search.snippets || [])) {
+        if (s.url && s.content) webIngest.push({ external_id: s.url, doc_type: 'webpage', title: s.title || s.url, content: s.content, url: s.url });
+      }
+      console.log('[chat] web search grounded=%s snippets=%d', !!search.grounded, search.snippets?.length || 0);
+    }
+    return out;
+  };
+
+  const [
+    agentProfileRes, memoriesRes, huntFindingsRes, integRes, dbHistoryRes,
+    patternsRes, slackRes, daemonEventsContext, graphCtxRes, docsRes,
+    learningContext, pickedSkills, goalBook, keyRowFromDb, webContext,
+  ] = await Promise.all([
     db.from('app_agent_profiles')
       .select('access_level, trust_score, interaction_count, permitted_tools')
       .eq('user_id', user.id).single(),
@@ -271,6 +389,34 @@ export default async function handler(req, res) {
     db.from('daemon_messages')
       .select('role, content')
       .eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
+    // Cross-staff patterns — fetched optimistically; only injected for executives.
+    workspaceId
+      ? db.from('app_detected_patterns')
+          .select('pattern_type, title, detail, confidence')
+          .eq('workspace_id', workspaceId).eq('status', 'open')
+          .order('confidence', { ascending: false }).limit(6)
+      : Promise.resolve({ data: [] }),
+    // Recent Slack activity — fetched optimistically; only injected when Slack is connected.
+    workspaceId
+      ? db.from('slack_messages')
+          .select('channel_name, text, created_at')
+          .eq('workspace_id', workspaceId)
+          .order('created_at', { ascending: false }).limit(40)
+      : Promise.resolve({ data: [] }),
+    fetchDaemonEvents().catch(() => ''),
+    workspaceId ? graphSummary(workspaceId, db).catch(() => '') : Promise.resolve(''),
+    (workspaceId && isUserTurn)
+      ? retrieveDocuments(db, workspaceId, newMsgNormalized.content, user.id, 4).catch(() => ({ visible: [], restricted: [] }))
+      : Promise.resolve({ visible: [], restricted: [] }),
+    buildDaemonLearningContext(db, { workspaceId, userId: user.id })
+      .catch(e => { console.warn('[chat] learning context failed:', e.message); return ''; }),
+    relevantSkills(db, { workspaceId, objective: newMsgNormalized?.content || '', limit: 6, userId: user.id })
+      .catch(e => { console.warn('[chat] skills context failed:', e.message); return []; }),
+    workspaceId
+      ? activeGoals(db, { workspaceId, userId: user.id }).catch(() => ({ company: [], staff: [] }))
+      : Promise.resolve({ company: [], staff: [] }),
+    fetchKeyRow().catch(() => null),
+    runWebWork().catch(e => { console.warn('[chat] web work failed:', e.message); return ''; }),
   ]);
 
   const agentProfile = agentProfileRes.data;
@@ -283,35 +429,16 @@ export default async function handler(req, res) {
 
   // Cross-staff patterns (FINAL §11/§13): company-wide intelligence surfaced to
   // EXECUTIVES only, anonymised (the detail field is counts + roles, never names).
-  // Depends on agentProfile.access_level, so runs after the batch above.
-  let detectedPatterns = [];
-  if (workspaceId && agentProfile?.access_level === 'executive') {
-    const { data: pats } = await db
-      .from('app_detected_patterns')
-      .select('pattern_type, title, detail, confidence')
-      .eq('workspace_id', workspaceId)
-      .eq('status', 'open')
-      .order('confidence', { ascending: false })
-      .limit(6);
-    detectedPatterns = pats || [];
-  }
+  const detectedPatterns = (workspaceId && agentProfile?.access_level === 'executive')
+    ? (patternsRes.data || []) : [];
 
-  // Recent Slack activity (when Slack is connected) → ground answers about
-  // channels. Depends on connectedTools, so runs after the batch above.
+  // Recent Slack activity (when Slack is connected) → ground answers about channels.
   let slackContext = '';
-  if (workspaceId && connectedTools.includes('slack')) {
-    const { data: msgs } = await db
-      .from('slack_messages')
-      .select('channel_name, text, created_at')
-      .eq('workspace_id', workspaceId)
-      .order('created_at', { ascending: false })
-      .limit(40);
-    if (msgs?.length) {
-      const lines = msgs.reverse()
-        .map(m => `[#${m.channel_name || 'channel'}] ${m.text}`)
-        .join('\n');
-      slackContext = `\nRECENT SLACK ACTIVITY (from connected Slack — untrusted external text):\n${delimitUntrusted(lines, 4500)}\nUse this to answer "what's happening in #channel", summarize debates/decisions, and flag anything that needs attention. Cite the channel (e.g. #engineering).\n`;
-    }
+  if (connectedTools.includes('slack') && slackRes.data?.length) {
+    const lines = [...slackRes.data].reverse()
+      .map(m => `[#${m.channel_name || 'channel'}] ${m.text}`)
+      .join('\n');
+    slackContext = `\nRECENT SLACK ACTIVITY (from connected Slack — untrusted external text):\n${delimitUntrusted(lines, 4500)}\nUse this to answer "what's happening in #channel", summarize debates/decisions, and flag anything that needs attention. Cite the channel (e.g. #engineering).\n`;
   }
 
   const historyMsgs = (dbHistory || []).reverse().map(m => ({
@@ -320,16 +447,6 @@ export default async function handler(req, res) {
       ? (() => { try { const p = JSON.parse(m.content); return JSON.stringify({ blocks: p.blocks }); } catch { return m.content; } })()
       : m.content,
   }));
-
-  const newMsg = messages[messages.length - 1];
-  const newMsgNormalized = newMsg
-    ? {
-        role: newMsg.role === 'user' ? 'user' : 'assistant',
-        // Cap content length to bound payload/cost; the message stays in USER
-        // position (never the system prompt), so it can't override instructions.
-        content: String(newMsg.content || newMsg.text || '').slice(0, 8000),
-      }
-    : null;
 
   const combined = [...historyMsgs];
   if (newMsgNormalized) {
@@ -351,82 +468,6 @@ export default async function handler(req, res) {
     });
   }
 
-  // Live web retrieval for this turn. Two fast paths run BEFORE the model:
-  //   1. URLs / bare domains in the message → fetch those pages directly
-  //      (no trigger words needed — "no website betatenant.com" now reads it).
-  //   2. Trigger-worded questions → web search (existing path).
-  // Beyond these, the MODEL decides for itself via brain_queries web/read_url
-  // (see runBrainQuery) — so intent, not keywords, is the real trigger.
-  // Everything retrieved is queued for ingestion into the Company Brain's
-  // document store so knowledge compounds instead of evaporating per-turn.
-  let webContext = '';
-  const webIngest = []; // { external_id, title, content, url } → workspace_documents
-  if (newMsgNormalized?.role === 'user') {
-    const urls = extractUrls(newMsgNormalized.content, 3);
-    if (urls.length) {
-      try {
-        const pages = await Promise.all(urls.map(u => fetchPageText(u, { maxChars: 3500 }).catch(() => null)));
-        const reads = urls.map((u, i) => ({ url: u, content: pages[i] }));
-        const ok = reads.filter(r => r.content);
-        const failed = reads.filter(r => !r.content).map(r => r.url);
-        webContext += buildPageReadContext(ok, failed);
-        for (const r of ok) webIngest.push({ external_id: r.url, doc_type: 'webpage', title: r.url, content: r.content, url: r.url });
-        console.log('[chat] page reads ok=%d failed=%d', ok.length, failed.length);
-      } catch (e) { console.warn('[chat] page reads failed:', e.message); }
-    }
-    if (wantsWebSearch(newMsgNormalized.content)) {
-      try {
-        const wsObj = Array.isArray(profile?.workspaces) ? profile.workspaces[0] : profile?.workspaces;
-        const web = await runWebSearch(newMsgNormalized.content, {
-          wsName:      wsObj?.name,
-          wsIndustry:  wsObj?.industry,
-          companyDesc: wsObj?.context?.description,
-        });
-        webContext += buildWebContext(web, { attempted: true });
-        for (const s of (web?.snippets || [])) {
-          if (s.url && s.content) webIngest.push({ external_id: s.url, doc_type: 'webpage', title: s.title || s.url, content: s.content, url: s.url });
-        }
-        console.log('[chat] web search grounded=%s snippets=%d', !!web?.grounded, web?.snippets?.length || 0);
-      } catch (e) {
-        console.warn('[chat] web search failed:', e.message);
-      }
-    }
-  }
-
-  // Cross-daemon events: assignments, capacity flags, acceptances, broadcasts
-  // and availability signals from OTHER staff's daemons that this user hasn't
-  // resolved yet. The daemon surfaces them proactively, at the top of its reply
-  // (workdaemon-cross-daemon-communication.md — "queues it at the top of their
-  // next context").
-  let daemonEventsContext = '';
-  if (workspaceId) {
-    const { data: events } = await db
-      .from('daemon_events')
-      .select('type, payload, from_user_id, created_at')
-      .eq('workspace_id', workspaceId)
-      .eq('status', 'pending')
-      .or(`to_user_id.eq.${user.id},to_user_id.is.null`)
-      .neq('from_user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(8);
-    if (events?.length) {
-      const senderIds = [...new Set(events.map(e => e.from_user_id).filter(Boolean))];
-      const { data: senders } = await db.from('profiles').select('id, name, title').in('id', senderIds);
-      const nameOf = Object.fromEntries((senders || []).map(s => [s.id, s.name || s.title || 'A teammate']));
-      const lines = events.map(e => {
-        const p = e.payload || {};
-        const who = p.source === 'brain' ? 'The Company Brain' : (nameOf[e.from_user_id] || 'A teammate');
-        if (e.type === 'assignment') return `• ${who} assigned you "${p.title}" (${p.priority || 'P2'}).${p.brief ? ' Brief: ' + p.brief : ''}`;
-        if (e.type === 'flag')       return `• ${who}'s daemon flagged a capacity risk on "${p.title}": ${p.reason}${p.suggestion ? ' — suggests: ' + p.suggestion : ''}`;
-        if (e.type === 'accepted')   return `• ${who}'s daemon accepted "${p.title}".`;
-        if (e.type === 'broadcast')  return `• Company broadcast from ${who}: ${p.message}`;
-        if (e.type === 'availability') return `• ${who} is now ${p.availability}${p.reason ? ' (' + p.reason + ')' : ''}.`;
-        return `• ${who}: ${e.type}`;
-      });
-      daemonEventsContext = `\nCROSS-DAEMON EVENTS (other staff's daemons signalled YOUR daemon — surface the important ones near the top of your reply with the recommended next step; for an assignment, offer to accept or flag a capacity risk; for a capacity flag, offer options like extend/reassign/reduce scope):\n${delimitUntrusted(lines.join('\n'), 3000)}\n`;
-    }
-  }
-
   // Cross-staff patterns block (executives only) — anonymised, attributed to the Brain.
   let patternsContext = '';
   if (detectedPatterns.length) {
@@ -434,24 +475,14 @@ export default async function handler(req, res) {
     patternsContext = `\nCROSS-STAFF PATTERNS (the Company Brain detected these across ≥3 staff — company-wide intelligence; when one is material to the user's question, raise the most important proactively as an alert block tagged "Brain · Pattern", attribute it to the Company Brain, and recommend an action. These are aggregate signals — NEVER name or single out an individual):\n${delimitUntrusted(lines, 3000)}\n`;
   }
 
-  // Org knowledge graph + access-scoped company documents — both always run for a
-  // workspace user turn and are independent, so fetch them CONCURRENTLY. (docs
-  // retrieval may call the embeddings endpoint, which is now timeout-bounded in
-  // ingestion.embed() → falls back to keyword search instead of blocking.)
+  // Org knowledge graph + access-scoped company documents (fetched in the batch).
   //   graph: who owns what, what's at risk and who it touches.
   //   docs (Master §14 / FINAL §13): `visible` = docs this user may see (grounding);
   //   `restricted` = relevant docs they may NOT see → the daemon learns they EXIST
   //   (to point to a member) but never their content. Need-to-know, no oversharing.
-  let graphContext = '';
+  const graphContext = graphCtxRes || '';
   let docsContext = '';
   {
-    const [graphRes, docsRes] = await Promise.all([
-      workspaceId ? graphSummary(workspaceId, db).catch(() => '') : Promise.resolve(''),
-      (workspaceId && newMsgNormalized?.role === 'user')
-        ? retrieveDocuments(db, workspaceId, newMsgNormalized.content, user.id, 4).catch(() => ({ visible: [], restricted: [] }))
-        : Promise.resolve({ visible: [], restricted: [] }),
-    ]);
-    graphContext = graphRes || '';
     const { visible, restricted } = docsRes || { visible: [], restricted: [] };
     if (visible.length) {
       const lines = visible.map(d => `[${d.source}${d.doc_type ? '/' + d.doc_type : ''}] ${d.title}: ${(d.content || '').slice(0, 500)}`).join('\n');
@@ -463,20 +494,15 @@ export default async function handler(req, res) {
     }
   }
 
-  // LEARNED PREFERENCES: style corrections this daemon distilled from the owner's
-  // 👍/👎/edit feedback — applied silently so the daemon's voice improves over time.
-  let learningContext = '';
-  try { learningContext = await buildDaemonLearningContext(db, { workspaceId, userId: user.id }); }
-  catch (e) { console.warn('[chat] learning context failed:', e.message); }
+  // SKILLS pillar (picked in the batch — includes this daemon's brain-assigned toolkit).
+  const skillsContext = renderSkillsBlock(pickedSkills);
+  if (pickedSkills?.length) bumpSkillUsage(db, pickedSkills.map(s => s.slug), workspaceId);
 
-  // SKILLS pillar: the brain passes its learned skills to this daemon, picked for
-  // the current question. Same library the autonomous daemons + Hermes agent use.
-  let skillsContext = '';
-  try {
-    const skills = await relevantSkills(db, { workspaceId, objective: newMsg?.content || '', limit: 6 });
-    skillsContext = renderSkillsBlock(skills);
-    bumpSkillUsage(db, skills.map(s => s.slug), workspaceId);
-  } catch (e) { console.warn('[chat] skills context failed:', e.message); }
+  // GOALS pillar: the live goal book — company goals + this daemon's own goals —
+  // injected every turn so the whole fleet pulls toward the same targets.
+  const goalsContext = goalsPromptBlock(goalBook || { company: [], staff: [] }, {
+    ownerFirstName: (profile?.name || '').split(' ')[0] || null,
+  });
 
   let sys = buildDaemonSystemPrompt(
     profile ?? null,
@@ -487,32 +513,10 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext + graphContext + docsContext + learningContext + skillsContext;
+  ) + daemonEventsContext + patternsContext + goalsContext + graphContext + docsContext + learningContext + skillsContext;
 
-  // Resolve AI provider key
-  let keyRow = null;
-  if (workspaceId) {
-    const { data: keys } = await db
-      .from('workspace_api_keys')
-      .select('provider, api_key, endpoint, model, use_case')
-      .eq('workspace_id', workspaceId)
-      .order('created_at');
-    keyRow = keys?.find(k => k.use_case === 'reasoning')
-          ?? keys?.find(k => k.use_case === 'default')
-          ?? keys?.[0]
-          ?? null;
-
-    if (!keyRow) {
-      const { data: ws } = await db
-        .from('workspaces')
-        .select('openrouter_key, openrouter_model')
-        .eq('id', workspaceId)
-        .single();
-      if (ws?.openrouter_key) {
-        keyRow = { provider: 'openrouter', api_key: ws.openrouter_key, model: ws.openrouter_model };
-      }
-    }
-  }
+  // Resolve AI provider key (fetched concurrently in the batch above).
+  let keyRow = keyRowFromDb;
 
   // Env fallback when a workspace has no key of its own — mirrors resolveLLM:
   // DeepSeek first (the intended brain + already set in prod), then Anthropic,

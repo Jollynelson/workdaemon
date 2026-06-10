@@ -1,9 +1,17 @@
 // Extracted from the former 5,000-line src/pages/Dashboard.jsx (2026-06-10 split).
+// Open skill library (Hermes-style): write a custom skill, paste a SKILL.md,
+// import from any URL / GitHub link, or search the web for one — the brain
+// normalizes whatever comes in into a reusable daemon skill.
 import { useState, useEffect, useCallback } from 'react';
 import { useViewport } from '../../context/ThemeContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useC, mkGhostBtn } from '../../lib/theme.jsx';
 import { SkeletonRow } from '../../components/ui.jsx';
+
+const inputStyle = (c) => ({
+  padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`,
+  color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none',
+});
 
 export function SkillsPage() {
   const c = useC();
@@ -12,8 +20,11 @@ export function SkillsPage() {
   const [skills, setSkills]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding]   = useState(false);
-  const [form, setForm]       = useState({ name: '', trigger_description: '' });
+  const [mode, setMode]       = useState('custom'); // custom | link | paste | search
+  const [form, setForm]       = useState({ name: '', trigger_description: '', url: '', content: '', query: '' });
+  const [results, setResults] = useState(null);     // online search candidates
   const [busy, setBusy]       = useState(false);
+  const [busyUrl, setBusyUrl] = useState(null);     // which search result is importing
   const [banner, setBanner]   = useState(null);
 
   const load = useCallback(async () => {
@@ -27,18 +38,45 @@ export function SkillsPage() {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
+  const post = useCallback(async (body) => {
+    const r = await fetch('/api/brain', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    return { ok: r.ok, d };
+  }, [token]);
+
   const save = async () => {
     if (!form.name.trim()) return;
     setBusy(true);
-    try {
-      const r = await fetch('/api/brain', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action: 'add_skill', name: form.name, trigger_description: form.trigger_description }),
-      });
-      const d = await r.json();
-      if (r.ok) { setAdding(false); setForm({ name: '', trigger_description: '' }); setBanner({ ok: true, text: `Added “${d.skill?.name}”.` }); load(); }
-      else setBanner({ ok: false, text: d.error === 'Admin only' ? 'Only workspace admins can add shared skills.' : (d.error || 'Could not add skill.') });
-    } catch { setBanner({ ok: false, text: 'Network error.' }); }
+    const { ok, d } = await post({ action: 'add_skill', name: form.name, trigger_description: form.trigger_description }).catch(() => ({ ok: false, d: {} }));
+    if (ok) { setAdding(false); setForm(f => ({ ...f, name: '', trigger_description: '' })); setBanner({ ok: true, text: `Added “${d.skill?.name}”.` }); load(); }
+    else setBanner({ ok: false, text: d.error === 'Admin only' ? 'Only workspace admins can add shared skills.' : (d.error || 'Could not add skill.') });
+    setBusy(false);
+  };
+
+  const importSkill = async ({ url, content }) => {
+    setBusy(true); setBanner(null);
+    const { ok, d } = await post({ action: 'import_skill', ...(url ? { url } : { content }) }).catch(() => ({ ok: false, d: {} }));
+    if (ok) { setBanner({ ok: true, text: `Imported “${d.skill?.name}” — your daemons can use it now.` }); setForm(f => ({ ...f, url: '', content: '' })); setAdding(false); load(); }
+    else setBanner({ ok: false, text: d.error || 'Import failed.' });
+    setBusy(false);
+  };
+
+  const importFromResult = async (url) => {
+    setBusyUrl(url); setBanner(null);
+    const { ok, d } = await post({ action: 'import_skill', url }).catch(() => ({ ok: false, d: {} }));
+    if (ok) { setBanner({ ok: true, text: `Imported “${d.skill?.name}”.` }); load(); }
+    else setBanner({ ok: false, text: d.error || 'Import failed — try another result.' });
+    setBusyUrl(null);
+  };
+
+  const searchOnline = async () => {
+    if (!form.query.trim()) return;
+    setBusy(true); setResults(null); setBanner(null);
+    const { ok, d } = await post({ action: 'search_skills_online', q: form.query }).catch(() => ({ ok: false, d: {} }));
+    setResults(ok ? (d.results || []) : []);
     setBusy(false);
   };
 
@@ -48,8 +86,19 @@ export function SkillsPage() {
   const cats = Object.keys(groups).sort();
 
   const srcBadge = (s) => s.learned_from === 'custom' ? { t: 'CUSTOM', col: '#a855f7' }
-    : s.learned_from === 'web' || s.source_url ? { t: 'LEARNED', col: '#4172f5' }
+    : s.learned_from === 'import' ? { t: 'IMPORTED', col: '#10b981' }
+    : s.learned_from === 'assigned' ? { t: 'BRAIN-ASSIGNED', col: '#f59e0b' }
+    : s.learned_from === 'discovered' ? { t: 'DISCOVERED', col: '#3b6ef7' }
+    : s.learned_from === 'experience' ? { t: 'LEARNED', col: '#3b6ef7' }
+    : s.learned_from === 'web' || s.source_url ? { t: 'LEARNED', col: '#3b6ef7' }
     : { t: 'BUILT-IN', col: c.text4 };
+
+  const MODES = [
+    { key: 'custom', label: 'Write one' },
+    { key: 'link',   label: 'From link / GitHub' },
+    { key: 'paste',  label: 'Paste a skill' },
+    { key: 'search', label: 'Search online' },
+  ];
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
@@ -59,14 +108,14 @@ export function SkillsPage() {
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>CAPABILITIES</p>
             <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>Skills</h1>
             <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6, lineHeight: 1.6, maxWidth: 600 }}>
-              Reusable capabilities your Daemons draw on — personal and autonomous. The Company Brain keeps this library sharp and applies the right skill automatically per task.
+              Reusable capabilities your Daemons draw on — personal and autonomous. Write your own, paste one, pull one from any link or GitHub repo, or search the web. The Brain assigns each new teammate a role toolkit automatically.
             </p>
           </div>
-          <button type="button" onClick={() => { setAdding(a => !a); setBanner(null); }}
+          <button type="button" onClick={() => { setAdding(a => !a); setBanner(null); setResults(null); }}
             style={{ padding: '9px 16px', borderRadius: 9, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-              background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
-              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5' }}>
-            + Custom skill
+              background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)',
+              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#3b6ef7' }}>
+            + Add skill
           </button>
         </div>
 
@@ -78,19 +127,86 @@ export function SkillsPage() {
         )}
 
         {adding && (
-          <div style={{ marginTop: 16, padding: 16, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Skill name — e.g. Weekly metrics digest"
-              style={{ padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none' }} />
-            <textarea value={form.trigger_description} onChange={e => setForm(f => ({ ...f, trigger_description: e.target.value }))} rows={3}
-              placeholder="What it does and when to use it — e.g. Every Friday, check Linear for overdue tickets and draft a message to the PM."
-              style={{ padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none', resize: 'vertical' }} />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" onClick={() => setAdding(false)} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Cancel</button>
-              <button type="button" onClick={save} disabled={busy || !form.name.trim()}
-                style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || !form.name.trim() ? 0.6 : 1 }}>
-                {busy ? 'Saving…' : 'Add skill'}
-              </button>
+          <div style={{ marginTop: 16, padding: 16, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {MODES.map(m => (
+                <button key={m.key} type="button" onClick={() => { setMode(m.key); setResults(null); setBanner(null); }}
+                  className="wd-pill-tab" style={mode === m.key ? { background: c.surface3, color: c.text, borderColor: c.surface3 } : {}}>
+                  {m.label}
+                </button>
+              ))}
             </div>
+
+            {mode === 'custom' && (<>
+              <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Skill name — e.g. Weekly metrics digest" style={inputStyle(c)} />
+              <textarea value={form.trigger_description} onChange={e => setForm(f => ({ ...f, trigger_description: e.target.value }))} rows={3}
+                placeholder="What it does and when to use it — e.g. Every Friday, check Linear for overdue tickets and draft a message to the PM."
+                style={{ ...inputStyle(c), resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setAdding(false)} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Cancel</button>
+                <button type="button" onClick={save} disabled={busy || !form.name.trim()}
+                  style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || !form.name.trim() ? 0.6 : 1 }}>
+                  {busy ? 'Saving…' : 'Add skill'}
+                </button>
+              </div>
+            </>)}
+
+            {mode === 'link' && (<>
+              <input autoFocus value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                placeholder="Any URL — a SKILL.md, a GitHub file or repo (github.com/owner/repo), an article…" style={inputStyle(c)} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setAdding(false)} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Cancel</button>
+                <button type="button" onClick={() => importSkill({ url: form.url.trim() })} disabled={busy || !form.url.trim()}
+                  style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || !form.url.trim() ? 0.6 : 1 }}>
+                  {busy ? 'Reading & distilling…' : 'Import from link'}
+                </button>
+              </div>
+            </>)}
+
+            {mode === 'paste' && (<>
+              <textarea autoFocus value={form.content} onChange={e => setForm(f => ({ ...f, content: e.target.value }))} rows={8}
+                placeholder="Paste a SKILL.md or any playbook text — the brain distills it into a reusable skill."
+                style={{ ...inputStyle(c), resize: 'vertical', fontFamily: 'var(--mono)', fontSize: 12.5 }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setAdding(false)} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13 }}>Cancel</button>
+                <button type="button" onClick={() => importSkill({ content: form.content })} disabled={busy || form.content.trim().length < 40}
+                  style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || form.content.trim().length < 40 ? 0.6 : 1 }}>
+                  {busy ? 'Distilling…' : 'Import skill'}
+                </button>
+              </div>
+            </>)}
+
+            {mode === 'search' && (<>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input autoFocus value={form.query} onChange={e => setForm(f => ({ ...f, query: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') searchOnline(); }}
+                  placeholder="What capability do you need? — e.g. cold outreach, SEO audit, sprint retro" style={{ ...inputStyle(c), flex: 1 }} />
+                <button type="button" onClick={searchOnline} disabled={busy || !form.query.trim()}
+                  style={{ padding: '8px 18px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy || !form.query.trim() ? 0.6 : 1, whiteSpace: 'nowrap' }}>
+                  {busy && !busyUrl ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+              {results && results.length === 0 && <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, margin: 0 }}>No results — try different words.</p>}
+              {results && results.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {results.map(r => (
+                    <div key={r.url} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 9 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</div>
+                        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, lineHeight: 1.4, marginTop: 2 }}>{r.description}</div>
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: c.text4, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.url}</div>
+                      </div>
+                      <button type="button" onClick={() => importFromResult(r.url)} disabled={Boolean(busyUrl)}
+                        style={{ padding: '7px 14px', borderRadius: 8, cursor: busyUrl ? 'default' : 'pointer', flexShrink: 0,
+                          background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)',
+                          fontFamily: 'var(--dmsans)', fontSize: 12.5, fontWeight: 600, color: '#3b6ef7', opacity: busyUrl && busyUrl !== r.url ? 0.5 : 1 }}>
+                        {busyUrl === r.url ? 'Importing…' : 'Import'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>)}
           </div>
         )}
 
@@ -111,7 +227,7 @@ export function SkillsPage() {
                 return (
                   <div key={s.id} style={{ padding: 15, background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                      <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#4172f5' }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#3b6ef7' }}>
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" /></svg>
                       </div>
                       <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text, lineHeight: 1.2 }}>{s.name}</div>

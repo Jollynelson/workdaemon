@@ -69,7 +69,7 @@ export function AutoDaemonsPage() {
             <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Daemons</h1>
           </div>
           <button type="button" onClick={() => { setShowCreate(s => !s); setSelected(null); }}
-            style={{ padding: '9px 16px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+            style={{ padding: '9px 16px', borderRadius: 9, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
             {showCreate ? 'Cancel' : '+ New daemon'}
           </button>
         </div>
@@ -92,14 +92,14 @@ export function AutoDaemonsPage() {
               {DAEMON_SCHEDULES.map(s => (
                 <button key={s.cron} type="button" onClick={() => setForm(f => ({ ...f, schedule: s.cron }))}
                   style={{ padding: '7px 12px', borderRadius: 8, fontFamily: 'var(--inter)', fontSize: 13, cursor: 'pointer',
-                    background: form.schedule === s.cron ? 'rgba(65,114,245,0.12)' : c.stat,
-                    border: `1px solid ${form.schedule === s.cron ? '#4172f5' : c.cardBorder}`, color: form.schedule === s.cron ? '#4172f5' : c.text2 }}>
+                    background: form.schedule === s.cron ? 'rgba(59,110,247,0.12)' : c.stat,
+                    border: `1px solid ${form.schedule === s.cron ? '#3b6ef7' : c.cardBorder}`, color: form.schedule === s.cron ? '#3b6ef7' : c.text2 }}>
                   {s.label}
                 </button>
               ))}
             </div>
             <button type="button" disabled={busy || !form.name.trim() || !form.objective.trim()} onClick={create}
-              style={{ padding: '10px 18px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (busy || !form.name.trim() || !form.objective.trim()) ? 0.5 : 1 }}>
+              style={{ padding: '10px 18px', borderRadius: 9, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (busy || !form.name.trim() || !form.objective.trim()) ? 0.5 : 1 }}>
               {busy ? 'Creating…' : 'Create daemon'}
             </button>
           </div>
@@ -114,7 +114,7 @@ export function AutoDaemonsPage() {
             </div>
             <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginBottom: 14 }}>{selected.agent.objective}</p>
             {selected.my_access && selected.my_access !== 'owner' && (
-              <p style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#4172f5', letterSpacing: '0.06em', marginBottom: 12 }}>SHARED WITH YOU · {selected.my_access.toUpperCase()} ACCESS</p>
+              <p style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#3b6ef7', letterSpacing: '0.06em', marginBottom: 12 }}>SHARED WITH YOU · {selected.my_access.toUpperCase()} ACCESS</p>
             )}
 
             {proposed.length > 0 ? (
@@ -124,7 +124,7 @@ export function AutoDaemonsPage() {
                   {proposed.map(act => (
                     <div key={act.id} style={{ padding: '12px 14px', background: c.stat, border: `1px solid ${c.cardBorder}`, borderRadius: 9 }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 5 }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.08em', color: '#4172f5', textTransform: 'uppercase', border: '1px solid rgba(65,114,245,0.3)', borderRadius: 4, padding: '1px 5px' }}>{act.type}</span>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.08em', color: '#3b6ef7', textTransform: 'uppercase', border: '1px solid rgba(59,110,247,0.3)', borderRadius: 4, padding: '1px 5px' }}>{act.type}</span>
                         <span style={{ fontFamily: 'var(--inter)', fontSize: 14, fontWeight: 500, color: c.text }}>{act.title}</span>
                       </div>
                       {act.body && <p style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, margin: '0 0 6px', whiteSpace: 'pre-wrap' }}>{act.body}</p>}
@@ -168,7 +168,7 @@ export function AutoDaemonsPage() {
         <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${c.cardBorder}`, marginBottom: 18 }}>
           {[['mine', 'My Daemons'], ['team', 'Team Daemons']].map(([k, label]) => (
             <button key={k} type="button" onClick={() => { setDaemonTab(k); setSelected(null); }}
-              style={{ padding: '9px 13px', background: 'none', border: 'none', borderBottom: `2px solid ${daemonTab === k ? '#4172f5' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: daemonTab === k ? '#4172f5' : c.text3 }}>{label}</button>
+              style={{ padding: '9px 13px', background: 'none', border: 'none', borderBottom: `2px solid ${daemonTab === k ? '#3b6ef7' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: daemonTab === k ? '#3b6ef7' : c.text3 }}>{label}</button>
           ))}
         </div>
 
@@ -185,20 +185,20 @@ export function AutoDaemonsPage() {
           return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {list.map(a => (
-              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: c.card, border: `1px solid ${selected?.agent?.id === a.id ? '#4172f5' : c.cardBorder}`, borderRadius: 11, cursor: 'pointer' }}
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: c.card, border: `1px solid ${selected?.agent?.id === a.id ? '#3b6ef7' : c.cardBorder}`, borderRadius: 11, cursor: 'pointer' }}
                 onClick={() => openDetail(a.id)}>
                 <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: a.status === 'active' ? '#10b981' : c.text4 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: 'var(--inter)', fontSize: 15, fontWeight: 500, color: c.text }}>{a.name}
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 8, color: c.text3, marginLeft: 8, letterSpacing: '0.06em' }}>{a.kind === 'knowledge' ? 'KNOWLEDGE' : 'OUTREACH'}</span>
-                    {!a.mine && <span style={{ fontFamily: 'var(--mono)', fontSize: 8, color: '#4172f5', marginLeft: 6, letterSpacing: '0.06em', border: '1px solid rgba(65,114,245,0.3)', borderRadius: 4, padding: '1px 5px' }}>{(a.my_access || 'viewer').toUpperCase()}</span>}
+                    {!a.mine && <span style={{ fontFamily: 'var(--mono)', fontSize: 8, color: '#3b6ef7', marginLeft: 6, letterSpacing: '0.06em', border: '1px solid rgba(59,110,247,0.3)', borderRadius: 4, padding: '1px 5px' }}>{(a.my_access || 'viewer').toUpperCase()}</span>}
                     {a.mine && a.shares?.length > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 8, color: '#10b981', marginLeft: 6, letterSpacing: '0.06em', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 4, padding: '1px 5px' }}>SHARED</span>}
                   </div>
                   <div style={{ fontFamily: 'var(--inter)', fontSize: 12, color: c.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>{a.objective}</div>
                 </div>
                 {a.mine && (
                   <button type="button" onClick={e => { e.stopPropagation(); setShareFor(a); }}
-                    style={{ padding: '6px 12px', borderRadius: 7, background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.25)', color: '#4172f5', fontFamily: 'var(--inter)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Share</button>
+                    style={{ padding: '6px 12px', borderRadius: 7, background: 'rgba(59,110,247,0.08)', border: '1px solid rgba(59,110,247,0.25)', color: '#3b6ef7', fontFamily: 'var(--inter)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Share</button>
                 )}
                 {/* User-level access (and above) may trigger a run; viewers cannot. */}
                 {(a.mine || ['user', 'editor', 'owner'].includes(a.my_access)) && (
@@ -259,7 +259,7 @@ export function ShareDaemonDialog({ c, agent, members, api, onClose, onChanged }
           <select value={level} onChange={e => setLevel(e.target.value)} style={{ ...ip, flex: 1, cursor: 'pointer' }}>
             {LEVELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          <button type="button" onClick={add} disabled={busy || !who} style={{ padding: '9px 18px', borderRadius: 8, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: busy || !who ? 0.6 : 1 }}>Add</button>
+          <button type="button" onClick={add} disabled={busy || !who} style={{ padding: '9px 18px', borderRadius: 8, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: busy || !who ? 0.6 : 1 }}>Add</button>
         </div>
         {shares.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

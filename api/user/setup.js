@@ -1,5 +1,8 @@
 import { requireAuth, adminClient } from '../_lib/supabase.js';
 import { fail, enforceRateLimit, parseBody, detectLocation } from '../_lib/security.js';
+import { generateCompanyGoals, generateStaffGoals } from '../_lib/goals.js';
+import { assignRoleSkills } from '../_lib/skills.js';
+import { waitUntil } from '@vercel/functions';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -78,6 +81,19 @@ export default async function handler(req, res) {
 
   const appUrl = process.env.APP_URL || 'https://workdaemon-prod.vercel.app';
   const inviteLink = `${appUrl}/join/${workspace.invite_code}`;
+
+  // DAY-ONE AMBITION (owner directive): the moment a workspace exists, the brain
+  // writes itself an aggressive company goal book; the moment a staff member
+  // onboards, their daemon gets role goals + a brain-assigned skill toolkit.
+  // All idempotent + fire-and-forget — onboarding never waits on the LLM.
+  waitUntil((async () => {
+    try { await generateCompanyGoals(adminClient(), { workspaceId: workspace.id }); }
+    catch (e) { console.warn('[setup] company goals:', e.message); }
+    try { await generateStaffGoals(adminClient(), { workspaceId: workspace.id, userId: user.id, role: role || title || null }); }
+    catch (e) { console.warn('[setup] staff goals:', e.message); }
+    try { await assignRoleSkills(adminClient(), { workspaceId: workspace.id, userId: user.id, role: role || title || null }); }
+    catch (e) { console.warn('[setup] skill assignment:', e.message); }
+  })());
 
   return res.status(200).json({ workspace, inviteLink });
 }

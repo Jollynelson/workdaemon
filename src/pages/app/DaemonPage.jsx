@@ -288,7 +288,7 @@ export function ChatView({ context, onBack, onMenu }) {
           )}
           <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
           <DaemonMark size={16} glow />
-          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
+          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#e9edf8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
             {context.roleLabel}
           </div>
           {!isMobile && context.company && (
@@ -331,11 +331,11 @@ export function ChatView({ context, onBack, onMenu }) {
                 <div style={{
                   maxWidth: isMobile ? '84%' : '62%',
                   padding: isMobile ? '10px 14px' : '12px 18px',
-                  background: '#4172f5',
+                  background: '#3b6ef7',
                   borderRadius: '18px 18px 4px 18px',
                   fontFamily: 'var(--dmsans)', fontSize: isMobile ? 14 : 15,
                   color: '#ffffff', lineHeight: 1.5,
-                  boxShadow: '0 2px 12px rgba(65,114,245,0.25)',
+                  boxShadow: '0 2px 12px rgba(59,110,247,0.25)',
                 }}>{m.text}</div>
               ) : (
                 <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -418,12 +418,12 @@ export function ChatView({ context, onBack, onMenu }) {
             />
             <button type="submit" disabled={!input.trim() || thinking} style={{
               width: isMobile ? 44 : 50, height: isMobile ? 44 : 50, borderRadius: 14,
-              background: input.trim() && !thinking ? '#4172f5' : c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+              background: input.trim() && !thinking ? '#3b6ef7' : c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
               border: 'none', color: input.trim() && !thinking ? '#fff' : c.text3,
               fontSize: isMobile ? 18 : 20, cursor: input.trim() && !thinking ? 'pointer' : 'not-allowed',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               transition: 'all 0.15s', flexShrink: 0,
-              boxShadow: input.trim() && !thinking ? '0 4px 16px rgba(65,114,245,0.28)' : 'none',
+              boxShadow: input.trim() && !thinking ? '0 4px 16px rgba(59,110,247,0.28)' : 'none',
             }}>↑</button>
           </form>
         </div>

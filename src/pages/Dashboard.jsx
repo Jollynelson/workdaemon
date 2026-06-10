@@ -26,7 +26,7 @@ function PageFallback() {
   const c = useC();
   return (
     <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.bg }}>
-      <div style={{ width: 18, height: 18, border: '2px solid rgba(128,128,128,0.25)', borderTopColor: '#4172f5', borderRadius: '50%', animation: 'wd-spin 0.75s linear infinite' }} />
+      <div style={{ width: 18, height: 18, border: '2px solid rgba(128,128,128,0.25)', borderTopColor: '#3b6ef7', borderRadius: '50%', animation: 'wd-spin 0.75s linear infinite' }} />
     </div>
   );
 }
@@ -58,7 +58,7 @@ function MobileTopBar({ onOpen, isLight }) {
       </button>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
         <DaemonMark size={18} glow={!isLight} />
-        <span style={{ fontFamily: 'var(--orbitron)', fontSize: 10, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>WORKDAEMON</span>
+        <span style={{ fontFamily: 'var(--orbitron)', fontSize: 10, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>WORKDAEMON</span>
       </div>
       <button type="button" onClick={toggle} style={{ width: 32, height: 32, borderRadius: 8, background: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)', border: `1px solid ${isLight ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.08)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 13, flexShrink: 0 }}>
         {isLight ? '🌙' : '☀️'}

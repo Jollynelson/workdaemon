@@ -70,14 +70,14 @@ function FocusInput({ style, autoFocus, ...props }) {
         width: '100%',
         padding: '11px 16px',
         background: focused ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.05)',
-        border: `1px solid ${focused ? 'rgba(65,114,245,0.55)' : 'rgba(255,255,255,0.1)'}`,
+        border: `1px solid ${focused ? 'rgba(59,110,247,0.55)' : 'rgba(255,255,255,0.1)'}`,
         borderRadius: 8,
         color: '#e8e8e8',
         fontSize: 15,
         fontFamily: 'var(--dmsans)',
         outline: 'none',
         transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
-        boxShadow: focused ? '0 0 0 2px rgba(65,114,245,0.18)' : 'none',
+        boxShadow: focused ? '0 0 0 2px rgba(59,110,247,0.18)' : 'none',
         boxSizing: 'border-box',
         ...style,
       }}
@@ -347,14 +347,14 @@ function StepRole({ data, setData }) {
             width: '100%',
             padding: '11px 16px',
             background: open ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.05)',
-            border: `1px solid ${open ? 'rgba(65,114,245,0.55)' : 'rgba(255,255,255,0.1)'}`,
+            border: `1px solid ${open ? 'rgba(59,110,247,0.55)' : 'rgba(255,255,255,0.1)'}`,
             borderRadius: open && matches.length > 0 ? '8px 8px 0 0' : 8,
             color: '#e8e8e8',
             fontSize: 15,
             fontFamily: 'var(--dmsans)',
             outline: 'none',
             transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
-            boxShadow: open ? '0 0 0 2px rgba(65,114,245,0.18)' : 'none',
+            boxShadow: open ? '0 0 0 2px rgba(59,110,247,0.18)' : 'none',
             boxSizing: 'border-box',
           }}
         />
@@ -362,7 +362,7 @@ function StepRole({ data, setData }) {
           <div ref={dropRef} style={{
             position: 'absolute', top: '100%', left: 0, right: 0,
             background: '#1e1e1e',
-            border: '1px solid rgba(65,114,245,0.35)',
+            border: '1px solid rgba(59,110,247,0.35)',
             borderTop: 'none',
             borderRadius: '0 0 8px 8px',
             overflow: 'hidden', zIndex: 50,
@@ -375,7 +375,7 @@ function StepRole({ data, setData }) {
                 onMouseDown={e => { e.preventDefault(); commitValue(r.label, r.id); }}
                 style={{
                   width: '100%', textAlign: 'left', padding: '10px 16px',
-                  background: i === highlighted ? 'rgba(65,114,245,0.1)' : 'transparent',
+                  background: i === highlighted ? 'rgba(59,110,247,0.1)' : 'transparent',
                   border: 'none', cursor: 'pointer',
                   borderBottom: i < matches.length - 1 ? '1px solid rgba(255,255,255,0.045)' : 'none',
                   transition: 'background 0.1s',
@@ -391,12 +391,12 @@ function StepRole({ data, setData }) {
       {isCustom && (
         <div style={{
           marginTop: 8, padding: '8px 12px',
-          background: 'rgba(65,114,245,0.05)',
-          border: '1px solid rgba(65,114,245,0.16)',
+          background: 'rgba(59,110,247,0.05)',
+          border: '1px solid rgba(59,110,247,0.16)',
           borderRadius: 6,
           display: 'flex', alignItems: 'flex-start', gap: 8,
         }}>
-          <span style={{ color: '#4172f5', fontSize: 13, marginTop: 1 }}>✦</span>
+          <span style={{ color: '#3b6ef7', fontSize: 13, marginTop: 1 }}>✦</span>
           <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(232,232,232,0.46)', lineHeight: 1.5 }}>
             Custom role — your Daemon will research{' '}
             <span style={{ color: 'rgba(168,192,255,0.8)', fontWeight: 500 }}>{query}</span>
@@ -444,7 +444,7 @@ function StepInvite({ data, setData, inviteLink }) {
           height: 136,
           padding: '12px 16px',
           background: focused ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.05)',
-          border: `1px solid ${focused ? 'rgba(65,114,245,0.55)' : 'rgba(255,255,255,0.1)'}`,
+          border: `1px solid ${focused ? 'rgba(59,110,247,0.55)' : 'rgba(255,255,255,0.1)'}`,
           borderRadius: 8,
           color: '#e8e8e8',
           fontSize: 14,
@@ -453,7 +453,7 @@ function StepInvite({ data, setData, inviteLink }) {
           resize: 'none',
           lineHeight: 1.65,
           transition: 'all 0.15s',
-          boxShadow: focused ? '0 0 0 2px rgba(65,114,245,0.18)' : 'none',
+          boxShadow: focused ? '0 0 0 2px rgba(59,110,247,0.18)' : 'none',
           boxSizing: 'border-box',
         }}
       />
@@ -514,7 +514,7 @@ function PanelDefault() {
         opacity: 0.06,
         pointerEvents: 'none',
       }}>
-        <DaemonMark size={130} color="#4172f5" />
+        <DaemonMark size={130} color="#3b6ef7" />
       </div>
       <div style={{
         position: 'absolute',
@@ -789,8 +789,8 @@ export default function Onboarding() {
 
         {/* Top logo */}
         <div style={{ position: 'absolute', top: 28, left: isMobile ? 28 : 44, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <DaemonMark size={32} color="#4172f5" glow={true} />
-          <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>WORKDAEMON</span>
+          <DaemonMark size={32} color="#3b6ef7" glow={true} />
+          <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>WORKDAEMON</span>
         </div>
 
         <div style={{ maxWidth: 400 }}>
@@ -841,7 +841,7 @@ export default function Onboarding() {
               onClick={handleAdvance}
               style={{
                 padding: '10px 24px',
-                background: canAdvance() && !saving ? '#4172f5' : 'rgba(255,255,255,0.06)',
+                background: canAdvance() && !saving ? '#3b6ef7' : 'rgba(255,255,255,0.06)',
                 border: 'none',
                 borderRadius: 8,
                 fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 500,
@@ -850,8 +850,8 @@ export default function Onboarding() {
                 transition: 'all 0.15s',
                 whiteSpace: 'nowrap',
               }}
-              onMouseEnter={e => { if (canAdvance() && !saving) { e.currentTarget.style.background = '#5281ff'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(65,114,245,0.3)'; } }}
-              onMouseLeave={e => { if (canAdvance() && !saving) { e.currentTarget.style.background = '#4172f5'; e.currentTarget.style.boxShadow = 'none'; } }}
+              onMouseEnter={e => { if (canAdvance() && !saving) { e.currentTarget.style.background = '#5d87ff'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(59,110,247,0.3)'; } }}
+              onMouseLeave={e => { if (canAdvance() && !saving) { e.currentTarget.style.background = '#3b6ef7'; e.currentTarget.style.boxShadow = 'none'; } }}
             >
               {getButtonLabel()}
             </button>

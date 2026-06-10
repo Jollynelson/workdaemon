@@ -197,10 +197,10 @@ export default function Sidebar({
           style={{
             position: 'fixed', bottom: 20, right: 20, zIndex: 200, maxWidth: 320, cursor: 'pointer',
             background: isLight ? '#fff' : '#16161c', border: `1px solid ${isLight ? '#e5e3df' : '#2a2a36'}`,
-            borderLeft: '3px solid #4172f5', borderRadius: 10, padding: '12px 14px',
+            borderLeft: '3px solid #3b6ef7', borderRadius: 10, padding: '12px 14px',
             boxShadow: '0 8px 28px rgba(0,0,0,0.35)', animation: 'wd-progress 0.25s ease both',
           }}>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 4 }}>● DAEMON · LIVE</div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#3b6ef7', marginBottom: 4 }}>● DAEMON · LIVE</div>
           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: isLight ? '#1a1a1a' : '#e8e8e8', lineHeight: 1.4 }}>{toast}</div>
         </div>
       )}
@@ -223,8 +223,8 @@ export default function Sidebar({
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        background: isLight ? '#f6f5f4' : '#0d0d10',
-        borderRight: `1px solid ${isLight ? '#e5e3df' : '#1e1e28'}`,
+        background: isLight ? '#f6f5f4' : '#07090e',
+        borderRight: `1px solid ${isLight ? '#e5e3df' : '#1a1f2e'}`,
         flexShrink: 0,
         overflow: 'hidden',
         transition: 'background 0.2s, border-color 0.2s',
@@ -237,12 +237,12 @@ export default function Sidebar({
       }}>
 
         {/* Logo */}
-        <div style={{ padding: '18px 16px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#131318' }}>
+        <div style={{ padding: '18px 16px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#0d1018' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <DaemonMark size={28} color="#4172f5" glow={!isLight} />
+            <DaemonMark size={28} color="#3b6ef7" glow={!isLight} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em', lineHeight: 1 }}>WORKDAEMON</div>
-              <div style={{ fontFamily: 'var(--inter)', fontSize: 10, color: isLight ? '#a4a097' : '#585868', letterSpacing: '0.02em', marginTop: 4 }}>Your company, queryable.</div>
+              <div style={{ fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em', lineHeight: 1 }}>WORKDAEMON</div>
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 10, color: isLight ? '#a4a097' : '#56607e', letterSpacing: '0.02em', marginTop: 4 }}>Your company, queryable.</div>
             </div>
             {/* Notification bell (IA §9.1) — badge = unread; click = quick-view */}
             <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -255,23 +255,23 @@ export default function Sidebar({
                 <>
                   <div onClick={() => setBellOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
                   <div style={{ position: 'absolute', top: 34, right: 0, width: 268, zIndex: 61, background: isLight ? '#fff' : '#15151b', border: `1px solid ${isLight ? '#e5e3df' : '#26262e'}`, borderRadius: 11, boxShadow: '0 12px 32px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-                    <div style={{ padding: '10px 13px', borderBottom: `1px solid ${isLight ? '#eee' : '#222'}`, fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.1em', color: isLight ? '#a4a097' : '#585868' }}>NOTIFICATIONS</div>
+                    <div style={{ padding: '10px 13px', borderBottom: `1px solid ${isLight ? '#eee' : '#222'}`, fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.1em', color: isLight ? '#a4a097' : '#56607e' }}>NOTIFICATIONS</div>
                     {inboxRecent.length === 0 ? (
-                      <div style={{ padding: '16px 13px', fontFamily: 'var(--inter)', fontSize: 12.5, color: isLight ? '#a4a097' : '#585868' }}>Nothing new.</div>
+                      <div style={{ padding: '16px 13px', fontFamily: 'var(--inter)', fontSize: 12.5, color: isLight ? '#a4a097' : '#56607e' }}>Nothing new.</div>
                     ) : inboxRecent.map(it => (
                       <div key={it.id} onClick={() => { setBellOpen(false); navigate('/app/inbox'); handleNavClick?.(); }}
                         style={{ padding: '10px 13px', borderBottom: `1px solid ${isLight ? '#f2f1ee' : '#1c1c22'}`, cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'flex-start' }}
                         onMouseEnter={e => { e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)'; }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                        {it.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', marginTop: 5, flexShrink: 0 }} />}
+                        {it.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b6ef7', marginTop: 5, flexShrink: 0 }} />}
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontFamily: 'var(--inter)', fontSize: 12.5, fontWeight: 500, color: isLight ? '#1a1a1a' : '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</div>
-                          <div style={{ fontFamily: 'var(--inter)', fontSize: 10.5, color: isLight ? '#a4a097' : '#585868', marginTop: 1 }}>{it.source}{it.time ? ` · ${it.time}` : ''}</div>
+                          <div style={{ fontFamily: 'var(--inter)', fontSize: 12.5, fontWeight: 500, color: isLight ? '#1a1a1a' : '#e9edf8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</div>
+                          <div style={{ fontFamily: 'var(--inter)', fontSize: 10.5, color: isLight ? '#a4a097' : '#56607e', marginTop: 1 }}>{it.source}{it.time ? ` · ${it.time}` : ''}</div>
                         </div>
                       </div>
                     ))}
                     <div onClick={() => { setBellOpen(false); navigate('/app/inbox'); handleNavClick?.(); }}
-                      style={{ padding: '9px 13px', textAlign: 'center', cursor: 'pointer', fontFamily: 'var(--inter)', fontSize: 12, fontWeight: 600, color: '#4172f5' }}>View all →</div>
+                      style={{ padding: '9px 13px', textAlign: 'center', cursor: 'pointer', fontFamily: 'var(--inter)', fontSize: 12, fontWeight: 600, color: '#3b6ef7' }}>View all →</div>
                   </div>
                 </>
               )}
@@ -319,7 +319,7 @@ export default function Sidebar({
         </div>
 
         {/* Divider */}
-        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1e1e28', flexShrink: 0, margin: '0 12px' }} />
+        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1a1f2e', flexShrink: 0, margin: '0 12px' }} />
 
         {/* Nav */}
         <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
@@ -352,10 +352,10 @@ export default function Sidebar({
         </nav>
 
         {/* Divider */}
-        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1e1e28', flexShrink: 0, margin: '0 12px' }} />
+        <div style={{ height: 1, background: isLight ? '#e5e3df' : '#1a1f2e', flexShrink: 0, margin: '0 12px' }} />
 
         {/* User footer */}
-        <div style={{ padding: '10px 10px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#0d0d10' }}>
+        <div style={{ padding: '10px 10px 14px', flexShrink: 0, background: isLight ? 'transparent' : '#07090e' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 8px', borderRadius: 7, transition: 'background 0.12s', cursor: 'pointer' }}
             title="Open profile"
             onClick={() => { navigate('/app/profile'); handleNavClick?.(); }}
@@ -364,7 +364,7 @@ export default function Sidebar({
             <div style={{
               width: 28, height: 28,
               borderRadius: 7,
-              background: '#4172f5',
+              background: '#3b6ef7',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontFamily: 'var(--orbitron)',
               fontSize: 10,
@@ -375,10 +375,10 @@ export default function Sidebar({
               {displayName.charAt(0).toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#eeeef2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>{displayName}</div>
+              <div style={{ fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, color: isLight ? '#1a1a1a' : '#e9edf8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.01em' }}>{displayName}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
                 <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
-                <span style={{ fontFamily: 'var(--inter)', fontSize: 11, color: isLight ? '#a4a097' : '#585868' }}>{displayRole}</span>
+                <span style={{ fontFamily: 'var(--inter)', fontSize: 11, color: isLight ? '#a4a097' : '#56607e' }}>{displayRole}</span>
               </div>
             </div>
             <button

@@ -122,7 +122,7 @@ export function InboxPage() {
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>INBOX</p>
             <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 }}>
               Messages
-              {unread > 0 && <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--mono)', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 20, padding: '2px 10px', letterSpacing: '0.05em' }}>{unread} new</span>}
+              {unread > 0 && <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--mono)', color: '#3b6ef7', background: 'rgba(59,110,247,0.09)', border: '1px solid rgba(59,110,247,0.22)', borderRadius: 20, padding: '2px 10px', letterSpacing: '0.05em' }}>{unread} new</span>}
             </h1>
           </div>
           {unread > 0 && (
@@ -138,7 +138,7 @@ export function InboxPage() {
         <div style={{ display: 'flex', gap: 2, marginBottom: 20, borderBottom: `1px solid ${c.cardBorder}` }}>
           {FILTERS.map(f => (
             <button key={f.key} type="button" onClick={() => setFilter(f.key)}
-              style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: `2px solid ${filter === f.key ? '#4172f5' : 'transparent'}`, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', color: filter === f.key ? '#4172f5' : c.text3, cursor: 'pointer', marginBottom: -1, transition: 'all 0.15s' }}
+              style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: `2px solid ${filter === f.key ? '#3b6ef7' : 'transparent'}`, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', color: filter === f.key ? '#3b6ef7' : c.text3, cursor: 'pointer', marginBottom: -1, transition: 'all 0.15s' }}
             >{f.label}</button>
           ))}
         </div>
@@ -175,7 +175,7 @@ export function InboxPage() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: item.unread ? 500 : 400, color: item.unread ? c.text : c.text2 }}>{item.title}</span>
-                        {item.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4172f5', flexShrink: 0 }} />}
+                        {item.unread && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b6ef7', flexShrink: 0 }} />}
                       </div>
                       {!expanded && (
                         <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{recommendation}</div>
@@ -183,7 +183,7 @@ export function InboxPage() {
                       <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</span>
                         {item.draft && !expanded && (
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.22)', borderRadius: 6, padding: '2px 7px' }}>✎ DRAFT</span>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#3b6ef7', background: 'rgba(59,110,247,0.09)', border: '1px solid rgba(59,110,247,0.22)', borderRadius: 6, padding: '2px 7px' }}>✎ DRAFT</span>
                         )}
                       </div>
                     </div>
@@ -205,8 +205,8 @@ export function InboxPage() {
                         </div>
                       )}
                       {item.draft && (
-                        <div style={{ border: '1px solid rgba(65,114,245,0.22)', background: 'rgba(65,114,245,0.05)', borderRadius: 9, padding: '12px 13px' }}>
-                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#4172f5', marginBottom: 7 }}>{isCodeProposal ? '⚙ CODE PROPOSAL — REVIEW' : '✎ DRAFT — READY TO POST'}</div>
+                        <div style={{ border: '1px solid rgba(59,110,247,0.22)', background: 'rgba(59,110,247,0.05)', borderRadius: 9, padding: '12px 13px' }}>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#3b6ef7', marginBottom: 7 }}>{isCodeProposal ? '⚙ CODE PROPOSAL — REVIEW' : '✎ DRAFT — READY TO POST'}</div>
                           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{item.draft}</div>
                           <div style={{ marginTop: 11, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                             {isCodeProposal ? (
@@ -214,7 +214,7 @@ export function InboxPage() {
                               : ps === 'dismissed' ? <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text4 }}>DISMISSED</span>
                               : (<>
                                   <button type="button" disabled={ps === 'filing'} onClick={(e) => { e.stopPropagation(); codeProposalAct(item, 'file_code_issue'); }}
-                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: ps === 'filing' ? 'default' : 'pointer', opacity: ps === 'filing' ? 0.6 : 1 }}>
+                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#3b6ef7', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: ps === 'filing' ? 'default' : 'pointer', opacity: ps === 'filing' ? 0.6 : 1 }}>
                                     {ps === 'filing' ? 'FILING…' : '✓ APPROVE & FILE ISSUE'}
                                   </button>
                                   <button type="button" onClick={(e) => { e.stopPropagation(); codeProposalAct(item, 'dismiss_code_proposal'); }}
@@ -225,7 +225,7 @@ export function InboxPage() {
                                 </>)
                             ) : (<>
                               <button type="button" onClick={(e) => { e.stopPropagation(); applyDraft(item); }}
-                                style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                                style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#3b6ef7', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
                                 ✎ REFINE IN DAEMON
                               </button>
                               <button type="button" onClick={(e) => { e.stopPropagation(); copyDraft(item); }}

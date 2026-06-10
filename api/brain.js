@@ -5,7 +5,8 @@ import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceT
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken, getUserTokens } from './_lib/oauth.js';
 import { unifiedCalendar } from './_lib/calendar.js';
-import { listSkills, getSkill, growSkills, anticipateForEvent } from './_lib/skills.js';
+import { listSkills, getSkill, growSkills, anticipateForEvent, importSkillFromUrl, importSkillFromText, searchSkillsOnline, assignRoleSkills } from './_lib/skills.js';
+import { ensureGoals, reviewGoals, generateCompanyGoals, generateStaffGoals } from './_lib/goals.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
@@ -718,6 +719,27 @@ export default async function handler(req, res) {
         // skills before anyone asks. Cooldown-gated inside (~every few days/workspace).
         try { if (elapsed() < BUDGET_MS) await growSkills(cronDb, { workspaceId: w.id }); }
         catch (e) { console.error('[brain] growSkills ws=%s:', w.id, e.message); }
+        // GOALS: make sure every workspace + staff member has a goal book, then
+        // run the self-upgrading review — measure progress from real activity,
+        // raise the bar on wins, adjust mis-aimed goals, add new ones, escalate
+        // stalls. (Both internally gated: ensure skips when goals exist; review
+        // runs at most once per ~20h per workspace.)
+        try { if (elapsed() < BUDGET_MS) await ensureGoals(cronDb, w.id); }
+        catch (e) { console.error('[brain] ensureGoals ws=%s:', w.id, e.message); }
+        try { if (elapsed() < BUDGET_MS) await reviewGoals(cronDb, w.id); }
+        catch (e) { console.error('[brain] reviewGoals ws=%s:', w.id, e.message); }
+        // Equip every staff daemon with its brain-assigned skill toolkit —
+        // covers members onboarded before this feature (cheap no-op once equipped).
+        try {
+          if (elapsed() < BUDGET_MS) {
+            const { data: members } = await cronDb.from('workspace_members')
+              .select('user_id').eq('workspace_id', w.id).limit(50);
+            for (const m of members || []) {
+              if (elapsed() > BUDGET_MS) break;
+              await assignRoleSkills(cronDb, { workspaceId: w.id, userId: m.user_id });
+            }
+          }
+        } catch (e) { console.error('[brain] assignRoleSkills ws=%s:', w.id, e.message); }
       }
       // SELF-IMPROVEMENT (platform): propose fixes for recurring code errors
       // (global, propose-only, ~weekly-gated, never opens a PR).
@@ -801,6 +823,14 @@ export default async function handler(req, res) {
         if (!skill) return res.status(404).json({ error: 'skill not found' });
         return res.status(200).json({ skill });
       }
+      // Goals pillar — the agent reads the company's live goal book.
+      if (tool === 'goals') {
+        const { data: goals } = await mdb.from('brain_goals')
+          .select('scope, title, metric, target, progress, ambition, due_at, status')
+          .eq('workspace_id', boundWs).eq('status', 'active')
+          .order('scope').order('created_at').limit(20);
+        return res.status(200).json({ goals: goals || [] });
+      }
       return res.status(400).json({ error: 'unknown tool' });
     } catch (e) {
       console.error('[brain] mcp tool=%s error:', tool, e.message);
@@ -883,6 +913,26 @@ export default async function handler(req, res) {
         console.error('[brain] calendar error:', e.message);
         return res.status(200).json({ connected: [], providers: ['google', 'microsoft', 'notion'], events: [], errors: { _: e.message } });
       }
+    }
+
+    // ── Goal book (any member; staff goals grouped per person) ────────────────
+    if (tab === 'goals') {
+      const [{ data: goals }, { data: members }] = await Promise.all([
+        db.from('brain_goals')
+          .select('id, user_id, scope, title, description, metric, target, progress, ambition, horizon_days, due_at, status, rationale, review_note, last_review_at, parent_goal_id, created_at')
+          .eq('workspace_id', workspaceId)
+          .in('status', ['active', 'achieved', 'missed'])
+          .order('created_at', { ascending: false }).limit(80),
+        db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId),
+      ]);
+      const memberIds = (members || []).map(m => m.user_id);
+      const { data: profs } = memberIds.length
+        ? await db.from('profiles').select('id, name, title').in('id', memberIds)
+        : { data: [] };
+      const nameOf = Object.fromEntries((profs || []).map(p => [p.id, p.name || p.title || 'Staff']));
+      return res.status(200).json({
+        goals: (goals || []).map(g => ({ ...g, owner_name: g.user_id ? (nameOf[g.user_id] || 'Staff') : null })),
+      });
     }
 
     // ── Brain Skill Library (the "Skills" pillar) ─────────────────────────────
@@ -1143,6 +1193,76 @@ export default async function handler(req, res) {
       }).select('id,slug,name,pillar,category,trigger_description,tags,learned_from,usage_count').single();
       if (error) return res.status(500).json({ error: 'Could not save skill' });
       return res.status(200).json({ ok: true, skill: row });
+    }
+
+    // ── Open skill library: search the web for skills to add (any member) ──────
+    if (body.action === 'search_skills_online') {
+      if (!(await enforceRateLimit(res, { key: `skill_search:${user.id}`, max: 20, windowSec: 3600 }))) return;
+      const result = await searchSkillsOnline({ query: body.q || body.query });
+      return res.status(200).json(result);
+    }
+
+    // ── Open skill library: import a skill from a URL / GitHub link or pasted
+    // text — Hermes-style "add any skill from anywhere" (any member). ───────────
+    if (body.action === 'import_skill') {
+      if (!(await enforceRateLimit(res, { key: `skill_import:${user.id}`, max: 10, windowSec: 3600 }))) return;
+      const url = typeof body.url === 'string' ? body.url.trim().slice(0, 500) : '';
+      const content = typeof body.content === 'string' ? body.content.slice(0, 20000) : '';
+      if (!url && !content) return res.status(400).json({ error: 'url or content required' });
+      const result = url
+        ? await importSkillFromUrl(db, { workspaceId, url, userId: user.id })
+        : await importSkillFromText(db, { workspaceId, content, userId: user.id });
+      if (!result.ok) return res.status(422).json({ error: result.error || 'Import failed' });
+      return res.status(200).json({ ok: true, skill: result.skill });
+    }
+
+    // ── Goals: regenerate / review-now / status change (admin) ────────────────
+    if (body.action === 'generate_goals') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      if (!(await enforceRateLimit(res, { key: `goals_gen:${workspaceId}`, max: 6, windowSec: 3600 }))) return;
+      const result = await generateCompanyGoals(db, { workspaceId, force: Boolean(body.force) });
+      if (body.include_staff) {
+        const r2 = await generateStaffGoals(db, { workspaceId, userId: user.id, force: Boolean(body.force) });
+        result.staff = r2.generated || 0;
+      }
+      return res.status(200).json(result);
+    }
+    if (body.action === 'review_goals') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      if (!(await enforceRateLimit(res, { key: `goals_review:${workspaceId}`, max: 4, windowSec: 3600 }))) return;
+      const result = await reviewGoals(db, workspaceId);
+      return res.status(200).json(result);
+    }
+    if (body.action === 'update_goal') {
+      if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+      const id = String(body.id || '');
+      const status = String(body.status || '');
+      if (!id || !['active', 'achieved', 'missed', 'retired'].includes(status)) {
+        return res.status(400).json({ error: 'id + status (active|achieved|missed|retired) required' });
+      }
+      // Workspace-scoped: cannot touch another tenant's goals.
+      const { error } = await db.from('brain_goals')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id).eq('workspace_id', workspaceId);
+      if (error) return res.status(500).json({ error: 'Could not update goal' });
+      return res.status(200).json({ ok: true });
+    }
+
+    // ── Equip my daemon: brain assigns role skills + goals now (any member;
+    // called by onboarding as fire-and-forget, idempotent) ─────────────────────
+    if (body.action === 'equip_daemon') {
+      if (!(await enforceRateLimit(res, { key: `equip:${user.id}`, max: 6, windowSec: 3600 }))) return;
+      const [skillsRes, goalsRes, companyRes] = await Promise.all([
+        assignRoleSkills(db, { workspaceId, userId: user.id, role: body.role || null }),
+        generateStaffGoals(db, { workspaceId, userId: user.id, role: body.role || null }),
+        isAdmin ? generateCompanyGoals(db, { workspaceId }) : Promise.resolve({ generated: 0 }),
+      ]);
+      return res.status(200).json({
+        ok: true,
+        skills_assigned: skillsRes.assigned || 0,
+        staff_goals: goalsRes.generated || 0,
+        company_goals: companyRes.generated || 0,
+      });
     }
 
     // ── Resolve / reopen finding ──────────────────────────────────────────────

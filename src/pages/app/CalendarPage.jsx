@@ -61,7 +61,7 @@ export function CalendarPage() {
   const fmtTime = (ev) => ev.allDay ? 'All day'
     : new Date(ev.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const fmtDay = (s) => new Date(s).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-  const provColor = (p) => (CAL_PROVIDERS.find(x => x.id === p) || {}).color || '#4172f5';
+  const provColor = (p) => (CAL_PROVIDERS.find(x => x.id === p) || {}).color || '#3b6ef7';
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg }}>
@@ -100,12 +100,12 @@ export function CalendarPage() {
               <input value={nl} onChange={e => setNl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') createNl(); }}
                 placeholder="Schedule a review with James Friday 2pm"
                 style={{ flex: 1, padding: '9px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 13, outline: 'none' }} />
-              <button type="button" onClick={createNl} style={{ padding: '9px 14px', borderRadius: 8, background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)', color: '#4172f5', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>Create</button>
+              <button type="button" onClick={createNl} style={{ padding: '9px 14px', borderRadius: 8, background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)', color: '#3b6ef7', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>Create</button>
             </div>
             <div style={{ display: 'flex', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 8, padding: 2 }}>
               {['month', 'week', 'agenda'].map(v => (
                 <button key={v} type="button" onClick={() => setView(v)}
-                  style={{ padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, textTransform: 'capitalize', background: view === v ? '#4172f5' : 'transparent', color: view === v ? '#fff' : c.text3 }}>{v}</button>
+                  style={{ padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, textTransform: 'capitalize', background: view === v ? '#3b6ef7' : 'transparent', color: view === v ? '#fff' : c.text3 }}>{v}</button>
               ))}
             </div>
           </div>
@@ -142,7 +142,7 @@ export function CalendarPage() {
                         )}
                       </div>
                       <button type="button" onClick={() => prepareMe(ev)} title="Daemon meeting prep"
-                        style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '5px 10px', fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}>Prepare me</button>
+                        style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '5px 10px', fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}>Prepare me</button>
                       <span style={{ fontFamily: 'var(--mono)', fontSize: 8, letterSpacing: '0.08em', color: provColor(ev.provider), textTransform: 'uppercase' }}>{ev.provider}</span>
                     </div>
                   ))}
@@ -185,9 +185,9 @@ export function MonthCalendar({ c, events, provColor, onPrepare }) {
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} style={{ textAlign: 'center', fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, padding: '2px 0' }}>{d}</div>)}
         {cells.map((d, i) => (
           <div key={i} onClick={() => d && byDay[d] && setSel(sel === d ? null : d)}
-            style={{ minHeight: 58, borderRadius: 8, padding: 5, background: d ? (isToday(d) ? 'rgba(65,114,245,0.08)' : c.card) : 'transparent', border: d ? `1px solid ${sel === d ? '#4172f5' : isToday(d) ? 'rgba(65,114,245,0.3)' : c.cardBorder}` : 'none', cursor: d && byDay[d] ? 'pointer' : 'default' }}>
+            style={{ minHeight: 58, borderRadius: 8, padding: 5, background: d ? (isToday(d) ? 'rgba(59,110,247,0.08)' : c.card) : 'transparent', border: d ? `1px solid ${sel === d ? '#3b6ef7' : isToday(d) ? 'rgba(59,110,247,0.3)' : c.cardBorder}` : 'none', cursor: d && byDay[d] ? 'pointer' : 'default' }}>
             {d && <>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: isToday(d) ? '#4172f5' : c.text3, fontWeight: isToday(d) ? 700 : 400 }}>{d}</div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: isToday(d) ? '#3b6ef7' : c.text3, fontWeight: isToday(d) ? 700 : 400 }}>{d}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 3 }}>
                 {(byDay[d] || []).slice(0, 2).map((ev, j) => (
                   <div key={j} style={{ fontFamily: 'var(--inter)', fontSize: 9, color: c.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderLeft: `2px solid ${provColor(ev.provider)}`, paddingLeft: 3 }}>{ev.title}</div>
@@ -206,7 +206,7 @@ export function MonthCalendar({ c, events, provColor, onPrepare }) {
               <span style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, background: provColor(ev.provider) }} />
               <div style={{ minWidth: 64, fontFamily: 'var(--mono)', fontSize: 11, color: c.text2 }}>{ev.allDay ? 'All day' : new Date(ev.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</div>
               <div style={{ flex: 1, fontFamily: 'var(--inter)', fontSize: 13, color: c.text }}>{ev.title}</div>
-              <button type="button" onClick={() => onPrepare(ev)} style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '5px 10px', fontSize: 11 }}>Prepare me</button>
+              <button type="button" onClick={() => onPrepare(ev)} style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '5px 10px', fontSize: 11 }}>Prepare me</button>
             </div>
           ))}
         </div>
@@ -226,7 +226,7 @@ export function WeekCalendar({ c, events, provColor, fmtTime, onPrepare }) {
         const evs = evFor(d);
         return (
           <div key={i} style={{ flex: '0 0 150px', minWidth: 150 }}>
-            <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: i === 0 ? '#4172f5' : c.text3, letterSpacing: '0.08em', marginBottom: 8 }}>{d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }).toUpperCase()}</p>
+            <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: i === 0 ? '#3b6ef7' : c.text3, letterSpacing: '0.08em', marginBottom: 8 }}>{d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }).toUpperCase()}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {evs.length === 0 ? <span style={{ fontFamily: 'var(--inter)', fontSize: 11, color: c.text4 }}>—</span> : evs.map((ev, j) => (
                 <div key={j} onClick={() => onPrepare(ev)} title="Prepare me" style={{ padding: '8px 10px', background: c.card, border: `1px solid ${c.cardBorder}`, borderLeft: `3px solid ${provColor(ev.provider)}`, borderRadius: 8, cursor: 'pointer' }}>

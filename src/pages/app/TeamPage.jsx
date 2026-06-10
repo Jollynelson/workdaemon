@@ -58,7 +58,7 @@ export function TeamPage() {
           </div>
           <button type="button" onClick={copyInvite} disabled={!inviteCode}
             style={{ padding: '9px 16px', borderRadius: 9, cursor: inviteCode ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', flexShrink: 0,
-              background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5', opacity: inviteCode ? 1 : 0.5 }}>
+              background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#3b6ef7', opacity: inviteCode ? 1 : 0.5 }}>
             + Invite member
           </button>
         </div>
@@ -78,9 +78,9 @@ export function TeamPage() {
                   <tr key={m.user_id}>
                     <td style={td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: 8, background: '#4172f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{m.name.charAt(0).toUpperCase()}</div>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, background: '#3b6ef7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{m.name.charAt(0).toUpperCase()}</div>
                         <span style={{ fontWeight: 600 }}>{m.name}</span>
-                        {m.workspace_role === 'admin' && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, color: '#4172f5', border: '1px solid rgba(65,114,245,0.3)', borderRadius: 4, padding: '1px 5px' }}>ADMIN</span>}
+                        {m.workspace_role === 'admin' && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, color: '#3b6ef7', border: '1px solid rgba(59,110,247,0.3)', borderRadius: 4, padding: '1px 5px' }}>ADMIN</span>}
                       </div>
                     </td>
                     <td style={{ ...td, color: c.text3 }}>{m.title || '—'}</td>

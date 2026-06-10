@@ -14,7 +14,7 @@ function pwStrength(pw) {
   if (/[^A-Za-z0-9]/.test(pw)) s++;
   if (s <= 1) return { label: 'Weak',   color: '#ef4444', w: '25%' };
   if (s <= 2) return { label: 'Fair',   color: '#f59e0b', w: '55%' };
-  if (s <= 3) return { label: 'Good',   color: '#4172f5', w: '78%' };
+  if (s <= 3) return { label: 'Good',   color: '#3b6ef7', w: '78%' };
   return             { label: 'Strong', color: '#10b981', w: '100%' };
 }
 
@@ -104,12 +104,12 @@ export default function Signup() {
           transition: 'opacity 0.6s ease, transform 0.6s ease',
         }}>
           <div className="wd-float" style={{ marginBottom: 28 }}>
-            <DaemonMark size={88} color="#4172f5" glow={true} />
+            <DaemonMark size={88} color="#3b6ef7" glow={true} />
           </div>
 
           <div style={{ marginBottom: 10 }}>
             <span style={{ fontFamily: 'var(--orbitron)', fontSize: 19, fontWeight: 400, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.14em' }}>WORK</span>
-            <span style={{ fontFamily: 'var(--orbitron)', fontSize: 19, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>DAEMON</span>
+            <span style={{ fontFamily: 'var(--orbitron)', fontSize: 19, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>DAEMON</span>
           </div>
           <p style={{
             fontFamily: 'var(--dmsans)', fontSize: 12,
@@ -129,8 +129,8 @@ export default function Signup() {
               }}>
                 <div style={{
                   width: 20, height: 20, borderRadius: 5, flexShrink: 0,
-                  background: i === 0 ? '#4172f5' : 'rgba(255,255,255,0.05)',
-                  border: `1px solid ${i === 0 ? '#4172f5' : 'rgba(255,255,255,0.08)'}`,
+                  background: i === 0 ? '#3b6ef7' : 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${i === 0 ? '#3b6ef7' : 'rgba(255,255,255,0.08)'}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontFamily: 'var(--mono)', fontSize: 9, color: '#fff',
                 }}>
@@ -147,7 +147,7 @@ export default function Signup() {
                   <span style={{
                     marginLeft: 'auto',
                     fontFamily: 'var(--dmsans)', fontSize: 10, fontWeight: 500,
-                    color: '#4172f5',
+                    color: '#3b6ef7',
                   }}>
                     Now
                   </span>
@@ -188,14 +188,14 @@ export default function Signup() {
           {/* Mobile logo */}
           {isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32 }}>
-              <DaemonMark size={30} color="#4172f5" glow={true} />
-              <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>WORKDAEMON</span>
+              <DaemonMark size={30} color="#3b6ef7" glow={true} />
+              <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>WORKDAEMON</span>
             </div>
           )}
 
           {/* Step indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 28 }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#4172f5', display: 'inline-block' }} />
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#3b6ef7', display: 'inline-block' }} />
             <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(232,232,232,0.35)' }}>
               Step 1 of 7 — Create account
             </span>
@@ -385,7 +385,7 @@ export default function Signup() {
             fontFamily: 'var(--dmsans)', fontSize: 14, color: 'rgba(232,232,232,0.28)',
           }}>
             Already have an account?{' '}
-            <Link to="/login" style={{ color: '#4172f5', fontWeight: 500 }}>
+            <Link to="/login" style={{ color: '#3b6ef7', fontWeight: 500 }}>
               Sign in
             </Link>
           </p>

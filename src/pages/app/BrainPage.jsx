@@ -98,7 +98,7 @@ export function CompanyContextForm({ token, c, isMobile }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '12px 16px', borderRadius: 10, background: filled > 0 ? 'rgba(16,185,129,0.05)' : 'rgba(65,114,245,0.05)', border: `1px solid ${filled > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(65,114,245,0.15)'}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '12px 16px', borderRadius: 10, background: filled > 0 ? 'rgba(16,185,129,0.05)' : 'rgba(59,110,247,0.05)', border: `1px solid ${filled > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(59,110,247,0.15)'}` }}>
         <span style={{ fontSize: 16 }}>{filled > 0 ? '◈' : '○'}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: c.text }}>
@@ -141,7 +141,7 @@ export function CompanyContextForm({ token, c, isMobile }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           type="button" onClick={save} disabled={saving}
-          style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: saving ? 'wait' : 'pointer', background: saving ? 'rgba(65,114,245,0.5)' : '#4172f5', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#fff', transition: 'all 0.15s' }}
+          style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: saving ? 'wait' : 'pointer', background: saving ? 'rgba(59,110,247,0.5)' : '#3b6ef7', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#fff', transition: 'all 0.15s' }}
         >
           {saving ? 'Saving…' : 'Save to Brain'}
         </button>
@@ -161,14 +161,14 @@ export const HUNT_MODES = [
   { key: 'threat',      label: 'THREAT HUNT',      icon: '◈', color: '#ef4444', desc: 'Churn, cash flow, legal, staff risk' },
   { key: 'waste',       label: 'WASTE HUNT',        icon: '⊗', color: '#f59e0b', desc: 'Redundancies, inefficiencies, unused tools' },
   { key: 'opportunity', label: 'OPPORTUNITY HUNT',  icon: '◇', color: '#10b981', desc: 'Upsells, partnerships, underutilised talent' },
-  { key: 'performance', label: 'PERFORMANCE HUNT',  icon: '▣', color: '#4172f5', desc: 'Team performance, burnout, overload signals' },
+  { key: 'performance', label: 'PERFORMANCE HUNT',  icon: '▣', color: '#3b6ef7', desc: 'Team performance, burnout, overload signals' },
   { key: 'knowledge',   label: 'KNOWLEDGE HUNT',    icon: '○', color: '#8b5cf6', desc: 'Knowledge gaps, missing documentation' },
 ];
 
 export const SEVERITY_STYLE = {
   critical: { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.25)',  color: '#ef4444', leftBorder: '#ef4444' },
   warning:  { bg: 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.22)', color: '#f59e0b', leftBorder: '#f59e0b' },
-  info:     { bg: 'rgba(65,114,245,0.06)', border: 'rgba(65,114,245,0.18)', color: '#4172f5', leftBorder: '#4172f5' },
+  info:     { bg: 'rgba(59,110,247,0.06)', border: 'rgba(59,110,247,0.18)', color: '#3b6ef7', leftBorder: '#3b6ef7' },
 };
 
 export function HuntFindingCard({ finding, onResolve, c }) {
@@ -330,7 +330,7 @@ export function HuntTab({ token, c, isMobile }) {
           type="button" onClick={runScan} disabled={scanning}
           style={{
             padding: '9px 18px', borderRadius: 8, border: 'none', cursor: scanning ? 'wait' : 'pointer',
-            background: scanning ? 'rgba(65,114,245,0.4)' : '#4172f5',
+            background: scanning ? 'rgba(59,110,247,0.4)' : '#3b6ef7',
             fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: '#fff',
           }}
         >{scanning ? 'Scanning…' : '⟳ Run Hunt Scan'}</button>
@@ -364,7 +364,7 @@ export const ACCESS_TOOLS = {
   director:  ['Slack', 'Notion', 'Google Drive', 'CRM', 'Finance', 'HR System'],
   executive: ['All Tools — Full Company Access'],
 };
-export const ACCESS_COLOR = { junior: '#8b5cf6', manager: '#4172f5', director: '#f59e0b', executive: '#10b981' };
+export const ACCESS_COLOR = { junior: '#8b5cf6', manager: '#3b6ef7', director: '#f59e0b', executive: '#10b981' };
 
 export function AgentProfileCard({ agent, token, onUpdated, c }) {
   const [editing, setEditing]   = useState(false);
@@ -385,7 +385,7 @@ export function AgentProfileCard({ agent, token, onUpdated, c }) {
     setSaving(false);
   };
 
-  const ac = ACCESS_COLOR[agent.access_level] || '#4172f5';
+  const ac = ACCESS_COLOR[agent.access_level] || '#3b6ef7';
   const trustPct = Math.round((agent.trust_score || 1) * 100);
 
   return (
@@ -439,7 +439,7 @@ export function AgentProfileCard({ agent, token, onUpdated, c }) {
           ) : (
             <div style={{ display: 'flex', gap: 6 }}>
               <button type="button" onClick={save} disabled={saving}
-                style={{ padding: '5px 12px', borderRadius: 6, background: '#4172f5', border: 'none', fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 600, color: '#fff', cursor: saving ? 'wait' : 'pointer' }}>
+                style={{ padding: '5px 12px', borderRadius: 6, background: '#3b6ef7', border: 'none', fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 600, color: '#fff', cursor: saving ? 'wait' : 'pointer' }}>
                 {saving ? '…' : 'Save'}
               </button>
               <button type="button" onClick={() => { setEditing(false); setLevel(agent.access_level); }}
@@ -504,7 +504,7 @@ export function SkillsTab({ token, c, isMobile }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <button type="button" onClick={discover} disabled={discovering}
-          style={{ padding: '9px 16px', borderRadius: 9, background: '#4172f5', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: discovering ? 'default' : 'pointer', opacity: discovering ? 0.6 : 1 }}>
+          style={{ padding: '9px 16px', borderRadius: 9, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: discovering ? 'default' : 'pointer', opacity: discovering ? 0.6 : 1 }}>
           {discovering ? 'Searching the web…' : '✦ Discover skills online'}
         </button>
         {note && <span style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2 }}>{note}</span>}
@@ -532,7 +532,7 @@ export function SkillsTab({ token, c, isMobile }) {
                   {open === s.id && s.body && (
                     <div style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2, marginTop: 9, paddingTop: 9, borderTop: `1px solid ${c.cardBorder}`, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                       {s.body}
-                      {s.source_url && <div style={{ marginTop: 8 }}><a href={s.source_url} target="_blank" rel="noreferrer" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#4172f5' }}>source ↗</a></div>}
+                      {s.source_url && <div style={{ marginTop: 8 }}><a href={s.source_url} target="_blank" rel="noreferrer" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#3b6ef7' }}>source ↗</a></div>}
                     </div>
                   )}
                 </div>
@@ -570,9 +570,9 @@ export function AgentsTab({ token, c, isMobile }) {
 
   return (
     <div>
-      <div style={{ padding: '12px 16px', borderRadius: 9, background: 'rgba(65,114,245,0.05)', border: '1px solid rgba(65,114,245,0.15)', marginBottom: 20 }}>
+      <div style={{ padding: '12px 16px', borderRadius: 9, background: 'rgba(59,110,247,0.05)', border: '1px solid rgba(59,110,247,0.15)', marginBottom: 20 }}>
         <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text2, lineHeight: 1.6, margin: 0 }}>
-          <strong style={{ color: '#4172f5' }}>Access levels</strong> control what tools and data each Daemon agent can see.
+          <strong style={{ color: '#3b6ef7' }}>Access levels</strong> control what tools and data each Daemon agent can see.
           {' '}<strong>Junior</strong> — Slack, Notion, Google Drive.
           {' '}<strong>Manager</strong> — + CRM & project tools.
           {' '}<strong>Director</strong> — + Finance & HR.
@@ -600,7 +600,7 @@ export function AgentsTab({ token, c, isMobile }) {
 export const TOOL_CATALOG = [
   { name: 'Notion',          icon: 'N',  category: 'Knowledge',     color: '#191919', hunt: ['knowledge','waste'] },
   { name: 'Slack',           icon: 'S',  category: 'Communication', color: '#4a154b', hunt: ['threat','performance','knowledge'] },
-  { name: 'Google Drive',    icon: 'G',  category: 'Knowledge',     color: '#4172f5', hunt: ['knowledge'] },
+  { name: 'Google Drive',    icon: 'G',  category: 'Knowledge',     color: '#3b6ef7', hunt: ['knowledge'] },
   { name: 'Gmail',           icon: 'M',  category: 'Communication', color: '#ea4335', hunt: ['threat','opportunity'] },
   { name: 'Google Calendar', icon: 'C',  category: 'Scheduling',    color: '#1a73e8', hunt: ['performance','waste'] },
   { name: 'HubSpot',         icon: 'H',  category: 'CRM',           color: '#ff7a59', hunt: ['threat','opportunity'] },
@@ -636,14 +636,14 @@ export function IntegrationsTab({ c, isMobile }) {
                     {tool.hunt.map(h => {
                       const mode = HUNT_MODES.find(m => m.key === h);
                       return (
-                        <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 8, color: mode?.color || '#4172f5', background: `${mode?.color || '#4172f5'}12`, border: `1px solid ${mode?.color || '#4172f5'}25`, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.07em' }}>
+                        <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 8, color: mode?.color || '#3b6ef7', background: `${mode?.color || '#3b6ef7'}12`, border: `1px solid ${mode?.color || '#3b6ef7'}25`, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.07em' }}>
                           {mode?.icon} {h}
                         </span>
                       );
                     })}
                   </div>
                 </div>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#4172f5', background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.2)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#3b6ef7', background: 'rgba(59,110,247,0.08)', border: '1px solid rgba(59,110,247,0.2)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>
                   CONNECT
                 </span>
               </div>
@@ -722,7 +722,7 @@ export function GraphTab({ token, c, isMobile }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
         <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.5, margin: 0, maxWidth: 560 }}>
-          The Brain's relationship map — who <strong style={{ color: '#4172f5' }}>owns</strong> what, what those tasks <strong style={{ color: c.text2 }}>address</strong>, and which risks <strong style={{ color: '#ef4444' }}>affect</strong> whom.
+          The Brain's relationship map — who <strong style={{ color: '#3b6ef7' }}>owns</strong> what, what those tasks <strong style={{ color: c.text2 }}>address</strong>, and which risks <strong style={{ color: '#ef4444' }}>affect</strong> whom.
         </p>
         <button type="button" onClick={rebuild} disabled={busy}
           style={{ padding: '7px 14px', background: 'none', border: `1px solid ${c.subtleBorder}`, borderRadius: 8, color: c.text2, fontFamily: 'var(--dmsans)', fontSize: 12.5, cursor: busy ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
@@ -748,11 +748,11 @@ export function GraphTab({ token, c, isMobile }) {
               {flowEdges.map((e, i) => {
                 const x1 = xOf(e.src_key) + HALF, y1 = yOf(e.src_key), x2 = xOf(e.dst_key) - HALF, y2 = yOf(e.dst_key);
                 const mx = (x1 + x2) / 2;
-                return <path key={i} d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`} fill="none" stroke={e.rel === 'owns' ? 'rgba(65,114,245,0.35)' : c.text4} strokeWidth={1.2} opacity={0.7} />;
+                return <path key={i} d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`} fill="none" stroke={e.rel === 'owns' ? 'rgba(59,110,247,0.35)' : c.text4} strokeWidth={1.2} opacity={0.7} />;
               })}
               {/* nodes */}
-              {people.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke="rgba(65,114,245,0.4)" accent="#4172f5" />)}
-              {tasks.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke={c.subtleBorder} accent={n.meta?.routed_by_brain ? '#4172f5' : c.text4} />)}
+              {people.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke="rgba(59,110,247,0.4)" accent="#3b6ef7" />)}
+              {tasks.map(n => <NodeRect key={n.node_key} k={n.node_key} fill={c.bg} stroke={c.subtleBorder} accent={n.meta?.routed_by_brain ? '#3b6ef7' : c.text4} />)}
               {risks.map(n => {
                 const sev = SEV[n.meta?.severity] || c.text4;
                 const x = xOf(n.node_key), y = yOf(n.node_key);
@@ -787,6 +787,157 @@ export function GraphTab({ token, c, isMobile }) {
   );
 }
 
+// ── GOALS — the brain's self-upgrading ambition engine ────────────────────────
+// Company goals written at workspace creation; staff-daemon goals at onboarding.
+// The daily review measures progress from real activity, raises the bar on wins,
+// adjusts mis-aimed goals, adds new ones, and escalates stalls.
+const AMBITION_STYLE = {
+  moonshot: { col: '#a855f7', label: 'MOONSHOT' },
+  stretch:  { col: '#f59e0b', label: 'STRETCH' },
+  baseline: { col: '#10b981', label: 'BASELINE' },
+};
+const GOAL_STATUS_STYLE = {
+  active:   { col: '#3b6ef7', label: 'ACTIVE' },
+  achieved: { col: '#10b981', label: 'ACHIEVED' },
+  missed:   { col: '#ef4444', label: 'MISSED' },
+};
+
+function GoalCard({ g, c, onStatus }) {
+  const amb = AMBITION_STYLE[g.ambition] || AMBITION_STYLE.stretch;
+  const st = GOAL_STATUS_STYLE[g.status] || GOAL_STATUS_STYLE.active;
+  const pct = Math.max(0, Math.min(100, g.progress || 0));
+  const due = g.due_at ? new Date(g.due_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
+  const overdue = g.status === 'active' && g.due_at && new Date(g.due_at) < new Date();
+  return (
+    <div style={{ padding: '14px 16px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, opacity: g.status === 'active' ? 1 : 0.75 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginBottom: 4 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.08em', color: amb.col, border: `1px solid ${amb.col}40`, borderRadius: 5, padding: '2px 6px' }}>{amb.label}</span>
+            {g.status !== 'active' && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.08em', color: st.col, border: `1px solid ${st.col}40`, borderRadius: 5, padding: '2px 6px' }}>{st.label}</span>}
+            {g.parent_goal_id && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.08em', color: c.text4 }}>↑ BAR RAISED</span>}
+            {g.owner_name && <span style={{ fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.08em', color: c.text4 }}>{g.owner_name.toUpperCase()}</span>}
+          </div>
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14.5, fontWeight: 600, color: c.text, lineHeight: 1.35 }}>{g.title}</div>
+          {(g.metric || g.target) && (
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, marginTop: 3 }}>
+              {g.target ? <>Target: <span style={{ color: c.text2, fontWeight: 600 }}>{g.target}</span></> : null}
+              {g.metric ? <span> · measured by {g.metric}</span> : null}
+              {due ? <span style={{ color: overdue ? '#ef4444' : c.text4 }}> · due {due}</span> : null}
+            </div>
+          )}
+          {g.review_note && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 6, fontStyle: 'italic' }}>Brain: {g.review_note}</div>}
+        </div>
+        {onStatus && g.status === 'active' && (
+          <button type="button" onClick={() => onStatus(g, 'retired')} title="Retire this goal"
+            style={{ background: 'none', border: 'none', color: c.text4, cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.06em', padding: '2px 4px', flexShrink: 0 }}>
+            RETIRE
+          </button>
+        )}
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, height: 5, background: c.subtle, borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', borderRadius: 3, background: g.status === 'achieved' ? '#10b981' : pct >= 60 ? '#10b981' : pct >= 25 ? '#f59e0b' : '#3b6ef7', transition: 'width 0.4s' }} />
+        </div>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: c.text2, width: 34, textAlign: 'right' }}>{pct}%</span>
+      </div>
+    </div>
+  );
+}
+
+export function GoalsTab({ token, c, isMobile }) {
+  const [goals, setGoals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(null); // 'review' | 'generate'
+  const [note, setNote] = useState(null);
+
+  const load = useCallback(() => {
+    if (!token) return Promise.resolve();
+    return fetch('/api/brain?tab=goals', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(d => setGoals(d.goals || [])).catch(() => {});
+  }, [token]);
+  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+
+  const act = async (action, okText) => {
+    setBusy(action); setNote(null);
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, ...(action === 'generate_goals' ? { force: false } : {}) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setNote(action === 'review_goals'
+          ? (d.reviewed ? `Reviewed ${d.reviewed} — ${d.achieved || 0} achieved (bar raised), ${d.adjusted || 0} upgraded, ${d.added || 0} added.` : (d.reason === 'recent' ? 'Reviewed recently — the brain re-reviews about once a day.' : okText))
+          : (d.generated ? `Brain set ${d.generated} new goal${d.generated > 1 ? 's' : ''}.` : (d.reason === 'exists' ? 'Goals already active — the daily review keeps upgrading them.' : okText)));
+        await load();
+      } else setNote(d.error || 'Action failed.');
+    } catch { setNote('Action failed — try again.'); }
+    setBusy(null);
+  };
+
+  const setStatus = async (g, status) => {
+    try {
+      await fetch('/api/brain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'update_goal', id: g.id, status }),
+      });
+      await load();
+    } catch { /* non-critical */ }
+  };
+
+  if (loading) return <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} height={84} />)}</div>;
+
+  const company = goals.filter(g => g.scope === 'company' && g.status === 'active');
+  const staff = goals.filter(g => g.scope === 'staff' && g.status === 'active');
+  const settled = goals.filter(g => g.status !== 'active').slice(0, 8);
+  const achievedCount = goals.filter(g => g.status === 'achieved').length;
+
+  return (
+    <div>
+      <BlockAlert block={{ level: 'info', title: 'THE AMBITION ENGINE', content: `The Brain writes its own goal book the moment a company exists — deliberately aggressive, measured against real activity daily. It raises the bar on every win, upgrades targets that prove too easy, and adds goals when the data reveals an opening. ${achievedCount ? `${achievedCount} goal${achievedCount > 1 ? 's' : ''} achieved so far — each one spawned a harder successor.` : 'Every achieved goal spawns a harder successor.'}` }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 18px', flexWrap: 'wrap' }}>
+        <button type="button" onClick={() => act('review_goals', 'Review complete.')} disabled={Boolean(busy)}
+          style={{ padding: '9px 16px', borderRadius: 9, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+          {busy === 'review_goals' ? 'Reviewing against real activity…' : '⟳ Review & upgrade now'}
+        </button>
+        <button type="button" onClick={() => act('generate_goals', 'Done.')} disabled={Boolean(busy)}
+          style={{ padding: '9px 16px', borderRadius: 9, background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)', color: '#3b6ef7', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+          {busy === 'generate_goals' ? 'Writing goals…' : '✦ Generate goals'}
+        </button>
+        {note && <span style={{ fontFamily: 'var(--inter)', fontSize: 13, color: c.text2 }}>{note}</span>}
+      </div>
+
+      {!company.length && !staff.length && (
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3 }}>
+          No active goals yet — hit “Generate goals” and the Brain writes the company's first goal book in seconds.
+        </p>
+      )}
+
+      {company.length > 0 && (<>
+        <p className="wd-label-blue" style={{ marginBottom: 10 }}>COMPANY GOALS</p>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 10, marginBottom: 22 }}>
+          {company.map(g => <GoalCard key={g.id} g={g} c={c} onStatus={setStatus} />)}
+        </div>
+      </>)}
+
+      {staff.length > 0 && (<>
+        <p className="wd-label-blue" style={{ marginBottom: 10 }}>STAFF DAEMON GOALS</p>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 10, marginBottom: 22 }}>
+          {staff.map(g => <GoalCard key={g.id} g={g} c={c} onStatus={setStatus} />)}
+        </div>
+      </>)}
+
+      {settled.length > 0 && (<>
+        <p className="wd-label-blue" style={{ marginBottom: 10 }}>RECENTLY SETTLED</p>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 10 }}>
+          {settled.map(g => <GoalCard key={g.id} g={g} c={c} />)}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
 export function BrainPage() {
   const c = useC();
   const { isMobile } = useViewport();
@@ -795,6 +946,7 @@ export function BrainPage() {
 
   const TABS = [
     { key: 'overview',      label: 'OVERVIEW' },
+    { key: 'goals',         label: 'GOALS' },
     { key: 'patterns',      label: 'PATTERNS' },
     { key: 'graph',         label: 'GRAPH' },
     { key: 'skills',        label: 'SKILLS' },
@@ -830,9 +982,9 @@ export function BrainPage() {
             <button key={t.key} type="button" onClick={() => setActiveTab(t.key)}
               style={{
                 padding: '8px 14px', background: 'none', border: 'none',
-                borderBottom: `2px solid ${activeTab === t.key ? '#4172f5' : 'transparent'}`,
+                borderBottom: `2px solid ${activeTab === t.key ? '#3b6ef7' : 'transparent'}`,
                 fontFamily: 'var(--mono)', fontSize: isMobile ? 9 : 10, letterSpacing: '0.1em',
-                color: activeTab === t.key ? '#4172f5' : c.text3,
+                color: activeTab === t.key ? '#3b6ef7' : c.text3,
                 cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap', transition: 'all 0.15s',
               }}>
               {t.label}
@@ -841,6 +993,7 @@ export function BrainPage() {
         </div>
 
         {activeTab === 'overview'     && <CompanyContextForm token={token} c={c} isMobile={isMobile} />}
+        {activeTab === 'goals'        && <GoalsTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'patterns'     && <HuntTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'graph'        && <GraphTab token={token} c={c} isMobile={isMobile} />}
         {activeTab === 'integrations' && <IntegrationsTab c={c} isMobile={isMobile} />}

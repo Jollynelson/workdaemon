@@ -81,7 +81,7 @@ export function ProfilePage() {
       <div style={{ maxWidth: 680, margin: '0 auto' }}>
         <p className="wd-label-blue" style={{ marginBottom: 6 }}>PROFILE</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ width: 52, height: 52, borderRadius: 14, background: '#4172f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initial}</div>
+          <div style={{ width: 52, height: 52, borderRadius: 14, background: '#3b6ef7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initial}</div>
           <div>
             <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 19 : 23, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>{form.name || 'Your profile'}</h1>
             <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginTop: 3 }}>{[form.title, company].filter(Boolean).join(' · ')}</p>
@@ -122,7 +122,7 @@ export function ProfilePage() {
             </div>
             {permLevel < 3 && (
               <button type="button" onClick={() => setBanner({ ok: true, text: 'Upgrade request noted — an admin will review it in Team settings.' })}
-                style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap' }}>Request upgrade</button>
+                style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '7px 12px', fontSize: 12, whiteSpace: 'nowrap' }}>Request upgrade</button>
             )}
           </div>
           <ProfileField label="Daemon context brief — read at the start of every session">
@@ -132,7 +132,7 @@ export function ProfilePage() {
           </ProfileField>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => save()} disabled={busy}
-              style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
+              style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
               {busy ? 'Saving…' : 'Save changes'}
             </button>
           </div>
@@ -145,7 +145,7 @@ export function ProfilePage() {
             <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text }}>{label}</span>
               <button type="button" onClick={() => togglePref(k)}
-                style={{ width: 40, height: 23, borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0, position: 'relative', transition: 'background 0.15s', background: prefs[k] ? '#4172f5' : c.subtleBorder }}>
+                style={{ width: 40, height: 23, borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0, position: 'relative', transition: 'background 0.15s', background: prefs[k] ? '#3b6ef7' : c.subtleBorder }}>
                 <span style={{ position: 'absolute', top: 2, left: prefs[k] ? 19 : 2, width: 19, height: 19, borderRadius: '50%', background: '#fff', transition: 'left 0.15s' }} />
               </button>
             </div>
@@ -159,7 +159,7 @@ export function ProfilePage() {
         {sectionLabel('PERSONAL INTEGRATIONS')}
         <div style={{ ...cardSt, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text3 }}>Connect tools so your daemon can act on your behalf.</span>
-          <button type="button" onClick={() => navigate('/app/integrations')} style={{ ...mkGhostBtn(c, { color: '#4172f5', borderColor: 'rgba(65,114,245,0.3)' }), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Manage →</button>
+          <button type="button" onClick={() => navigate('/app/integrations')} style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Manage →</button>
         </div>
 
         {/* Security */}

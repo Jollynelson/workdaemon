@@ -6,32 +6,33 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@700&display=swap');
 
 :root {
-  /* ── Surface ladder (Linear-inspired deep darks) ── */
-  --canvas:    #0d0d10;
-  --surface-1: #131318;
-  --surface-2: #17171d;
-  --surface-3: #1c1c24;
-  --surface-4: #212130;
+  /* ── Surface ladder — WorkDaemon "Void": deep blue-black with a consistent
+     cold undertone (IA spec Void #07090e), not the generic neutral dark ── */
+  --canvas:    #07090e;
+  --surface-1: #0d1018;
+  --surface-2: #111522;
+  --surface-3: #161b2c;
+  --surface-4: #1c2236;
 
   /* Legacy aliases for compatibility */
   --void:    var(--canvas);
   --surface: var(--surface-1);
   --panel:   var(--surface-2);
 
-  /* ── Hairlines (precise hex, not rgba) ── */
-  --hairline:        #1e1e28;
-  --hairline-strong: #262630;
-  --hairline-focus:  rgba(65,114,245,0.5);
+  /* ── Hairlines (precise hex, hue-matched to the void) ── */
+  --hairline:        #1a1f2e;
+  --hairline-strong: #252c40;
+  --hairline-focus:  rgba(59,110,247,0.5);
 
   /* Legacy */
   --border:     var(--hairline);
   --border-hov: var(--hairline-strong);
 
-  /* ── Text ladder ── */
-  --ink:        #eeeef2;
-  --ink-muted:  #9898a8;
-  --ink-subtle: #585868;
-  --ink-faint:  #2e2e3e;
+  /* ── Text ladder (cool-cast ink) ── */
+  --ink:        #e9edf8;
+  --ink-muted:  #97a1bd;
+  --ink-subtle: #56607e;
+  --ink-faint:  #2c3349;
 
   /* Legacy */
   --text:   var(--ink);
@@ -39,13 +40,13 @@
   --text-3: var(--ink-subtle);
   --text-4: var(--ink-faint);
 
-  /* ── Brand accent ── */
-  --electric: #4172f5;
-  --electric-hover: #5281ff;
-  --electric-dim:   rgba(65,114,245,0.12);
-  --electric-border: rgba(65,114,245,0.28);
-  --deep:     #2a55d4;
-  --glow:     rgba(65,114,245,0.18);
+  /* ── Brand accent — Electric Blue (IA spec #3b6ef7) ── */
+  --electric: #3b6ef7;
+  --electric-hover: #5d87ff;
+  --electric-dim:   rgba(59,110,247,0.12);
+  --electric-border: rgba(59,110,247,0.28);
+  --deep:     #1a3dc8;
+  --glow:     rgba(59,110,247,0.18);
 
   /* Legacy compat */
   --blue-dim: var(--electric-dim);
@@ -99,7 +100,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 body {
   font-family: var(--inter);
-  background: var(--canvas);
+  /* Faint top ambient glow gives the void depth — flat single-color darks are
+     the #1 "AI-generated dashboard" tell. */
+  background: radial-gradient(1100px 700px at 75% -12%, rgba(59,110,247,0.07), transparent 60%), var(--canvas);
+  background-attachment: fixed;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -162,10 +166,10 @@ input, textarea { font-family: inherit; }
   -webkit-appearance: none;
 }
 .wd-input::placeholder { color: var(--ink-subtle); }
-.wd-input:hover:not(:focus) { border-color: #32323f; }
+.wd-input:hover:not(:focus) { border-color: #2c3450; }
 .wd-input:focus {
   border-color: var(--electric);
-  box-shadow: 0 0 0 3px rgba(65,114,245,0.14);
+  box-shadow: 0 0 0 3px rgba(59,110,247,0.14);
 }
 .wd-input.error { border-color: rgba(239,68,68,0.45); }
 .wd-input.error:focus { box-shadow: 0 0 0 3px rgba(239,68,68,0.12); }
@@ -191,7 +195,7 @@ input, textarea { font-family: inherit; }
 }
 .wd-btn:hover:not(:disabled) {
   background: var(--electric-hover);
-  box-shadow: 0 4px 16px rgba(65,114,245,0.28);
+  box-shadow: 0 4px 16px rgba(59,110,247,0.28);
 }
 .wd-btn:active:not(:disabled) { box-shadow: none; }
 .wd-btn:disabled {
@@ -218,7 +222,7 @@ input, textarea { font-family: inherit; }
 }
 .wd-btn-ghost:hover {
   background: var(--surface-3);
-  border-color: #32323f;
+  border-color: #2c3450;
   color: var(--ink);
 }
 
@@ -321,7 +325,7 @@ input, textarea { font-family: inherit; }
 }
 .wd-chip:hover {
   background: var(--surface-3);
-  border-color: #32323f;
+  border-color: #2c3450;
   color: var(--ink);
 }
 
@@ -341,7 +345,7 @@ input, textarea { font-family: inherit; }
   transition: all 0.15s;
   white-space: nowrap;
 }
-.wd-pill-tab:hover { color: var(--ink-muted); border-color: #32323f; }
+.wd-pill-tab:hover { color: var(--ink-muted); border-color: #2c3450; }
 .wd-pill-tab.active {
   background: var(--surface-3);
   color: var(--ink);
@@ -386,8 +390,8 @@ input, textarea { font-family: inherit; }
   --text-3: var(--ink-subtle);
   --text-4: var(--ink-faint);
 
-  --electric-dim:    rgba(65,114,245,0.07);
-  --electric-border: rgba(65,114,245,0.2);
+  --electric-dim:    rgba(59,110,247,0.07);
+  --electric-border: rgba(59,110,247,0.2);
 
   --blue-dim: var(--electric-dim);
   --blue-b:   var(--electric-border);
@@ -429,7 +433,7 @@ input, textarea { font-family: inherit; }
 :root[data-theme="light"] .wd-input:hover:not(:focus) { border-color: #a8a4a0; }
 :root[data-theme="light"] .wd-input:focus {
   border-color: var(--electric);
-  box-shadow: 0 0 0 3px rgba(65,114,245,0.12);
+  box-shadow: 0 0 0 3px rgba(59,110,247,0.12);
 }
 
 :root[data-theme="light"] .wd-nav { color: var(--ink-subtle); }

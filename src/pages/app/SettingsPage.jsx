@@ -39,7 +39,7 @@ export const PROVIDERS = [
     ],
   },
   {
-    id: 'google', name: 'Google Gemini', color: '#4172f5',
+    id: 'google', name: 'Google Gemini', color: '#3b6ef7',
     desc: 'Gemini Pro & Flash', keyLabel: 'API Key',
     placeholder: 'AIza…',
     keyPrefix: 'AIza',
@@ -125,9 +125,9 @@ export function UseCaseBadge({ useCase }) {
   return (
     <span style={{
       display: 'inline-block', padding: '2px 8px', borderRadius: 20,
-      background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.2)',
+      background: 'rgba(59,110,247,0.08)', border: '1px solid rgba(59,110,247,0.2)',
       fontFamily: 'var(--dmsans)', fontSize: 10, fontWeight: 600,
-      color: '#4172f5', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.06em',
+      color: '#3b6ef7', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.06em',
     }}>{cfg.label}</span>
   );
 }
@@ -171,10 +171,10 @@ export function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
   const inputSt = (focused) => ({
     width: '100%', padding: '10px 14px', boxSizing: 'border-box',
     background: focused ? (c.d ? 'rgba(255,255,255,0.07)' : '#fff') : c.inputBg,
-    border: `1px solid ${focused ? 'rgba(65,114,245,0.5)' : c.inputBorder}`,
+    border: `1px solid ${focused ? 'rgba(59,110,247,0.5)' : c.inputBorder}`,
     borderRadius: 7, color: c.text, fontSize: 14, fontFamily: 'var(--dmsans)',
     outline: 'none', transition: 'all 0.15s',
-    boxShadow: focused ? '0 0 0 2px rgba(65,114,245,0.15)' : 'none',
+    boxShadow: focused ? '0 0 0 2px rgba(59,110,247,0.15)' : 'none',
   });
 
   const validateAndFetch = useCallback(async () => {
@@ -227,15 +227,15 @@ export function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
   };
 
   return (
-    <div style={{ background: c.card, border: '1px solid rgba(65,114,245,0.25)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
+    <div style={{ background: c.card, border: '1px solid rgba(59,110,247,0.25)', borderRadius: 12, padding: '20px 24px', marginBottom: 16 }}>
       {/* Steps */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, alignItems: 'center' }}>
         {['Provider', 'Credentials', 'Model & Use'].map((s, i) => (
           <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{
               width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: step > i + 1 ? '#10b981' : step === i + 1 ? '#4172f5' : c.subtle,
-              border: `1px solid ${step > i + 1 ? '#10b981' : step === i + 1 ? '#4172f5' : c.subtleBorder}`,
+              background: step > i + 1 ? '#10b981' : step === i + 1 ? '#3b6ef7' : c.subtle,
+              border: `1px solid ${step > i + 1 ? '#10b981' : step === i + 1 ? '#3b6ef7' : c.subtleBorder}`,
               fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 700,
               color: step >= i + 1 ? '#fff' : c.text3,
             }}>{step > i + 1 ? '✓' : i + 1}</div>
@@ -299,9 +299,9 @@ export function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
           )}
           {cfg.keyLabel && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(65,114,245,0.06)', border: '1px solid rgba(65,114,245,0.15)' }}>
+              <div style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(59,110,247,0.06)', border: '1px solid rgba(59,110,247,0.15)' }}>
                 <p style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text2, margin: 0, lineHeight: 1.5 }}>
-                  <strong style={{ color: '#4172f5' }}>API key required.</strong> Claude Pro, ChatGPT Plus, and Gemini subscriptions don't include API access — they're separate products. Get an API key from the provider's developer console, then add credit separately.
+                  <strong style={{ color: '#3b6ef7' }}>API key required.</strong> Claude Pro, ChatGPT Plus, and Gemini subscriptions don't include API access — they're separate products. Get an API key from the provider's developer console, then add credit separately.
                 </p>
               </div>
               <label style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{cfg.keyLabel}</label>
@@ -369,11 +369,11 @@ export function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
                 <button key={u.id} type="button" onClick={() => setUseCase(u.id)}
                   style={{
                     padding: '10px 12px', textAlign: 'left', cursor: 'pointer', transition: 'all 0.1s',
-                    background: useCase === u.id ? 'rgba(65,114,245,0.1)' : c.subtle,
-                    border: `1px solid ${useCase === u.id ? 'rgba(65,114,245,0.45)' : c.subtleBorder}`,
+                    background: useCase === u.id ? 'rgba(59,110,247,0.1)' : c.subtle,
+                    border: `1px solid ${useCase === u.id ? 'rgba(59,110,247,0.45)' : c.subtleBorder}`,
                     borderRadius: 8,
                   }}>
-                  <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: useCase === u.id ? '#4172f5' : c.text }}>{u.label}</div>
+                  <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: useCase === u.id ? '#3b6ef7' : c.text }}>{u.label}</div>
                   <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text3, marginTop: 2 }}>{u.desc}</div>
                 </button>
               ))}
@@ -387,7 +387,7 @@ export function AddProviderForm({ token, onSaved, onCancel, editKey, c }) {
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" onClick={() => setStep(2)} style={mkGhostBtn(c)}>← Back</button>
             <button type="button" onClick={save} disabled={saving || !model}
-              style={mkPrimaryBtn('#4172f5', !!model && !saving)}>
+              style={mkPrimaryBtn('#3b6ef7', !!model && !saving)}>
               {saving ? 'Saving…' : editKey ? 'Save Changes' : 'Add Provider'}
             </button>
           </div>
@@ -478,9 +478,9 @@ export function DaemonSettings({ c, token }) {
                   style={{
                     padding: '6px 12px', borderRadius: 999, cursor: 'pointer',
                     fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600,
-                    background: persona === p.text ? 'rgba(65,114,245,0.14)' : c.subtle,
-                    border: `1px solid ${persona === p.text ? 'rgba(65,114,245,0.4)' : c.subtleBorder}`,
-                    color: persona === p.text ? '#4172f5' : c.text2,
+                    background: persona === p.text ? 'rgba(59,110,247,0.14)' : c.subtle,
+                    border: `1px solid ${persona === p.text ? 'rgba(59,110,247,0.4)' : c.subtleBorder}`,
+                    color: persona === p.text ? '#3b6ef7' : c.text2,
                   }}>{p.label}</button>
               ))}
             </div>
@@ -493,8 +493,8 @@ export function DaemonSettings({ c, token }) {
               <button type="button" onClick={save} disabled={saving}
                 style={{
                   padding: '9px 20px', borderRadius: 8, cursor: saving ? 'default' : 'pointer',
-                  background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
-                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+                  background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)',
+                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#3b6ef7',
                   opacity: saving ? 0.6 : 1,
                 }}>
                 {saving ? 'Saving…' : 'Save daemon'}
@@ -576,7 +576,7 @@ export function SettingsPage() {
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: `1px solid ${c.cardBorder}`, marginBottom: 28 }}>
           {SETTINGS_TABS.map(t => (
             <button key={t.id} type="button" onClick={() => setTab(t.id)}
-              style={{ padding: '9px 13px', background: 'none', border: 'none', borderBottom: `2px solid ${tab === t.id ? '#4172f5' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: tab === t.id ? '#4172f5' : c.text3 }}>{t.label}</button>
+              style={{ padding: '9px 13px', background: 'none', border: 'none', borderBottom: `2px solid ${tab === t.id ? '#3b6ef7' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: tab === t.id ? '#3b6ef7' : c.text3 }}>{t.label}</button>
           ))}
         </div>
 
@@ -649,8 +649,8 @@ export function SettingsPage() {
           <button type="button" onClick={() => { setAdding(true); setEditKey(null); }}
             style={{
               padding: '10px 20px', borderRadius: 8, cursor: 'pointer',
-              background: 'rgba(65,114,245,0.08)', border: '1px solid rgba(65,114,245,0.25)',
-              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+              background: 'rgba(59,110,247,0.08)', border: '1px solid rgba(59,110,247,0.25)',
+              fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#3b6ef7',
             }}>
             + Add Provider
           </button>
@@ -689,10 +689,10 @@ export function settingsInput(c) {
   return { padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' };
 }
 export function SaveBtn({ c, busy, onClick, label = 'Save changes' }) {
-  return <button type="button" onClick={onClick} disabled={busy} style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1, alignSelf: 'flex-start' }}>{busy ? 'Saving…' : label}</button>;
+  return <button type="button" onClick={onClick} disabled={busy} style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#3b6ef7', border: '1px solid #3b6ef7', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1, alignSelf: 'flex-start' }}>{busy ? 'Saving…' : label}</button>;
 }
 export function InfoBanner({ c, text }) {
-  return <div style={{ padding: '12px 14px', borderRadius: 9, background: 'rgba(65,114,245,0.07)', border: '1px solid rgba(65,114,245,0.2)', fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, lineHeight: 1.55 }}>{text}</div>;
+  return <div style={{ padding: '12px 14px', borderRadius: 9, background: 'rgba(59,110,247,0.07)', border: '1px solid rgba(59,110,247,0.2)', fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, lineHeight: 1.55 }}>{text}</div>;
 }
 
 export const TIMEZONES = ['UTC', 'Africa/Lagos', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore'];
@@ -863,8 +863,8 @@ export function PublishingSettings({ c, token }) {
               <button type="button" onClick={save} disabled={saving}
                 style={{
                   padding: '9px 20px', borderRadius: 8, cursor: saving ? 'default' : 'pointer',
-                  background: 'rgba(65,114,245,0.1)', border: '1px solid rgba(65,114,245,0.3)',
-                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#4172f5',
+                  background: 'rgba(59,110,247,0.1)', border: '1px solid rgba(59,110,247,0.3)',
+                  fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: '#3b6ef7',
                   opacity: saving ? 0.6 : 1,
                 }}>
                 {saving ? 'Saving…' : 'Save publishing'}

@@ -19,7 +19,7 @@ export function BlockBoot({ block }) {
           const s = line.status || 'ok';
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: statusColor[s] || '#4172f5', width: 14, flexShrink: 0, marginTop: 1 }}>{statusIcon[s] || '·'}</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: statusColor[s] || '#3b6ef7', width: 14, flexShrink: 0, marginTop: 1 }}>{statusIcon[s] || '·'}</span>
               <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, width: 130, flexShrink: 0, letterSpacing: '0.05em', paddingTop: 1 }}>{line.label}</span>
               <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, flex: 1, lineHeight: 1.4 }}>{line.detail}</span>
             </div>
@@ -67,7 +67,7 @@ export function BlockChartBar({ block }) {
           <CartesianGrid stroke={c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'} vertical={false} />
           <XAxis dataKey="name" tick={{ fontFamily: 'var(--mono)', fontSize: 9, fill: c.text3 }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontFamily: 'var(--mono)', fontSize: 9, fill: c.text4 }} axisLine={false} tickLine={false} />
-          <Tooltip contentStyle={{ background: c.surface, border: `1px solid ${c.cardBorder}`, borderRadius: 8, fontFamily: 'var(--mono)', fontSize: 11, color: c.text }} labelStyle={{ color: c.text3 }} itemStyle={{ color: '#4172f5' }} />
+          <Tooltip contentStyle={{ background: c.surface, border: `1px solid ${c.cardBorder}`, borderRadius: 8, fontFamily: 'var(--mono)', fontSize: 11, color: c.text }} labelStyle={{ color: c.text3 }} itemStyle={{ color: '#3b6ef7' }} />
           {(block.keys || ['value']).map((k, i) => <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[3, 3, 0, 0]} />)}
         </BarChart>
       </ResponsiveContainer>
@@ -87,7 +87,7 @@ export function BlockChartLine({ block }) {
           <CartesianGrid stroke={c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'} vertical={false} />
           <XAxis dataKey="name" tick={{ fontFamily: 'var(--mono)', fontSize: 9, fill: c.text3 }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontFamily: 'var(--mono)', fontSize: 9, fill: c.text4 }} axisLine={false} tickLine={false} />
-          <Tooltip contentStyle={{ background: c.surface, border: `1px solid ${c.cardBorder}`, borderRadius: 8, fontFamily: 'var(--mono)', fontSize: 11, color: c.text }} labelStyle={{ color: c.text3 }} itemStyle={{ color: '#4172f5' }} />
+          <Tooltip contentStyle={{ background: c.surface, border: `1px solid ${c.cardBorder}`, borderRadius: 8, fontFamily: 'var(--mono)', fontSize: 11, color: c.text }} labelStyle={{ color: c.text3 }} itemStyle={{ color: '#3b6ef7' }} />
           {(block.keys || ['value']).map((k, i) => (
             <DataComp key={k} dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false}
               {...(block.filled ? { fill: `${CHART_COLORS[i % CHART_COLORS.length]}18`, fillOpacity: 1 } : {})} />
@@ -101,7 +101,7 @@ export function BlockChartLine({ block }) {
 export function BlockAlert({ block }) {
   const c = useC();
   const styles = {
-    info:     { leftBorder: '#4172f5', title: '#4172f5', icon: 'ℹ', tintClass: 'wd-block-alert-info' },
+    info:     { leftBorder: '#3b6ef7', title: '#3b6ef7', icon: 'ℹ', tintClass: 'wd-block-alert-info' },
     success:  { leftBorder: '#10b981', title: '#10b981', icon: '✓', tintClass: 'wd-block-alert-ok' },
     warning:  { leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠', tintClass: 'wd-block-alert-warn' },
     warn:     { leftBorder: '#f59e0b', title: '#f59e0b', icon: '⚠', tintClass: 'wd-block-alert-warn' },
@@ -134,7 +134,7 @@ export function BlockPeopleList({ block }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {(block.people || []).map((p, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', background: c.row, border: `1px solid ${c.rowBorder}`, borderRadius: 9 }}>
-          <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#4172f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+          <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#3b6ef7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 11, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
             {(p.name || '?').charAt(0)}
           </div>
           <div style={{ flex: 1 }}>
@@ -160,7 +160,7 @@ export function BlockTimeline({ block }) {
       {(block.events || []).map((ev, i) => (
         <div key={i} style={{ display: 'flex', gap: 14, paddingBottom: i < block.events.length - 1 ? 16 : 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-            <div style={{ width: 9, height: 9, borderRadius: '50%', background: ev.accent ? '#4172f5' : c.rowBorder, border: `2px solid ${ev.accent ? '#4172f5' : c.subtleBorder}`, marginTop: 4, flexShrink: 0 }} />
+            <div style={{ width: 9, height: 9, borderRadius: '50%', background: ev.accent ? '#3b6ef7' : c.rowBorder, border: `2px solid ${ev.accent ? '#3b6ef7' : c.subtleBorder}`, marginTop: 4, flexShrink: 0 }} />
             {i < (block.events || []).length - 1 && <div style={{ width: 1, flex: 1, background: c.subtleBorder, marginTop: 4 }} />}
           </div>
           <div style={{ paddingBottom: 4 }}>
@@ -180,7 +180,7 @@ export function BlockProgressBars({ block }) {
       {(block.items || []).map((item, i) => {
         const pct = item.value != null ? item.value
           : item.target > 0 ? Math.round((item.current / item.target) * 100) : 0;
-        const barColor = item.color || (item.status === 'danger' ? '#ef4444' : item.status === 'warn' ? '#f59e0b' : '#4172f5');
+        const barColor = item.color || (item.status === 'danger' ? '#ef4444' : item.status === 'warn' ? '#f59e0b' : '#3b6ef7');
         return (
           <div key={i}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -256,7 +256,7 @@ export function BlockActionConfirm({ block, onConfirm, onCancel, onExecPlan }) {
                 <div style={{ width: 22, height: 22, borderRadius: 6, background: c.subtle, border: `1px solid ${c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
                 <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.5, paddingTop: 2 }}>
                   {stepText(step)}
-                  {step && typeof step === 'object' && step.exec && <span style={{ marginLeft: 7, fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.06em', color: '#4172f5', background: 'rgba(65,114,245,0.09)', border: '1px solid rgba(65,114,245,0.2)', borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap' }}>⚙ {step.exec.name}</span>}
+                  {step && typeof step === 'object' && step.exec && <span style={{ marginLeft: 7, fontFamily: 'var(--mono)', fontSize: 8.5, letterSpacing: '0.06em', color: '#3b6ef7', background: 'rgba(59,110,247,0.09)', border: '1px solid rgba(59,110,247,0.2)', borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap' }}>⚙ {step.exec.name}</span>}
                 </div>
               </div>
             ))}
@@ -319,7 +319,7 @@ export function BlockStagedAction({ block, onExec }) {
     }
   };
   const btnStyle = (style) => style === 'primary'
-    ? { color: '#fff', background: '#4172f5', border: 'none' }
+    ? { color: '#fff', background: '#3b6ef7', border: 'none' }
     : style === 'danger'
       ? { color: '#ef4444', background: 'none', border: '1px solid rgba(239,68,68,0.4)' }
       : { color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}` };
@@ -335,7 +335,7 @@ export function BlockStagedAction({ block, onExec }) {
       <div style={{ padding: '16px 18px' }}>
         {block.title && (
           <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: changes.length || body ? 13 : 4 }}>
-            <div style={{ width: 3, alignSelf: 'stretch', background: '#4172f5', borderRadius: 2, minHeight: 18 }} />
+            <div style={{ width: 3, alignSelf: 'stretch', background: '#3b6ef7', borderRadius: 2, minHeight: 18 }} />
             <div style={{ fontFamily: 'var(--dmsans)', fontSize: 16, fontWeight: 600, color: c.text, lineHeight: 1.3 }}>{block.title}</div>
           </div>
         )}

@@ -12,7 +12,7 @@ export const LOAD_STYLE = {
   high:   { color: '#ef4444', label: 'HIGH LOAD' },
 };
 
-export function Initial({ name, color = '#4172f5' }) {
+export function Initial({ name, color = '#3b6ef7' }) {
   return (
     <div title={name || ''} style={{ width: 20, height: 20, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 7, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
       {(name || '?').charAt(0)}
@@ -32,7 +32,7 @@ export function TaskCard({ task }) {
         <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text2, lineHeight: 1.45 }}>{task.title}</span>
       </div>
       {task.routed_by_brain && (
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#4172f5', letterSpacing: '0.04em', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#3b6ef7', letterSpacing: '0.04em', marginBottom: 8 }}>
           ⤷ ROUTED BY BRAIN · {from || 'Company Brain'} → {assignee || '—'}
         </div>
       )}
@@ -109,7 +109,7 @@ export function DaemonEventCard({ ev, onAccept, onFlag, onResolve, busy }) {
   const p = ev.payload || {};
   const who = p.source === 'brain' ? 'The Company Brain' : (ev.from_staff?.name || 'A teammate');
   const META = {
-    assignment: { accent: '#4172f5', tag: 'ASSIGNMENT', title: `${who} assigned you "${p.title}"`, body: p.brief },
+    assignment: { accent: '#3b6ef7', tag: 'ASSIGNMENT', title: `${who} assigned you "${p.title}"`, body: p.brief },
     flag:       { accent: '#ef4444', tag: 'CAPACITY FLAG', title: `${who}'s daemon flagged a capacity risk: "${p.title}"`, body: [p.reason, p.suggestion && `Suggested: ${p.suggestion}`].filter(Boolean).join('\n\n') },
     handoff:    { accent: '#8b5cf6', tag: 'HANDOFF', title: `${who} handed off: "${p.title}"`, body: p.output },
     accepted:   { accent: '#10b981', tag: 'ACCEPTED', title: `${who}'s daemon accepted "${p.title}"`, body: null },
@@ -129,7 +129,7 @@ export function DaemonEventCard({ ev, onAccept, onFlag, onResolve, busy }) {
 
       {ev.type === 'assignment' && !flagging && (
         <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
-          <button disabled={busy} onClick={() => onAccept(ev.task_id)} style={{ padding: '7px 16px', background: '#4172f5', border: 'none', borderRadius: 7, color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 12.5, fontWeight: 500, cursor: busy ? 'default' : 'pointer' }}>Accept</button>
+          <button disabled={busy} onClick={() => onAccept(ev.task_id)} style={{ padding: '7px 16px', background: '#3b6ef7', border: 'none', borderRadius: 7, color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 12.5, fontWeight: 500, cursor: busy ? 'default' : 'pointer' }}>Accept</button>
           <button disabled={busy} onClick={() => setFlagging(true)} style={{ padding: '7px 16px', background: 'none', border: `1px solid ${c.subtleBorder}`, borderRadius: 7, color: c.text2, fontFamily: 'var(--dmsans)', fontSize: 12.5, cursor: 'pointer' }}>Flag a capacity risk</button>
           <button disabled={busy} onClick={() => onResolve(ev.id)} style={{ marginLeft: 'auto', padding: '7px 10px', background: 'none', border: 'none', color: c.text4, fontFamily: 'var(--dmsans)', fontSize: 12, cursor: 'pointer' }}>Dismiss</button>
         </div>
@@ -181,7 +181,7 @@ export function AssignComposer({ members, token, onDone }) {
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} style={{ padding: '8px 16px', background: '#4172f5', border: 'none', borderRadius: 8, color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+      <button onClick={() => setOpen(true)} style={{ padding: '8px 16px', background: '#3b6ef7', border: 'none', borderRadius: 8, color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
         + Assign via daemon
       </button>
     );
@@ -228,7 +228,7 @@ export function AssignComposer({ members, token, onDone }) {
 
       <div style={{ display: 'flex', gap: 8, marginTop: 13 }}>
         {!risk && (
-          <button disabled={!canSubmit} onClick={() => submit(assignee, false)} style={{ padding: '8px 18px', background: canSubmit ? '#4172f5' : c.subtle, border: 'none', borderRadius: 8, color: canSubmit ? '#fff' : c.text4, fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, cursor: canSubmit ? 'pointer' : 'default' }}>
+          <button disabled={!canSubmit} onClick={() => submit(assignee, false)} style={{ padding: '8px 18px', background: canSubmit ? '#3b6ef7' : c.subtle, border: 'none', borderRadius: 8, color: canSubmit ? '#fff' : c.text4, fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, cursor: canSubmit ? 'pointer' : 'default' }}>
             {busy ? 'Checking capacity…' : 'Assign'}
           </button>
         )}
@@ -308,7 +308,7 @@ export function TasksPage() {
               {['kanban', 'list'].map(v => (
                 <button key={v} type="button" onClick={() => setView(v)}
                   style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, textTransform: 'capitalize',
-                    background: view === v ? '#4172f5' : 'transparent', color: view === v ? '#fff' : c.text3 }}>{v}</button>
+                    background: view === v ? '#3b6ef7' : 'transparent', color: view === v ? '#fff' : c.text3 }}>{v}</button>
               ))}
             </div>
             <select value={pri} onChange={e => setPri(e.target.value)}
@@ -341,7 +341,7 @@ export function TasksPage() {
 
         {total > 0 && (
           <div style={{ height: 3, background: c.d ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)', borderRadius: 2, overflow: 'hidden', marginBottom: 28 }}>
-            <div style={{ height: '100%', width: `${pct}%`, background: '#4172f5', borderRadius: 2, transition: 'width 0.6s ease' }} />
+            <div style={{ height: '100%', width: `${pct}%`, background: '#3b6ef7', borderRadius: 2, transition: 'width 0.6s ease' }} />
           </div>
         )}
 

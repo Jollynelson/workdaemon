@@ -108,8 +108,8 @@ export function IntegrationsPage() {
                   ) : (
                     <button type="button" onClick={() => connect(p.id)} disabled={!p.configured || busy === p.id} title={p.configured ? '' : 'Add app credentials to enable'}
                       style={{ padding: '7px 16px', borderRadius: 8, cursor: p.configured ? 'pointer' : 'not-allowed',
-                        background: p.configured ? 'rgba(65,114,245,0.1)' : c.subtle, border: `1px solid ${p.configured ? 'rgba(65,114,245,0.3)' : c.subtleBorder}`,
-                        fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: p.configured ? '#4172f5' : c.text4, opacity: busy === p.id ? 0.6 : 1 }}>
+                        background: p.configured ? 'rgba(59,110,247,0.1)' : c.subtle, border: `1px solid ${p.configured ? 'rgba(59,110,247,0.3)' : c.subtleBorder}`,
+                        fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: p.configured ? '#3b6ef7' : c.text4, opacity: busy === p.id ? 0.6 : 1 }}>
                       {busy === p.id ? '…' : 'Connect'}
                     </button>
                   )}

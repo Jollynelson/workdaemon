@@ -140,6 +140,12 @@ export async function runKnowledgeDaemon(db, agent) {
     const skillsBlock = renderSkillsBlock(skills);
     bumpSkillUsage(db, skills.map(s => s.slug), agent.workspace_id);
 
+    // GOALS pillar: autonomous daemons pull toward the company's live goal book.
+    const { goalsPromptBlock, activeGoals } = await import('./goals.js');
+    let goalsBlock = '';
+    try { goalsBlock = goalsPromptBlock(await activeGoals(db, { workspaceId: agent.workspace_id })); }
+    catch { /* goals are an enhancer, never a blocker */ }
+
     await db.from('agent_runs').update({ phase: 'draft' }).eq('id', run.id);
     const sys = `You are an autonomous operations daemon for the company "${ws.name || 'the company'}". `
       + `You act on the company's own knowledge to advance one mission. You DON'T chat — you propose concrete, `
@@ -148,7 +154,7 @@ export async function runKnowledgeDaemon(db, agent) {
 
 COMPANY CONTEXT:
 ${ctx || '(none provided)'}
-
+${goalsBlock}
 OPEN BRAIN FINDINGS:
 ${findingsBlock}
 ${avoid}

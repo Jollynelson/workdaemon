@@ -86,7 +86,7 @@ export default function Login() {
         }}>
           {/* Daemon mark */}
           <div className="wd-float" style={{ marginBottom: 28 }}>
-            <DaemonMark size={88} color="#4172f5" glow={true} />
+            <DaemonMark size={88} color="#3b6ef7" glow={true} />
           </div>
 
           {/* Wordmark */}
@@ -94,7 +94,7 @@ export default function Login() {
             <span style={{ fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 400, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.14em' }}>
               WORK
             </span>
-            <span style={{ fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>
+            <span style={{ fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>
               DAEMON
             </span>
           </div>
@@ -164,8 +164,8 @@ export default function Login() {
           {/* Mobile logo */}
           {isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 36 }}>
-              <DaemonMark size={30} color="#4172f5" glow={true} />
-              <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#4172f5', letterSpacing: '0.14em' }}>WORKDAEMON</span>
+              <DaemonMark size={30} color="#3b6ef7" glow={true} />
+              <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>WORKDAEMON</span>
             </div>
           )}
 
@@ -308,7 +308,7 @@ export default function Login() {
             No account?{' '}
             <Link
               to="/signup"
-              style={{ color: '#4172f5', fontWeight: 500, transition: 'opacity 0.15s' }}
+              style={{ color: '#3b6ef7', fontWeight: 500, transition: 'opacity 0.15s' }}
               onMouseEnter={e => { e.currentTarget.style.opacity = '0.75'; }}
               onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
             >
