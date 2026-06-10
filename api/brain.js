@@ -1151,7 +1151,10 @@ export default async function handler(req, res) {
         .select('name, industry, context')
         .eq('id', workspaceId)
         .single();
-      const result = await researchCompany(db, workspaceId, ws, body);
+      // Derive the company domain from the signer's work email server-side
+      // (authoritative — never trust a client-supplied email). The frontend may
+      // still pass an explicit `domain`/`website` override in body.
+      const result = await researchCompany(db, workspaceId, ws, { ...body, email: user.email });
       return res.status(result.status).json(result.body);
     }
 

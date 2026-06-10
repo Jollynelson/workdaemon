@@ -1,5 +1,45 @@
-import { braveSearchMany, resolveLLM, callLLM, extractJson, roleToTags } from './research.js';
+import { braveSearchMany, resolveLLM, callLLM, extractJson, roleToTags, fetchPageText } from './research.js';
 import { sanitizeForPrompt, delimitUntrusted, UNTRUSTED_DATA_NOTICE, assertSafeUrl } from './security.js';
+
+// Free / personal email providers — a domain here tells us nothing about the
+// company, so we never treat it as the corporate website.
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
+  'yahoo.com', 'ymail.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me',
+  'protonmail.com', 'gmx.com', 'mail.com', 'zoho.com', 'yandex.com', 'pm.me',
+  'msn.com', 'fastmail.com', 'hey.com', 'duck.com',
+]);
+
+// Pull the corporate domain out of a work email. Returns null for personal
+// providers (gmail etc.) or anything that doesn't look like a real domain.
+export function companyDomainFromEmail(email) {
+  const m = /^[^@\s]+@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(String(email || '').trim().toLowerCase());
+  if (!m) return null;
+  const domain = m[1];
+  if (FREE_EMAIL_DOMAINS.has(domain)) return null;
+  // Strip a leading mail. / smtp. so the website host is reachable.
+  return domain.replace(/^(mail|smtp|email|mx)\./, '');
+}
+
+// Read a company's own website (homepage + /about) so onboarding research grounds
+// on what the company SAYS about itself, not just third-party snippets. Tries
+// https then http; both pages are SSRF-guarded + timeout-capped inside
+// fetchPageText. Returns { url, text } or null.
+export async function readCompanyWebsite(domain) {
+  if (!domain) return null;
+  const candidates = [
+    `https://${domain}`, `https://www.${domain}`,
+    `https://${domain}/about`, `https://www.${domain}/about`,
+  ];
+  const seen = [];
+  for (const url of candidates) {
+    const text = await fetchPageText(url, { maxChars: 3500, timeoutMs: 5000 }).catch(() => null);
+    if (text) seen.push({ url, text });
+    if (seen.length >= 2) break; // homepage + one about page is plenty
+  }
+  if (!seen.length) return null;
+  return { url: seen[0].url, text: seen.map(s => s.text).join('\n\n').slice(0, 6000) };
+}
 
 // Level 3 autonomous publishing: POST an approved draft to the workspace's
 // outbound webhook (Zapier/Make/Slack/n8n → socials). SSRF-guarded.
@@ -121,13 +161,13 @@ export async function researchRole(db, userId, body = {}) {
 }
 
 // ── Workspace: research company + competitors → context + hunt_findings ───────
-function buildCompanyPrompt({ company, industry, location, existingDesc, research }) {
+function buildCompanyPrompt({ company, industry, location, existingDesc, research, site = null, domain = null }) {
   const safeCompany  = oneLine(company, 120) || 'the company';
   const safeIndustry = oneLine(industry, 80);
   const safeLocation = oneLine(location, 120);
 
-  const sys = `You are a market-intelligence analyst building a briefing for an AI work agent that advises staff at "${safeCompany}". `
-    + `Use the web research provided as your primary source; if it is thin, use your own knowledge but never fabricate specific events or dates.\n`
+  const sys = `You are a market-intelligence analyst building a briefing for an AI work agent that advises staff at "${safeCompany}"${domain ? ` (${oneLine(domain, 80)})` : ''}. `
+    + `The company's OWN WEBSITE text (when provided) is your most authoritative source for what they do — prefer it for company_summary and positioning. Use the web research for competitors/news/trends. If a source is thin, use your own knowledge but never fabricate specific events or dates.\n`
     + `Return ONE JSON object, no prose, no code fence, with this exact shape:\n`
     + `{\n`
     + `  "company_summary": "1-2 sentences on what the company does and its market position",\n`
@@ -152,12 +192,18 @@ function buildCompanyPrompt({ company, industry, location, existingDesc, researc
       )
     : 'No live web research available — use your own knowledge; keep findings general and do not invent dated events.';
 
-  const user = `COMPANY: ${safeCompany}\n`
+  // The company's own site is untrusted external text too (could carry injection),
+  // so it's delimited — but it's the most authoritative source for what they do.
+  const siteBlock = site?.text
+    ? `OFFICIAL COMPANY WEBSITE (${oneLine(site.url, 120)} — most authoritative on what they do):\n${delimitUntrusted(site.text, 6000)}\n\n`
+    : '';
+
+  const user = `COMPANY: ${safeCompany}${domain ? ` (${oneLine(domain, 80)})` : ''}\n`
     + `INDUSTRY: ${safeIndustry || 'unspecified'}\n`
     + `LOCATION: ${safeLocation || 'unspecified'}\n`
     // Existing description may be web-derived → wrap as untrusted data.
     + (existingDesc ? `KNOWN DESCRIPTION:\n${delimitUntrusted(existingDesc, 1500)}\n` : '')
-    + `\n${grounding}`;
+    + `\n${siteBlock}${grounding}`;
 
   return { sys, user };
 }
@@ -441,16 +487,25 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
   const llm = await resolveLLM(workspaceId, db);
   if (!llm) return { status: 503, body: { error: 'No AI provider configured for research.' } };
 
+  // Pin the company by its OWN website. Prefer an explicit domain/website from the
+  // caller, else derive it from the signer's work-email domain (skips gmail etc.).
+  // This is what lets onboarding identify the real company even when the typed
+  // name is generic ("Beta Tenant") — then we READ the site for grounding.
+  const domain = (body.domain || '').toString().trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    || companyDomainFromEmail(body.email)
+    || existingCtx.website || null;
+  const site = domain ? await readCompanyWebsite(domain).catch(() => null) : null;
+
   const queries = [
+    domain ? `site:${domain}` : `"${company}"${industry ? ` ${industry}` : ''}`,
     `"${company}" competitors${industry ? ` ${industry}` : ''}`,
     `${company}${industry ? ` ${industry}` : ''} news`,
     `top ${industry || 'companies'}${location ? ` ${location}` : ''} competitors`,
-    `${industry || company} trends 2026`,
   ];
-  const research = await braveSearchMany(queries, { count: 6, freshness: 'py' });
+  const research = await braveSearchMany([...new Set(queries)], { count: 6, freshness: 'py' });
 
   const { sys, user: userPrompt } = buildCompanyPrompt({
-    company, industry, location, existingDesc: existingCtx.description, research,
+    company, industry, location, existingDesc: existingCtx.description, research, site, domain,
   });
 
   let intel;
@@ -475,6 +530,10 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
 
   const newCtx = {
     ...existingCtx,
+    // Fill the company description from the site-grounded summary when onboarding
+    // left it blank — this is what makes the first daemon session company-specific.
+    description: existingCtx.description || intel.company_summary || null,
+    website:     existingCtx.website || domain || null,
     competitors: existingCtx.competitors || competitors.join(', ') || existingCtx.competitors,
     location:    existingCtx.location || intel.location || null,
     notes:       mergeNotes(existingCtx.notes, autoBlock),
@@ -484,6 +543,8 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
       competitors,
       industry_trends: intel.industry_trends || null,
       location: intel.location || null,
+      website: domain || null,
+      site_read: !!site,
       researched_at: new Date().toISOString(),
       web_grounded: research.grounded,
     },
