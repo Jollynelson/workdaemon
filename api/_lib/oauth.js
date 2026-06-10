@@ -183,8 +183,12 @@ export function getRedirectUri(req) {
 }
 
 // ── Signed state (HMAC) so the unauthenticated callback can trust workspace/user ─
+// FAIL CLOSED: no configured secret → throw, never fall back to a guessable
+// constant (that would let an attacker forge OAuth callback state).
 function stateSecret() {
-  return process.env.OAUTH_STATE_SECRET || process.env.ENCRYPTION_KEY || 'workdaemon-dev-secret';
+  const s = process.env.OAUTH_STATE_SECRET || process.env.ENCRYPTION_KEY;
+  if (!s) throw new Error('OAUTH_STATE_SECRET (or ENCRYPTION_KEY) is not configured');
+  return s;
 }
 export function signState(payload) {
   const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 10 * 60 * 1000 })).toString('base64url');
@@ -194,8 +198,11 @@ export function signState(payload) {
 export function verifyState(token) {
   if (typeof token !== 'string' || !token.includes('.')) return null;
   const [body, sig] = token.split('.');
-  const expected = crypto.createHmac('sha256', stateSecret()).update(body).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  let expected;
+  try { expected = crypto.createHmac('sha256', stateSecret()).update(body).digest('base64url'); }
+  catch { return null; } // no secret configured → nothing verifies
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
     const data = JSON.parse(Buffer.from(body, 'base64url').toString());
     if (!data.exp || data.exp < Date.now()) return null;

@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { researchRole, researchCompany, scanOneWorkspace, SCAN_COLUMNS } from './_lib/research_actions.js';
-import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken } from './_lib/security.js';
+import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken, timingSafeEqualStr } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken } from './_lib/oauth.js';
 import { unifiedCalendar } from './_lib/calendar.js';
@@ -751,8 +751,7 @@ export default async function handler(req, res) {
     if (claims && claims.scope === 'brain_mcp' && claims.workspace_id) {
       boundWs = claims.workspace_id;                                   // per-company signed token
     } else if (process.env.BRAIN_MCP_TOKEN && process.env.BRAIN_MCP_WORKSPACE_ID
-               && presented.length === process.env.BRAIN_MCP_TOKEN.length
-               && presented === process.env.BRAIN_MCP_TOKEN) {
+               && timingSafeEqualStr(presented, process.env.BRAIN_MCP_TOKEN)) {
       boundWs = process.env.BRAIN_MCP_WORKSPACE_ID;                    // legacy single-workspace (Cobalt)
     }
     if (!boundWs) return res.status(401).json({ error: 'Unauthorized' });

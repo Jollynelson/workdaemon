@@ -132,15 +132,25 @@ export function decryptSecret(stored) {
   }
 }
 
-// ── Signed service tokens (HMAC, no expiry) ───────────────────────────────────
+// ── Signed service tokens (HMAC) ──────────────────────────────────────────────
 // A per-company Brain-MCP token encodes its workspace_id, so ONE endpoint serves
 // every company with a single signing secret (no per-company env var). The Hermes
 // gateway holds this token; the brain endpoint verifies it and extracts the scope.
-function serviceSecret() {
-  return process.env.SERVICE_TOKEN_SECRET || process.env.OAUTH_STATE_SECRET || process.env.ENCRYPTION_KEY || 'workdaemon-dev-secret';
+//
+// FAIL CLOSED: a missing secret must never silently fall back to a guessable
+// constant (that would make every workspace's brain token forgeable). If none of
+// the secret env vars is configured, signing/verification throws → callers 401/500.
+export function serviceSecret() {
+  const s = process.env.SERVICE_TOKEN_SECRET || process.env.OAUTH_STATE_SECRET || process.env.ENCRYPTION_KEY;
+  if (!s) throw new Error('SERVICE_TOKEN_SECRET (or OAUTH_STATE_SECRET / ENCRYPTION_KEY) is not configured');
+  return s;
 }
-export function signServiceToken(payload) {
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+// Sign a payload. `expiresInSec` (optional) stamps an `exp`; tokens always carry
+// `iat`. Existing tokens without exp stay valid (backward compatible).
+export function signServiceToken(payload, { expiresInSec = null } = {}) {
+  const claims = { ...payload, iat: Math.floor(Date.now() / 1000) };
+  if (expiresInSec) claims.exp = claims.iat + expiresInSec;
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
   const sig = crypto.createHmac('sha256', serviceSecret()).update(body).digest('base64url');
   return `wds_${body}.${sig}`;
 }
@@ -148,15 +158,30 @@ export function verifyServiceToken(token) {
   if (typeof token !== 'string' || !token.startsWith('wds_') || !token.includes('.')) return null;
   const [body, sig] = token.slice(4).split('.');
   if (!body || !sig) return null;
-  const expected = crypto.createHmac('sha256', serviceSecret()).update(body).digest('base64url');
+  let expected;
+  try { expected = crypto.createHmac('sha256', serviceSecret()).update(body).digest('base64url'); }
+  catch { return null; } // no secret configured → nothing verifies
   const a = Buffer.from(sig), b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try { return JSON.parse(Buffer.from(body, 'base64url').toString()); } catch { return null; }
+  try {
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString());
+    if (claims?.exp && claims.exp < Math.floor(Date.now() / 1000)) return null; // expired
+    return claims;
+  } catch { return null; }
+}
+
+// Constant-time string comparison for secrets/tokens (length-safe).
+export function timingSafeEqualStr(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const ba = Buffer.from(a), bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
 const _memBuckets = new Map(); // key → { count, resetAt }  (per-instance fallback)
+const MEM_BUCKETS_MAX = 10_000; // hard cap so an attacker can't balloon instance memory
 
 async function upstashIncr(key, windowSec) {
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -195,6 +220,15 @@ export async function rateLimit({ key, max, windowSec }) {
 
   // In-memory fallback (per serverless instance — coarse but better than nothing).
   const now = Date.now();
+  // Bound the map: evict expired buckets first; if still over cap, drop the oldest.
+  if (_memBuckets.size >= MEM_BUCKETS_MAX) {
+    for (const [k, v] of _memBuckets) { if (v.resetAt <= now) _memBuckets.delete(k); }
+    while (_memBuckets.size >= MEM_BUCKETS_MAX) {
+      const oldest = _memBuckets.keys().next().value;
+      if (oldest === undefined) break;
+      _memBuckets.delete(oldest);
+    }
+  }
   const b = _memBuckets.get(fullKey);
   if (!b || b.resetAt <= now) {
     _memBuckets.set(fullKey, { count: 1, resetAt: now + windowSec * 1000 });
