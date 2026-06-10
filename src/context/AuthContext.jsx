@@ -83,6 +83,11 @@ export function AuthProvider({ children }) {
         brainApi.warm({ token: session.access_token }).catch(() => {});
         await fetchProfile(session.access_token);
       }
+      // Keep the stored token current when the SDK silently rotates it —
+      // otherwise API calls start 401ing ~1h in and force a re-login.
+      if (event === 'TOKEN_REFRESHED' && session?.access_token) {
+        storeSession(session.access_token);
+      }
       if (event === 'SIGNED_OUT') clearSession();
     });
 
@@ -99,9 +104,15 @@ export function AuthProvider({ children }) {
       const { error } = await res.json().catch(() => ({}));
       throw new Error(error || 'Login failed');
     }
-    const { user: u, access_token } = await res.json();
+    const { user: u, access_token, refresh_token } = await res.json();
     setLoading(true);
     setProfileReady(false);
+    // Hand the session to the Supabase SDK so it persists it AND auto-refreshes
+    // the access token. Without this, password sessions hard-expired after ~1h
+    // (the refresh token was discarded) and users were bounced to login.
+    if (refresh_token) {
+      await supabase.auth.setSession({ access_token, refresh_token }).catch(() => {});
+    }
     storeSession(access_token);
     setUser(u);
     await fetchProfile(access_token);
@@ -121,6 +132,10 @@ export function AuthProvider({ children }) {
     const body = await res.json();
     if (body.requiresConfirmation) {
       throw new Error('__confirm__');
+    }
+    // Same as login: let the SDK own the session so it auto-refreshes.
+    if (body.refresh_token) {
+      await supabase.auth.setSession({ access_token: body.access_token, refresh_token: body.refresh_token }).catch(() => {});
     }
     storeSession(body.access_token);
     setUser(body.user);
