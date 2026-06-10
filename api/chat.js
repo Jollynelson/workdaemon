@@ -741,6 +741,47 @@ export default async function handler(req, res) {
           } catch (e) { console.error('[chat] company_facts:', e.message); }
         }
 
+        // 3d. FULL TRANSCRIPT → BRAIN (owner directive: ingest everything,
+        // select later). Each user's day of conversation rolls up into ONE
+        // workspace_document (source 'chat', embedded) — so the Brain can mine
+        // it and the user's own daemon gains semantic recall of past chats.
+        // Visibility is RESTRICTED to the owner: ingestion is universal, but
+        // other staff get pointer-only via retrieveDocuments, and the gateway
+        // MCP search tool never returns restricted content at all.
+        if (workspaceId && !isSessionPing) {
+          try {
+            const dayISO = new Date().toISOString().slice(0, 10);
+            const { data: todays } = await db.from('daemon_messages')
+              .select('role, content')
+              .eq('user_id', user.id).gte('created_at', `${dayISO}T00:00:00Z`)
+              .order('created_at', { ascending: true }).limit(200);
+            const lines = [];
+            for (const m of (todays || [])) {
+              if (m.role === 'user') { lines.push(`${profile?.name || 'User'}: ${m.content}`); continue; }
+              try {
+                const env = JSON.parse(m.content);
+                const texts = (env.blocks || []).map(b =>
+                  b?.type === 'text' ? b.md :
+                  b?.type === 'alert' ? `[alert] ${b.title}: ${b.content || ''}` :
+                  b?.type === 'action_done' ? b.summary : ''
+                ).filter(Boolean);
+                if (texts.length) lines.push(`Daemon: ${texts.join(' ')}`);
+              } catch { if (m.content) lines.push(`Daemon: ${m.content}`); }
+            }
+            if (lines.length) {
+              await upsertDocuments(db, workspaceId, 'chat', [{
+                external_id: `chat-${user.id}-${dayISO}`,
+                doc_type:    'conversation',
+                title:       `Daemon chat — ${profile?.name || 'staff'} — ${dayISO}`,
+                content:     lines.join('\n').slice(-8000), // tail = most recent
+                visibility:  'restricted',
+                allowed_users: [user.id],
+                author:      profile?.name || null,
+              }]);
+            }
+          } catch (e) { console.error('[chat] transcript ingest:', e.message); }
+        }
+
         // 4. Log to brain_interactions (skip session pings)
         if (!isSessionPing && userText && workspaceId) {
           const tags = extractTopicTags(userText);
@@ -750,7 +791,10 @@ export default async function handler(req, res) {
             workspace_id: workspaceId,
             user_role:    profile?.role || profile?.title || null,
             access_level: agentProfile?.access_level || 'junior',
-            user_message: userText.slice(0, 500),
+            // FULL message (owner directive: the Brain ingests everything) —
+            // input is already capped at 8K; downstream consumers slice their
+            // own samples, so no prompt-blowup risk.
+            user_message: userText,
             topic_tags:   tags,
             session_hour: hour,
             message_length: userText.length,

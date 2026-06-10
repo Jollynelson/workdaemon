@@ -356,3 +356,21 @@ longer skips on a missing workspace token (connectors like Slack sweep each
 staff member's own token inside ingest()). Directive recorded in memory
 (decision-brain-all-seeing): every new data source must wire into ingestion;
 access-scoping controls who SEES, not whether the Brain ingests.
+
+## 2026-06-10 (cont.) · Full chat transcripts → Brain (owner directive)
+
+Owner overrode the privacy-cap default: the Brain ingests full transcripts now.
+- `brain_interactions.user_message` stores the FULL message (was `.slice(0,500)`;
+  the column was always unbounded text — the cap was code-side). All downstream
+  consumers (hunt engine, patterns, deep pass) already slice their own samples,
+  so no prompt blowups; they just mine richer text now.
+- **Per-user daily transcript documents**: every real chat turn rolls the day's
+  conversation (user lines + the daemon's text/alert/action blocks) into ONE
+  `workspace_documents` row (source `chat`, doc_type `conversation`, embedded,
+  tail-capped 8K). Two effects: the Brain mines whole conversations, and each
+  user's daemon gains SEMANTIC RECALL of its own past chats via retrieval.
+- Access scoping unchanged in spirit: transcript docs are `visibility:
+  restricted, allowed_users=[owner]` — ingestion is universal, but other staff
+  get pointer-only via retrieveDocuments and the gateway MCP search tool never
+  returns restricted content. (scrub.js was checked: it repairs leaked JSON
+  envelopes, not PII — no redaction machinery was bypassed.)
