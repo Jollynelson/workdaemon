@@ -3770,9 +3770,20 @@ function DaemonSettings({ c, token }) {
   );
 }
 
+const SETTINGS_TABS = [
+  { id: 'workspace', label: 'Workspace' },
+  { id: 'billing',   label: 'Billing & Plan' },
+  { id: 'ai',        label: 'AI & Model' },
+  { id: 'security',  label: 'Security' },
+  { id: 'notifs',    label: 'Notifications' },
+  { id: 'data',      label: 'Data' },
+  { id: 'danger',    label: 'Danger Zone' },
+];
+
 function SettingsPage() {
   const c = useC();
   const { token } = useAuth();
+  const [tab, setTab]         = useState('workspace');
   const [keys, setKeys]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding]   = useState(false);
@@ -3818,13 +3829,30 @@ function SettingsPage() {
     <div style={{ height: '100%', overflowY: 'auto', background: c.bg, transition: 'background 0.2s' }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '48px 32px 80px' }}>
 
-        <div style={{ marginBottom: 36 }}>
+        <div style={{ marginBottom: 22 }}>
           <p className="wd-label-blue" style={{ marginBottom: 6 }}>SETTINGS</p>
-          <h1 style={{ fontFamily: 'var(--inter)', fontSize: 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>API Keys & Models</h1>
-          <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, marginTop: 6, lineHeight: 1.6 }}>
-            Connect any AI provider. Your whole team shares these keys — no per-user setup.
-          </p>
+          <h1 style={{ fontFamily: 'var(--inter)', fontSize: 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>Settings</h1>
         </div>
+
+        {/* Tab bar (IA §8) */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: `1px solid ${c.cardBorder}`, marginBottom: 28 }}>
+          {SETTINGS_TABS.map(t => (
+            <button key={t.id} type="button" onClick={() => setTab(t.id)}
+              style={{ padding: '9px 13px', background: 'none', border: 'none', borderBottom: `2px solid ${tab === t.id ? '#4172f5' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: tab === t.id ? '#4172f5' : c.text3 }}>{t.label}</button>
+          ))}
+        </div>
+
+        {tab === 'workspace' && <WorkspaceSettings c={c} token={token} />}
+        {tab === 'billing'   && <BillingSettings c={c} />}
+        {tab === 'security'  && <SecuritySettings c={c} />}
+        {tab === 'notifs'    && <WorkspaceNotifSettings c={c} token={token} />}
+        {tab === 'data'      && <DataSettings c={c} />}
+        {tab === 'danger'    && <DangerZoneSettings c={c} token={token} />}
+
+        {tab === 'ai' && <>
+        <p style={{ fontFamily: 'var(--dmsans)', fontSize: 14, color: c.text3, margin: '0 0 22px', lineHeight: 1.6 }}>
+          Connect any AI provider. Your whole team shares these keys — no per-user setup.
+        </p>
 
         {(adding || editKey) && (
           <AddProviderForm
@@ -3901,6 +3929,126 @@ function SettingsPage() {
 
         <DaemonSettings c={c} token={token} />
         <PublishingSettings c={c} token={token} />
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ── Settings tab bodies (IA §8) ───────────────────────────────────────────────
+function SettingsCard({ c, children }) {
+  return <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>;
+}
+function SettingsRow({ c, label, children }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <label style={{ fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: c.text3 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+function settingsInput(c) {
+  return { padding: '10px 12px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box' };
+}
+function SaveBtn({ c, busy, onClick, label = 'Save changes' }) {
+  return <button type="button" onClick={onClick} disabled={busy} style={{ padding: '9px 20px', borderRadius: 8, cursor: busy ? 'default' : 'pointer', background: '#4172f5', border: '1px solid #4172f5', color: '#fff', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: busy ? 0.6 : 1, alignSelf: 'flex-start' }}>{busy ? 'Saving…' : label}</button>;
+}
+function InfoBanner({ c, text }) {
+  return <div style={{ padding: '12px 14px', borderRadius: 9, background: 'rgba(65,114,245,0.07)', border: '1px solid rgba(65,114,245,0.2)', fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, lineHeight: 1.55 }}>{text}</div>;
+}
+
+const TIMEZONES = ['UTC', 'Africa/Lagos', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore'];
+
+function WorkspaceSettings({ c, token }) {
+  const [f, setF] = useState({ name: '', timezone: '', email_domain: '', default_member_level: 1 });
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState(false);
+  useEffect(() => {
+    fetch('/api/workspace/settings?workspace=true', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(d => setF({ name: d.name || '', timezone: d.timezone || 'UTC', email_domain: d.email_domain || '', default_member_level: d.default_member_level ?? 1 })).catch(() => {});
+  }, [token]);
+  const save = async () => {
+    setBusy(true); setOk(false);
+    const r = await fetch('/api/workspace/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'update_workspace', ...f }) }).catch(() => null);
+    setBusy(false); if (r?.ok) setOk(true);
+  };
+  const ip = settingsInput(c);
+  return (
+    <SettingsCard c={c}>
+      {ok && <InfoBanner c={c} text="✓ Workspace settings saved." />}
+      <SettingsRow c={c} label="Company name"><input value={f.name} onChange={e => setF(s => ({ ...s, name: e.target.value }))} style={ip} /></SettingsRow>
+      <SettingsRow c={c} label="Work email domain — auto-approves invite links from the same domain"><input value={f.email_domain} onChange={e => setF(s => ({ ...s, email_domain: e.target.value }))} placeholder="acmecorp.com" style={ip} /></SettingsRow>
+      <SettingsRow c={c} label="Timezone — used for scheduling daemons & calendar"><select value={f.timezone} onChange={e => setF(s => ({ ...s, timezone: e.target.value }))} style={{ ...ip, cursor: 'pointer' }}>{TIMEZONES.map(t => <option key={t} value={t}>{t}</option>)}</select></SettingsRow>
+      <SettingsRow c={c} label="Default daemon level for new members"><select value={f.default_member_level} onChange={e => setF(s => ({ ...s, default_member_level: Number(e.target.value) }))} style={{ ...ip, cursor: 'pointer' }}><option value={1}>Level 1 — Copilot (recommended)</option><option value={2}>Level 2 — Assistant</option><option value={3}>Level 3 — Autonomous</option></select></SettingsRow>
+      <SaveBtn c={c} busy={busy} onClick={save} />
+    </SettingsCard>
+  );
+}
+
+function BillingSettings({ c }) {
+  const PLANS = [
+    ['Free', 'WorkDaemon-hosted · 50k tokens/mo · 1 integration · read-only (L1)'],
+    ['Pro', 'BYOK · all integrations · L1 + L2'],
+    ['Enterprise', 'BYOK/BYOS · L1–L3 · SSO · custom integrations'],
+  ];
+  return (
+    <SettingsCard c={c}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 700, color: c.text }}>Current plan</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.06em', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 6, padding: '3px 9px' }}>FREE</span>
+      </div>
+      {PLANS.map(([n, d]) => (
+        <div key={n} style={{ padding: '12px 14px', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 9 }}>
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>{n}</div>
+          <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, marginTop: 3 }}>{d}</div>
+        </div>
+      ))}
+      <InfoBanner c={c} text="In-app checkout & invoices arrive when billing goes live (Stripe). For now, all tiers run on your own provider keys (BYOK) configured in the AI & Model tab." />
+    </SettingsCard>
+  );
+}
+
+function SecuritySettings({ c }) {
+  return (
+    <SettingsCard c={c}>
+      <SettingsRow c={c} label="Single sign-on (SSO)"><InfoBanner c={c} text="Enterprise tier. Provider metadata + callback URL configured here once your IdP (Okta / Azure AD / Google) is connected." /></SettingsRow>
+      <SettingsRow c={c} label="Bring your own store (BYOS)"><InfoBanner c={c} text="Point the Company Brain at your own vector DB (Qdrant / Weaviate / Pinecone / pgvector) with a connection string. Available on Enterprise." /></SettingsRow>
+      <SettingsRow c={c} label="Enforce 2FA"><InfoBanner c={c} text="Require two-factor auth for all workspace members. Coming with the auth hardening release." /></SettingsRow>
+    </SettingsCard>
+  );
+}
+
+function WorkspaceNotifSettings({ c, token }) {
+  const [f, setF] = useState({ broadcast_perms: 'admins', digest: 'off' });
+  const ip = settingsInput(c);
+  return (
+    <SettingsCard c={c}>
+      <SettingsRow c={c} label="Who can send company-wide broadcasts"><select value={f.broadcast_perms} onChange={e => setF(s => ({ ...s, broadcast_perms: e.target.value }))} style={{ ...ip, cursor: 'pointer' }}><option value="admins">Admins only</option><option value="all">All members</option></select></SettingsRow>
+      <SettingsRow c={c} label="Digest mode — batch alerts instead of real-time"><select value={f.digest} onChange={e => setF(s => ({ ...s, digest: e.target.value }))} style={{ ...ip, cursor: 'pointer' }}><option value="off">Off (real-time)</option><option value="hourly">Hourly</option><option value="daily">Daily</option></select></SettingsRow>
+      <InfoBanner c={c} text="Per-member alert toggles & quiet hours live on each member's Profile. Workspace-wide channels & digest scheduling apply on top." />
+    </SettingsCard>
+  );
+}
+
+function DataSettings({ c }) {
+  return (
+    <SettingsCard c={c}>
+      <SettingsRow c={c} label="Data retention"><InfoBanner c={c} text="Indexed Brain content and audit logs are retained while your workspace is active. On cancellation a 90-day grace period applies before deletion." /></SettingsRow>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" disabled title="Available on paid tiers" style={{ ...mkGhostBtn(c), padding: '9px 14px', fontSize: 13, opacity: 0.55, cursor: 'not-allowed' }}>Export company data</button>
+        <button type="button" disabled title="Requires typed confirmation; enabled with billing" style={{ ...mkGhostBtn(c, { color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }), padding: '9px 14px', fontSize: 13, opacity: 0.55, cursor: 'not-allowed' }}>Purge Brain data</button>
+      </div>
+    </SettingsCard>
+  );
+}
+
+function DangerZoneSettings({ c }) {
+  return (
+    <div style={{ background: c.card, border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <InfoBanner c={c} text="These actions are irreversible. Workspace transfer and deletion require typed confirmation and are gated behind admin auth — wired up with the billing/ownership release so they can't be triggered by accident." />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" disabled style={{ ...mkGhostBtn(c), padding: '9px 14px', fontSize: 13, opacity: 0.55, cursor: 'not-allowed' }}>Transfer ownership</button>
+        <button type="button" disabled style={{ padding: '9px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, opacity: 0.55, cursor: 'not-allowed' }}>Delete workspace</button>
       </div>
     </div>
   );

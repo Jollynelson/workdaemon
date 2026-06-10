@@ -152,6 +152,18 @@ export default async function handler(req, res) {
       });
     }
 
+    // ?workspace=true — workspace settings for the Settings → Workspace tab (IA §8)
+    if (req.query.workspace === 'true') {
+      const { data: ws } = await db
+        .from('workspaces').select('name, size, industry, location, context').eq('id', workspaceId).single();
+      const ctx = (ws?.context && typeof ws.context === 'object') ? ws.context : {};
+      return res.status(200).json({
+        name: ws?.name || '', size: ws?.size || '', industry: ws?.industry || '', location: ws?.location || '',
+        timezone: ctx.timezone || '', default_member_level: ctx.default_member_level ?? 1,
+        email_domain: ctx.email_domain || ws?.context?.website || '',
+      });
+    }
+
     // ?models=true&keyId=xxx — proxy model list for a stored key
     if (req.query.models === 'true' && req.query.keyId) {
       if (!(await enforceRateLimit(res, { key: `models:${user.id}`, max: 30, windowSec: 600 }))) return;
@@ -244,6 +256,24 @@ export default async function handler(req, res) {
     // Save / upsert — admin only
     const isAdmin = await checkAdmin(db, workspaceId, user.id);
     if (!isAdmin) return res.status(403).json({ error: 'Admin access required' });
+
+    // ── Workspace settings (Settings → Workspace tab, IA §8) ────────────────
+    if (action === 'update_workspace') {
+      const { data: ws } = await db.from('workspaces').select('context').eq('id', workspaceId).single();
+      const ctx = (ws?.context && typeof ws.context === 'object') ? ws.context : {};
+      const patch = {};
+      if (typeof req.body.name === 'string' && req.body.name.trim()) patch.name = req.body.name.trim().slice(0, 160);
+      if (req.body.timezone !== undefined) ctx.timezone = String(req.body.timezone || '').slice(0, 64);
+      if (req.body.email_domain !== undefined) ctx.email_domain = String(req.body.email_domain || '').slice(0, 120);
+      if (req.body.default_member_level !== undefined) {
+        const l = Number(req.body.default_member_level);
+        if ([1, 2, 3].includes(l)) ctx.default_member_level = l;
+      }
+      patch.context = ctx;
+      const { error } = await db.from('workspaces').update(patch).eq('id', workspaceId);
+      if (error) return res.status(500).json({ error: 'Could not save workspace settings' });
+      return res.status(200).json({ ok: true });
+    }
 
     // ── Autonomous (L3) publishing config ──────────────────────────────────
     if (action === 'update_publishing') {
