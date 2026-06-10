@@ -3120,7 +3120,7 @@ function InboxPage() {
   }, [token]);
 
   // Hand a brain-drafted asset to the daemon composer for review/refine/post.
-  const useDraft = useCallback((item) => {
+  const applyDraft = useCallback((item) => {
     if (!item?.draft) return;
     sessionStorage.setItem(
       'wd_daemon_seed',
@@ -3287,7 +3287,7 @@ function InboxPage() {
                                   {typeof ps === 'string' && ps.startsWith('err:') && <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#ef4444' }}>{ps.slice(4)}</span>}
                                 </>)
                             ) : (<>
-                              <button type="button" onClick={(e) => { e.stopPropagation(); useDraft(item); }}
+                              <button type="button" onClick={(e) => { e.stopPropagation(); applyDraft(item); }}
                                 style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#4172f5', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
                                 ✎ REFINE IN DAEMON
                               </button>
