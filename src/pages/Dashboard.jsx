@@ -683,44 +683,6 @@ function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec, onExe
 // CHAT API
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildDaemonPrompt({ name, title, company, industry, size, permissionLevel = 2 }) {
-  const firstName = name ? name.split(' ')[0] : 'there';
-  const permLabels = { 1: 'Copilot (read-only)', 2: 'Assistant (confirm before act)', 3: 'Autonomous (execute and report)' };
-
-  return `OUTPUT CONTRACT — ABSOLUTE RULE:
-Your response is one JSON object. First character: {. Last character: }. Nothing else. No reasoning. No planning. No asterisks. No text before or after. Violating this breaks the interface.
-
-{"blocks":[...],"suggestions":["...","...","..."]}
-
-IDENTITY:
-Owner: ${name || 'Unknown'}${title ? ` (${title})` : ''}
-Company: ${company || 'Unknown'}${industry ? `, ${industry}` : ''}${size ? `, ${size}` : ''}
-Permission: ${permissionLevel} — ${permLabels[permissionLevel] || permLabels[2]}
-
-BLOCK TYPES:
-{"type":"boot","title":"DAEMON BOOT SEQUENCE","lines":[{"label":"Identity","status":"ok","detail":"${name || 'User'} · ${title || 'Staff'}"},{"label":"Company Brain","status":"ok","detail":"${company || 'Workspace'} · LINKED"},{"label":"Knowledge graph","status":"pending","detail":"Connect tools to activate"},{"label":"Permission","status":"ok","detail":"LEVEL ${permissionLevel}"},{"label":"Memory","status":"pending","detail":"Learning your patterns"}]}
-{"type":"text","md":"**bold** names/IDs/amounts/deadlines. No bullet dashes. Cite: (Jira BUG-119), (Slack #eng 15 May)."}
-{"type":"stat_grid","stats":[{"label":"Sprint Progress","value":"3","unit":"of 8","source":"Jira","status":"warn"}]}
-{"type":"kanban","columns":[{"title":"Blocked","items":[{"id":"BUG-119","title":"Login fix","assignee":"James","priority":"P0","blockers":"3 days stale"}]}]}
-{"type":"alert","level":"critical","title":"...","content":"...","tag":"..."}  level: critical|warning|info
-{"type":"action_confirm","id":"uid","title":"...","description":"...","steps":["..."],"consequence":"..."}
-{"type":"action_done","summary":"✓ done, where, when."}
-{"type":"people_list","people":[{"name":"James","role":"Lead Dev","initial":"J","status":"blocked","note":"..."}]}
-{"type":"timeline","events":[{"date":"15 May","title":"...","body":"...","source":"Jira","event_type":"decision"}]}
-{"type":"progress_bars","items":[{"label":"Q2 Revenue","current":87,"target":100,"unit":"%","status":"warn"}]}
-{"type":"chart_bar","title":"...","keys":["value"],"data":[{"name":"Sprint 22","value":12}]}
-{"type":"chart_line","title":"...","keys":["value"],"data":[{"name":"Jan","value":1.2}]}
-{"type":"invoice_table","columns":["Client","Amount"],"rows":[{"client":"Acme","amount":5000}],"showTotal":true}
-
-BLOCK SELECTION: Session start→boot+text+stat_grid/alert | Metrics→stat_grid+chart | Tasks→kanban | Team→people_list | Urgent→alert | History→timeline | Goals→progress_bars+stat_grid | Action(L2)→action_confirm | Action(L3)→action_done | Financial→invoice_table+stat_grid | General→text+block. Open with text or boot. 2–5 blocks max.
-
-PERMISSION: L1=read only | L2=action_confirm, wait for confirm | L3=execute then action_done
-
-SESSION START when "[SESSION_START]": boot block first, then text greeting ${firstName} with company-aware intro, then 1–2 relevant blocks. If no tools: acknowledge and offer 3 specific connection steps.
-
-LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. End with exactly 3 specific actionable suggestions. Never: visible reasoning, "As an AI", "I don't have access".`;
-}
-
 function serializeDaemonMsg(msg) {
   if (msg.role === 'user') return { role: 'user', content: msg.text || '' };
   const content = msg.blocks
@@ -754,34 +716,11 @@ function parseJsonResponse(text) {
   return { blocks: [{ type: 'text', md: text }], suggestions: [] };
 }
 
-async function callDaemonAPI({ messages, context, apiKey, authToken }) {
-  const sys = buildDaemonPrompt(context);
-
-  // Direct Anthropic API (user-provided key)
-  if (apiKey) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
-        system: sys,
-        messages: messages.map(serializeDaemonMsg),
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `API error ${res.status}`);
-    }
-    const data = await res.json();
-    return parseJsonResponse(data.content[0]?.text || '');
-  }
-
+// The system prompt is built SERVER-side (api/_lib/prompt.js) from the
+// authenticated session — the client only sends messages + the auth token.
+// (A legacy direct-browser Anthropic path with a client-built prompt was
+// removed here: it bypassed every server-side defense and nothing set its key.)
+async function callDaemonAPI({ messages, authToken }) {
   // New FINAL-spec Brain backend (DeepSeek), when configured. Identity is derived
   // server-side from the auth token, so we only send the latest message + history.
   const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
@@ -877,7 +816,6 @@ function ChatView({ context, onBack, onMenu }) {
   const [input, setInput]             = useState('');
   const [thinking, setThinking]       = useState(false);
   const [error, setError]             = useState('');
-  const [apiKey]                      = useState(() => sessionStorage.getItem('wd_apiKey') || '');
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [feedback, setFeedback]       = useState({}); // msg index → 'up'|'down' once rated
   const bottomRef = useRef(null);
@@ -902,7 +840,7 @@ function ChatView({ context, onBack, onMenu }) {
   // Restore the persisted transcript before firing the session greeting, so a
   // fresh login resumes the conversation instead of starting blank.
   useEffect(() => {
-    if (!authToken || apiKey) { setHistoryLoaded(true); return; }
+    if (!authToken) { setHistoryLoaded(true); return; }
     const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
     const url = brainUrl ? `${brainUrl}/api/chat/history?limit=30` : '/api/chat';
     fetch(url, { headers: { Authorization: `Bearer ${authToken}` } })
@@ -920,7 +858,7 @@ function ChatView({ context, onBack, onMenu }) {
       })
       .catch(() => {})
       .finally(() => setHistoryLoaded(true));
-  }, [authToken, apiKey]);
+  }, [authToken]);
 
   const send = useCallback(async (text) => {
     const q = text.trim();
@@ -932,7 +870,7 @@ function ChatView({ context, onBack, onMenu }) {
     setInput('');
     setThinking(true);
     try {
-      const callParams = { messages: [...msgs, userMsg], context, apiKey, authToken };
+      const callParams = { messages: [...msgs, userMsg], authToken };
       let result;
       try {
         result = await callDaemonAPI(callParams);
@@ -950,12 +888,12 @@ function ChatView({ context, onBack, onMenu }) {
       setThinking(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [msgs, context, apiKey, authToken, thinking]);
+  }, [msgs, authToken, thinking]);
 
   // Rate the daemon's most recent answer → trains the daemon's style over time
   // (server distills repeated 👎/edits into durable LEARNED PREFERENCES).
   const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
-  const serverBacked = Boolean(authToken && !apiKey && !brainUrl);
+  const serverBacked = Boolean(authToken && !brainUrl);
   const sendFeedback = useCallback(async (idx, signal) => {
     if (!serverBacked || feedback[idx]) return;
     setFeedback(f => ({ ...f, [idx]: signal })); // optimistic
@@ -976,7 +914,7 @@ function ChatView({ context, onBack, onMenu }) {
     startedRef.current = true;
     setThinking(true);
     const sentinel = hadHistoryRef.current ? '[SESSION_RESUME]' : '[SESSION_START]';
-    const params = { messages: [...msgs, { role: 'user', text: sentinel }], context, apiKey, authToken };
+    const params = { messages: [...msgs, { role: 'user', text: sentinel }], authToken };
     callDaemonAPI(params)
       .then(({ blocks, suggestions: sugs }) => {
         setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
@@ -1078,7 +1016,7 @@ function ChatView({ context, onBack, onMenu }) {
     setThinking(true);
     callDaemonAPI({
       messages: [{ role: 'user', text: '[SESSION_START]' }],
-      context, apiKey, authToken,
+      authToken,
     }).then(({ blocks, suggestions: sugs }) => {
       setMsgs([{ role: 'daemon', blocks: blocks || [] }]);
       setSuggestions(sugs || []);
@@ -1088,7 +1026,7 @@ function ChatView({ context, onBack, onMenu }) {
       startedRef.current = true;
       setThinking(false);
     });
-  }, [thinking, context, apiKey, authToken]);
+  }, [thinking, authToken]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: c.bg, transition: 'background 0.2s' }}>
