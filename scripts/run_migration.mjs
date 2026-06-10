@@ -59,7 +59,7 @@ async function applyOne(filename) {
     console.log('✓ applied:', filename);
   } catch (e) {
     await client.query('rollback').catch(() => {});
-    throw new Error(`${filename}: ${e.message}`);
+    throw new Error(`${filename}: ${e.message}`, { cause: e });
   }
 }
 
