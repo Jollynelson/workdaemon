@@ -2294,6 +2294,37 @@ function TaskCard({ task }) {
   );
 }
 
+// List view for Tasks (IA §5.5) — flat sortable rows with all fields visible.
+function TaskListView({ tasks }) {
+  const c = useC();
+  const STATUS_LABEL = { todo: 'To Do', pending: 'To Do', delivered: 'To Do', accepted: 'In Progress', in_progress: 'In Progress', flagged: 'Blocked', blocked: 'Blocked', handed_off: 'In Review', completed: 'Done', done: 'Done' };
+  const th = { fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.06em', color: c.text4, textAlign: 'left', padding: '0 12px 8px', fontWeight: 600 };
+  const td = { fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text, padding: '11px 12px', borderTop: `1px solid ${c.cardBorder}`, verticalAlign: 'middle' };
+  return (
+    <div style={{ background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 12, padding: '14px 8px', overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+        <thead><tr><th style={th}>TASK</th><th style={th}>STATUS</th><th style={th}>PRIORITY</th><th style={th}>DUE</th><th style={th}>SOURCE</th><th style={th}>ASSIGNED BY</th></tr></thead>
+        <tbody>
+          {tasks.map((t, i) => {
+            const ps = PRIORITY_STYLES[t.priority] || PRIORITY_STYLES.P2;
+            return (
+              <tr key={t.id || i}>
+                <td style={{ ...td, color: c.text2 }}>{t.title}</td>
+                <td style={td}><span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: t.blocked ? '#ef4444' : c.text3 }}>{(STATUS_LABEL[t.status] || t.status || '—').toUpperCase()}</span></td>
+                <td style={td}><span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 5, background: ps.bg, border: `1px solid ${ps.border}`, color: ps.color, fontFamily: 'var(--mono)', letterSpacing: '0.06em' }}>{t.priority}</span></td>
+                <td style={{ ...td, color: t.due_date ? c.text3 : c.text4, fontFamily: 'var(--mono)', fontSize: 11 }}>{t.due_date || '—'}</td>
+                <td style={{ ...td, color: c.text3, fontFamily: 'var(--mono)', fontSize: 11 }}>{t.source || '—'}</td>
+                <td style={{ ...td, color: c.text3 }}>{t.from_staff?.name || (t.routed_by_brain ? 'Company Brain' : '—')}</td>
+              </tr>
+            );
+          })}
+          {tasks.length === 0 && <tr><td style={{ ...td, color: c.text4 }} colSpan={6}>No tasks match this filter.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function KanbanColumn({ title, tasks }) {
   const c = useC();
   return (
@@ -2758,6 +2789,8 @@ function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
   const [busy, setBusy]     = useState(false);
+  const [view, setView]     = useState('kanban'); // kanban | list (IA §5.5)
+  const [pri, setPri]       = useState('all');
 
   const load = useCallback(async () => {
     try {
@@ -2790,10 +2823,10 @@ function TasksPage() {
   const members = data?.members || [];
   const cols = { todo: [], inProgress: [], review: [], done: [] };
   const bucket = { todo: 'todo', pending: 'todo', delivered: 'todo', accepted: 'inProgress', in_progress: 'inProgress', flagged: 'review', handed_off: 'review', completed: 'done', done: 'done', blocked: 'review' };
-  for (const t of tasks) {
-    const norm = { ...t, priority: t.priority?.toUpperCase?.() || 'P2', blocked: t.status === 'blocked' || t.status === 'flagged' };
-    (cols[bucket[t.status] || 'todo']).push(norm);
-  }
+  const normTasks = tasks
+    .map(t => ({ ...t, priority: t.priority?.toUpperCase?.() || 'P2', blocked: t.status === 'blocked' || t.status === 'flagged' }))
+    .filter(t => pri === 'all' || t.priority === pri);
+  for (const t of normTasks) (cols[bucket[t.status] || 'todo']).push(t);
   const total = tasks.length;
   const done  = cols.done.length;
   const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -2804,13 +2837,27 @@ function TasksPage() {
         <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 20, gap: isMobile ? 12 : 0 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>CROSS-DAEMON TASKS</p>
-            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Task Board</h1>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Tasks</h1>
           </div>
-          {total > 0 && (
-            <div style={{ padding: '7px 14px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 9 }}>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#f59e0b', letterSpacing: '0.08em' }}>{done}/{total} DONE · {pct}%</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* View toggle (Kanban / List) + priority filter — IA §5.5 */}
+            <div style={{ display: 'flex', background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 8, padding: 2 }}>
+              {['kanban', 'list'].map(v => (
+                <button key={v} type="button" onClick={() => setView(v)}
+                  style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, textTransform: 'capitalize',
+                    background: view === v ? '#4172f5' : 'transparent', color: view === v ? '#fff' : c.text3 }}>{v}</button>
+              ))}
             </div>
-          )}
+            <select value={pri} onChange={e => setPri(e.target.value)}
+              style={{ padding: '7px 10px', borderRadius: 8, background: c.subtle, border: `1px solid ${c.subtleBorder}`, color: c.text, fontFamily: 'var(--dmsans)', fontSize: 12.5, cursor: 'pointer', outline: 'none' }}>
+              <option value="all">All priorities</option><option value="P0">P0</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option>
+            </select>
+            {total > 0 && (
+              <div style={{ padding: '7px 14px', background: c.stat, border: `1px solid ${c.statBorder}`, borderRadius: 9 }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: '#f59e0b', letterSpacing: '0.08em' }}>{done}/{total} · {pct}%</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {!loading && !error && members.length > 0 && (
@@ -2848,6 +2895,8 @@ function TasksPage() {
           <BlockAlert block={{ level: 'danger', content: `Failed to load tasks: ${error}` }} />
         ) : total === 0 ? (
           <EmptyState icon="✓" title="No tasks yet" subtitle="Assign work via your daemon above, or connect Jira/Linear." />
+        ) : view === 'list' ? (
+          <TaskListView tasks={normTasks} />
         ) : (
           <div style={{ display: 'flex', gap: 16, overflowX: isMobile ? 'auto' : 'visible', paddingBottom: isMobile ? 16 : 0 }}>
             {[
