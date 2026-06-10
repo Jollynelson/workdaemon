@@ -958,28 +958,49 @@ export default async function handler(req, res) {
     }
 
     // ── Audit log: company-wide daemon actions (admin, IA §6.4) ───────────────
+    // Two sources merged: daemon_actions (autonomous daemons) + audit_log (My
+    // Daemon chat-executed tool actions). Member names resolved from profiles.
     if (tab === 'audit') {
       if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
-      const { data: actions } = await db
-        .from('daemon_actions')
-        .select('id, type, title, status, created_at, agent_id, rationale')
-        .eq('workspace_id', workspaceId)
-        .order('created_at', { ascending: false }).limit(200);
-      const agentIds = [...new Set((actions || []).map(a => a.agent_id).filter(Boolean))];
+      const [actionsRes, personalRes] = await Promise.all([
+        db.from('daemon_actions')
+          .select('id, type, title, status, created_at, agent_id, rationale')
+          .eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(200),
+        db.from('audit_log')
+          .select('id, action, exec_name, tool, result, latency_ms, detail, created_at, user_id')
+          .eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(200),
+      ]);
+      const actions = actionsRes.data || [];
+      const personal = personalRes.data || [];
+
+      // Resolve names: daemon_actions → agent owner; audit_log → user_id directly.
+      const agentIds = [...new Set(actions.map(a => a.agent_id).filter(Boolean))];
       let agentMap = {};
+      const ownerIdSet = new Set(personal.map(p => p.user_id).filter(Boolean));
       if (agentIds.length) {
         const { data: agents } = await db.from('agents').select('id, name, user_id').in('id', agentIds);
-        const ownerIds = [...new Set((agents || []).map(a => a.user_id).filter(Boolean))];
-        const { data: owners } = ownerIds.length
-          ? await db.from('profiles').select('id, name').in('id', ownerIds) : { data: [] };
-        const ownerName = Object.fromEntries((owners || []).map(o => [o.id, o.name]));
-        agentMap = Object.fromEntries((agents || []).map(a => [a.id, { name: a.name, owner: ownerName[a.user_id] || null }]));
+        (agents || []).forEach(a => { if (a.user_id) ownerIdSet.add(a.user_id); });
+        agentMap = Object.fromEntries((agents || []).map(a => [a.id, { name: a.name, user_id: a.user_id }]));
       }
-      const log = (actions || []).map(a => ({
-        id: a.id, created_at: a.created_at, type: a.type, action: a.title, result: a.status,
-        member: agentMap[a.agent_id]?.owner || null, daemon: agentMap[a.agent_id]?.name || '—',
-        rationale: a.rationale || null,
-      }));
+      const ownerIds = [...ownerIdSet];
+      const { data: owners } = ownerIds.length
+        ? await db.from('profiles').select('id, name').in('id', ownerIds) : { data: [] };
+      const nameOf = Object.fromEntries((owners || []).map(o => [o.id, o.name]));
+
+      const log = [
+        ...actions.map(a => ({
+          id: a.id, created_at: a.created_at, type: a.type, action: a.title, result: a.status,
+          member: nameOf[agentMap[a.agent_id]?.user_id] || null,
+          daemon: agentMap[a.agent_id]?.name || 'Autonomous daemon',
+          tool: null, latency_ms: null, rationale: a.rationale || null,
+        })),
+        ...personal.map(p => ({
+          id: p.id, created_at: p.created_at, type: p.exec_name || 'action', action: p.action, result: p.result,
+          member: nameOf[p.user_id] || null, daemon: 'My Daemon',
+          tool: p.tool || null, latency_ms: p.latency_ms ?? null, rationale: p.detail || null,
+        })),
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 200);
+
       return res.status(200).json({ log });
     }
 

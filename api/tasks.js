@@ -5,6 +5,18 @@ import { recordTaskAction } from './_lib/calibration.js';
 import { ACTIONS, meetsLevel } from './_lib/actions.js';
 import { getAccessToken, getFreshAccessToken, getUserToken } from './_lib/oauth.js';
 
+// Fire-and-forget: record a My Daemon tool execution to the admin Audit Log
+// (IA §6.4). Best-effort — never let an audit-write failure break the action.
+function logDaemonAction(db, { workspaceId, userId, spec, name, params, result, latencyMs, detail }) {
+  if (!workspaceId) return;
+  db.from('audit_log').insert({
+    workspace_id: workspaceId, user_id: userId, source: 'daemon',
+    action: spec?.label || name, exec_name: name, tool: spec?.provider || null,
+    result, latency_ms: latencyMs ?? null,
+    detail: detail || (() => { try { return spec?.describe?.(params || {}) || null; } catch { return null; } })(),
+  }).then(() => {}, () => {});
+}
+
 // Tasks + Cross-Daemon Communication.
 // GET                → list workspace tasks (with assignee + from-staff)
 // GET ?events=1      → pending daemon events tagged to the current user
@@ -291,6 +303,7 @@ export default async function handler(req, res) {
     if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
 
     if (body.dry_run) return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
+    const t0 = Date.now();
     try {
       const result = await spec.run(token, body.params || {});
       // Audit + close the loop in the actor's inbox.
@@ -299,8 +312,11 @@ export default async function handler(req, res) {
         title: `✓ ${spec.label}`, body: spec.describe(body.params || {}),
         metadata: { event_type: 'action_done', action: body.name }, read: true, acted_on: true,
       });
+      // Admin Audit Log (IA §6.4): record this My Daemon action company-wide.
+      logDaemonAction(db, { workspaceId, userId: user.id, spec, name: body.name, params: body.params, result: 'success', latencyMs: Date.now() - t0 });
       return res.status(200).json({ ok: true, result });
     } catch (e) {
+      logDaemonAction(db, { workspaceId, userId: user.id, spec, name: body.name, params: body.params, result: 'failed', latencyMs: Date.now() - t0, detail: e.message });
       return res.status(502).json({ error: `Action failed: ${e.message}` });
     }
   }
@@ -327,8 +343,15 @@ export default async function handler(req, res) {
         || (await getFreshAccessToken(db, workspaceId, spec.provider));
       const token = tokenCache[spec.provider];
       if (!token) { results.push({ name, label: spec.label, ok: false, error: `${spec.provider} is not connected` }); continue; }
-      try { results.push({ name, label: spec.label, ok: true, result: await spec.run(token, params) }); }
-      catch (e) { results.push({ name, label: spec.label, ok: false, error: e.message }); }
+      const t0 = Date.now();
+      try {
+        const result = await spec.run(token, params);
+        results.push({ name, label: spec.label, ok: true, result });
+        logDaemonAction(db, { workspaceId, userId: user.id, spec, name, params, result: 'success', latencyMs: Date.now() - t0 });
+      } catch (e) {
+        results.push({ name, label: spec.label, ok: false, error: e.message });
+        logDaemonAction(db, { workspaceId, userId: user.id, spec, name, params, result: 'failed', latencyMs: Date.now() - t0, detail: e.message });
+      }
     }
     const ran = results.filter(r => r.ok).length;
     await db.from('inbox_items').insert({

@@ -4517,9 +4517,9 @@ function AuditPage() {
   const resColor = (r) => r === 'done' || r === 'approved' ? '#10b981' : r === 'failed' || r === 'rejected' ? '#ef4444' : c.text3;
 
   const exportCsv = () => {
-    const head = ['timestamp', 'member', 'daemon', 'action', 'type', 'result'];
+    const head = ['timestamp', 'member', 'daemon', 'action', 'tool', 'result', 'latency_ms'];
     const lines = [head.join(',')].concat(rows.map(r =>
-      [r.created_at, r.member || '', r.daemon || '', r.action || '', r.type || '', r.result || ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')));
+      [r.created_at, r.member || '', r.daemon || '', r.action || '', r.tool || '', r.result || '', r.latency_ms ?? ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'workdaemon-audit.csv'; a.click();
   };
@@ -4550,7 +4550,7 @@ function AuditPage() {
             Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} height={40} />)
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
-              <thead><tr><th style={th}>WHEN</th><th style={th}>MEMBER · DAEMON</th><th style={th}>ACTION</th><th style={th}>TYPE</th><th style={th}>RESULT</th></tr></thead>
+              <thead><tr><th style={th}>WHEN</th><th style={th}>MEMBER · DAEMON</th><th style={th}>ACTION</th><th style={th}>TOOL</th><th style={th}>RESULT</th><th style={th}>LATENCY</th></tr></thead>
               <tbody>
                 {rows.map(r => (
                   <tr key={r.id} onClick={() => setExpanded(expanded === r.id ? null : r.id)} style={{ cursor: r.rationale ? 'pointer' : 'default' }}>
@@ -4560,11 +4560,12 @@ function AuditPage() {
                       {r.action}
                       {expanded === r.id && r.rationale && <div style={{ marginTop: 6, fontSize: 12, color: c.text3, lineHeight: 1.5, fontStyle: 'italic' }}>{r.rationale}</div>}
                     </td>
-                    <td style={{ ...td, color: c.text3, fontFamily: 'var(--mono)', fontSize: 11 }}>{r.type}</td>
+                    <td style={{ ...td, color: c.text3, fontFamily: 'var(--mono)', fontSize: 11 }}>{r.tool || r.type || '—'}</td>
                     <td style={td}><span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: resColor(r.result) }}>{String(r.result || '').toUpperCase()}</span></td>
+                    <td style={{ ...td, color: c.text4, fontFamily: 'var(--mono)', fontSize: 11 }}>{r.latency_ms != null ? `${r.latency_ms}ms` : '—'}</td>
                   </tr>
                 ))}
-                {rows.length === 0 && <tr><td style={{ ...td, color: c.text4 }} colSpan={5}>No daemon actions logged yet.</td></tr>}
+                {rows.length === 0 && <tr><td style={{ ...td, color: c.text4 }} colSpan={6}>No daemon actions logged yet.</td></tr>}
               </tbody>
             </table>
           )}
