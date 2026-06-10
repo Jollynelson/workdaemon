@@ -52,6 +52,7 @@ export function ChatView({ context, onBack, onMenu }) {
   const [suggestions, setSuggestions] = useState([]);
   const [input, setInput]             = useState('');
   const [thinking, setThinking]       = useState(false);
+  const [thinkStage, setThinkStage]   = useState(0);
   const [error, setError]             = useState('');
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [feedback, setFeedback]       = useState({}); // msg index → 'up'|'down' once rated
@@ -63,6 +64,14 @@ export function ChatView({ context, onBack, onMenu }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, thinking]);
+
+  // Staged progress while the daemon works — a static spinner reads as "stuck";
+  // showing what's actually happening makes the same wait feel fast.
+  useEffect(() => {
+    if (!thinking) { setThinkStage(0); return; }
+    const t = setInterval(() => setThinkStage(s => Math.min(s + 1, 2)), 2200);
+    return () => clearInterval(t);
+  }, [thinking]);
 
   // Seed the composer from elsewhere (e.g. Inbox "Use draft"), then clear it.
   useEffect(() => {
@@ -407,7 +416,9 @@ export function ChatView({ context, onBack, onMenu }) {
               <DaemonMark size={16} />
               <div style={{ padding: '10px 16px', background: c.thinkingBg, border: `1px solid ${c.thinkingBorder}`, borderRadius: '18px 18px 18px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Spinner />
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.08em' }}>QUERYING DAEMON...</span>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.08em' }}>
+                  {['REACHING YOUR DAEMON…', 'READING THE COMPANY BRAIN…', 'COMPOSING…'][thinkStage]}
+                </span>
               </div>
             </div>
           )}
