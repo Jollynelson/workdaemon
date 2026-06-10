@@ -504,6 +504,9 @@ export default async function handler(req, res) {
     ownerFirstName: (profile?.name || '').split(' ')[0] || null,
   });
 
+  // Context blocks go INSIDE the prompt (with the other data sections) — never
+  // after the closing rules, so the output contract stays at the end where
+  // adherence is strongest (this is what keeps the 3 suggestions coming back).
   let sys = buildDaemonSystemPrompt(
     profile ?? null,
     profile?.workspaces ?? null,
@@ -513,7 +516,8 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-  ) + daemonEventsContext + patternsContext + goalsContext + graphContext + docsContext + learningContext + skillsContext;
+    daemonEventsContext + patternsContext + goalsContext + graphContext + docsContext + learningContext + skillsContext,
+  );
 
   // Resolve AI provider key (fetched concurrently in the batch above).
   let keyRow = keyRowFromDb;
@@ -653,6 +657,20 @@ export default async function handler(req, res) {
         const followParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, followup, { workspaceId, userId: user.id }));
         if (followParsed?.blocks?.length) { parsed = followParsed; console.log('[chat] brain pull: %d quer(ies) → answered', qs.length); }
       } catch (e) { console.error('[chat] brain pull:', e.message); /* keep the first answer */ }
+    }
+
+    // CONTEXT-BUTTON GUARANTEE: the suggestion chips are part of the product
+    // contract. If a truncated or disobedient model response lost them, synthesize
+    // grounded fallbacks from the goal book + open findings so the chat never
+    // renders a dead end.
+    if (!Array.isArray(parsed.suggestions) || !parsed.suggestions.some(s => typeof s === 'string' && s.trim())) {
+      const fb = [];
+      const g = goalBook?.staff?.[0] || goalBook?.company?.[0];
+      if (g?.title) fb.push(`What's the fastest next step on "${String(g.title).slice(0, 60)}"?`);
+      if (huntFindings[0]?.pattern) fb.push(`Walk me through: ${String(huntFindings[0].pattern).slice(0, 70)}`);
+      if (connectedTools.includes('slack')) fb.push("What's happening in Slack today?");
+      fb.push('What needs my attention today?', 'Show our goal progress');
+      parsed.suggestions = [...new Set(fb)].slice(0, 3);
     }
 
     // Fire-and-forget: persist messages + run learning pipeline

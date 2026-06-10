@@ -96,7 +96,13 @@ export function buildAgentContext(agentProfile) {
 }
 
 // ── System prompt builder ─────────────────────────────────────────────────────
-export function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '', connectedTools = [], slackContext = '') {
+// extraContext: caller-assembled context blocks (cross-daemon events, patterns,
+// goals, graph, docs, learning, skills). They are INSERTED with the other data
+// blocks mid-prompt — NEVER appended after the closing rules. The output contract
+// ("exactly 3 suggestions", block limits) must stay at the very end of the prompt
+// where instruction-following is strongest; appending context after it was burying
+// the contract and the model stopped emitting suggestions.
+export function buildDaemonSystemPrompt(profile, workspace, memories, agentProfile, huntFindings, webContext = '', connectedTools = [], slackContext = '', extraContext = '') {
   // Identity fields are user-/admin-supplied free text. Sanitize to a single
   // short line each so they cannot smuggle instructions into the system prompt.
   const safeName  = sanitizeForPrompt(profile?.name, 80).replace(/\s+/g, ' ').trim();
@@ -171,7 +177,7 @@ WEB SEARCH: You CAN search the live web and read pages. Fresh results may alread
 NO FAKE PROMISES — ABSOLUTE: never reply "On it", "let me check", "I'll look into it", "give me a moment", or any promise of future work. You CANNOT act between turns. Either (a) the information is in your context now — use it; (b) request it NOW via brain_queries web/read_url and answer when the results come back this same turn; or (c) state plainly what you attempted and what came back (e.g. "I tried betatenant.com — it's unreachable"), then ask for what you need. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
 
 ${UNTRUSTED_DATA_NOTICE}
-${briefContext}${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}
+${briefContext}${agentContext}${companyContext}${memoriesContext}${huntContext}${webContext}${slackContext}${extraContext}
 COMPANY BRAIN — ACTIVE LOOKUP: You already receive injected brain context above. If answering well needs MORE, add a top-level "brain_queries" array (max 3) to your JSON and the system runs the tools and immediately calls you again with the results so you can answer fully and cite sources. Tools:
 • {"tool":"search","q":"…"} — search THIS company's knowledge base (ingested docs, Slack, prior web reads)
 • {"tool":"hunt"} — the brain's open findings · {"tool":"context"} — the company profile
@@ -262,6 +268,7 @@ SESSION RESUME — when message is "[SESSION_RESUME]":
 Do NOT repeat the boot block. Return ONE short text block: a warm one-line "welcome back, ${firstName || 'there'}". Then look at the conversation history above and pick up the LAST unresolved thread — if the prior user message was a real question (e.g. about their field, a task, a metric), answer it now using your general knowledge, don't just say "welcome back". Reference it specifically. Keep it tight. End with 3 suggestions that continue that thread.
 
 LANGUAGE: Bold names/IDs/deadlines/amounts. Prose not dashes. Cite every fact. Direct, warm, and competent — a sharp chief-of-staff for a ${roleLabel}.
+BREVITY = SPEED: every token you emit is latency the user feels. Default to the TIGHTEST useful answer — 2-3 blocks, short text, no restating context they already know. Go long ONLY when the question genuinely demands depth.
 Never: "As an AI", "I don't have access", "I'm just a demo", "I am a brain", "I cannot search online", visible reasoning.
-End with exactly 3 specific actionable suggestions tuned to a ${roleLabel}.`;
+FINAL CONTRACT CHECK — your JSON is INCOMPLETE without the top-level "suggestions" array: exactly 3 short, specific, actionable follow-ups tuned to a ${roleLabel} (never generic "tell me more"). Keep blocks to 2–5. Emit "suggestions" LAST and never omit it.`;
 }

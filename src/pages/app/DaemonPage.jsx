@@ -288,7 +288,7 @@ export function ChatView({ context, onBack, onMenu }) {
           )}
           <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
           <DaemonMark size={16} glow />
-          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#e9edf8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
+          <div style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 13 : 14, fontWeight: 600, color: '#ededef', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.02em' }}>
             {context.roleLabel}
           </div>
           {!isMobile && context.company && (
@@ -356,12 +356,43 @@ export function ChatView({ context, onBack, onMenu }) {
                         </span>
                       ) : (
                         <>
-                          <button title="Good answer" onClick={() => sendFeedback(i, 'up')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: 0.45, padding: 2, lineHeight: 1 }}
-                            onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.45}>👍</button>
-                          <button title="Needs work" onClick={() => sendFeedback(i, 'down')}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: 0.45, padding: 2, lineHeight: 1 }}
-                            onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.45}>👎</button>
+                          <button title="Copy reply" onClick={(e) => {
+                            const out = [m.text, ...(m.blocks || []).map(b => b.md || b.content || b.summary || b.title).filter(Boolean)].join('\n\n');
+                            navigator.clipboard?.writeText(out).catch(() => {});
+                            const el = e.currentTarget; el.style.color = '#10b981';
+                            setTimeout(() => { if (el) el.style.color = ''; }, 900);
+                          }}
+                            style={{
+                              width: 26, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                              background: 'transparent', border: '1px solid transparent', borderRadius: 7,
+                              color: c.text3, cursor: 'pointer', padding: 0,
+                              transition: 'color 0.12s, border-color 0.12s, background 0.12s',
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = c.hairlineStrong; e.currentTarget.style.background = c.surface2; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                            </svg>
+                          </button>
+                          {[
+                            { sig: 'up', title: 'Good answer', flip: false },
+                            { sig: 'down', title: 'Needs work', flip: true },
+                          ].map(({ sig, title, flip }) => (
+                            <button key={sig} title={title} onClick={() => sendFeedback(i, sig)}
+                              style={{
+                                width: 26, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                background: 'transparent', border: '1px solid transparent', borderRadius: 7,
+                                color: c.text3, cursor: 'pointer', padding: 0,
+                                transition: 'color 0.12s, border-color 0.12s, background 0.12s',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.hairlineStrong; e.currentTarget.style.background = c.surface2; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = c.text3; e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent'; }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+                                style={flip ? { transform: 'rotate(180deg)' } : undefined}>
+                                <path d="M7 10v12" /><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+                              </svg>
+                            </button>
+                          ))}
                         </>
                       )}
                     </div>

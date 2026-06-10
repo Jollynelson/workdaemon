@@ -56,17 +56,32 @@ export function EmptyState({ icon = '◈', title, subtitle, cta, onCta }) {
 
 export function Md({ text, c }) {
   if (!text) return null;
+  const bold = (s) => s.split(/\*\*([^*]+)\*\*/).map((part, i) =>
+    i % 2 === 1 ? <strong key={i} style={{ color: c.text, fontWeight: 600 }}>{part}</strong> : part);
   return (
-    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 15, color: c.text, lineHeight: 1.75 }}>
-      {text.split('\n\n').map((para, pi) => (
-        <p key={pi} style={{ margin: pi > 0 ? '10px 0 0' : 0 }}>
-          {para.split(/\*\*([^*]+)\*\*/).map((part, i) =>
-            i % 2 === 1
-              ? <strong key={i} style={{ color: c.text, fontWeight: 600 }}>{part}</strong>
-              : part
-          )}
-        </p>
-      ))}
+    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 15, color: c.text, lineHeight: 1.75, textWrap: 'pretty' }}>
+      {text.split('\n\n').map((para, pi) => {
+        // Single newlines are real line breaks (HTML collapses them into run-on
+        // text), and "- " lines are bullets — render both properly so model
+        // output never lands as one wall of dashes.
+        const lines = para.split('\n').filter(l => l.trim());
+        return (
+          <div key={pi} style={{ margin: pi > 0 ? '10px 0 0' : 0 }}>
+            {lines.map((line, li) => {
+              const m = line.match(/^\s*[-•]\s+(.*)$/);
+              if (m) {
+                return (
+                  <div key={li} style={{ display: 'flex', gap: 9, margin: '4px 0' }}>
+                    <span style={{ color: c.text3, flexShrink: 0 }}>•</span>
+                    <span style={{ minWidth: 0 }}>{bold(m[1])}</span>
+                  </div>
+                );
+              }
+              return <p key={li} style={{ margin: li > 0 ? '6px 0 0' : 0 }}>{bold(line)}</p>;
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { useAuth } from './context/AuthContext.jsx';
 
 function FullPageSpinner() {
   return (
-    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#07090e' }}>
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#121214' }}>
       <div style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.12)', borderTopColor: '#3b6ef7', borderRadius: '50%', animation: 'wd-spin 0.75s linear infinite' }} />
     </div>
   );
