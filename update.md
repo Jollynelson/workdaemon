@@ -203,14 +203,39 @@ lint 0 errors, build clean at every commit.
 - **`README.md`** added: entry path (STATUS.md first) + operational cautions.
 - `pg` declared as a devDependency (scripts imported it undeclared).
 
-### Deferred (decisions for the owner, from the audit's Open Questions)
-- **Vercel Pro?** The 12-function cap is the single constraint most
-  distorting the API architecture (multiplexed mega-endpoints). Pay $20/mo
-  or write an ADR blessing multiplexing permanently.
-- **Python track** (`finetuning/ hermes/ backend/`): quarantine/split/keep —
-  left untouched (Modal deploy paths reference current locations).
-- **Error reporting** (Sentry or a Vercel log-drain alert): needs an account
-  decision; today a prod 500-storm is only visible in Vercel logs.
-- **Per-workspace token revocation** before more companies share the Hermes
-  gateway (current remedy = rotate the global secret, breaks all).
-- Vite major bump for the dev-only esbuild moderates.
+### DEFERRED → TASKS TO BE DONE (from the audit's Open Questions)
+Tracked here so they survive sessions. Owner decisions first, then code tasks.
+**Merged to main + deployed 2026-06-10** (fast-forward `4e12784..738c9c4`).
+
+- [ ] **T1 — Decide: Vercel Pro vs the 12-function cap** (decision, 5 min).
+  The cap is the single constraint most distorting the API architecture
+  (multiplexed mega-endpoints, rewrite tricks in `vercel.json`). Either pay
+  $20/mo and gradually un-multiplex, or bless multiplexing permanently in a
+  short ADR (`docs/` note) so future sessions stop re-litigating it.
+- [ ] **T2 — Error reporting** (S, needs an account decision). Pick Sentry
+  (free tier fine) or a Vercel log-drain alert; wire the DSN into `api/_lib`
+  error paths + `src/main.jsx`. Today a prod 500-storm is invisible unless
+  someone reads Vercel logs.
+- [ ] **T3 — Verify `SERVICE_TOKEN_SECRET` is set explicitly on Vercel prod**
+  (S). Signing currently rides the fallback chain ending at ENCRYPTION_KEY —
+  works, but a dedicated secret separates concerns and enables clean rotation.
+- [ ] **T4 — Per-workspace token revocation** (M). Before more companies
+  share the Hermes gateway: add a revocation check (e.g. a `token_revocations`
+  table keyed on workspace_id + iat cutoff) where `verifyServiceToken` is
+  consumed, and mint per-company tokens WITH `expiresInSec` (verify support
+  shipped 2026-06-10). Current remedy = rotate the global secret, which
+  breaks every company at once.
+- [ ] **T5 — Decide the Python track's home** (`finetuning/ hermes/ backend/`):
+  quarantine under `experimental/`, split to its own repo, or keep as-is.
+  Left untouched because Modal deploy paths reference the current locations.
+- [ ] **T6 — Vite major bump** (S, breaking-change risk). Clears the two
+  remaining dev-only esbuild `npm audit` moderates. `npm audit fix --force`
+  on a branch, then verify dev server + build + CI before merging.
+- [ ] **T7 — Delete-user from the app UI** (M, carried over from STATUS.md
+  TO-DO #5). DB FKs already unblocked (`migrations/007_user_delete_fkeys.sql`);
+  still needs the service-role admin API route + authz + confirm UI + an
+  owner-deletion policy (transfer vs orphan).
+- [ ] **T8 — Standing env items** (owner, carried over from 06-09): Calendar
+  OAuth creds on Vercel (`docs/CALENDAR_OAUTH_SETUP.md`) and `HERMES_SHARED_*`
+  env + warm gateway (`docs/HERMES_DAEMON_DEFAULT.md`) — these gate Calendar
+  connect and Hermes-for-all-daemons respectively.
