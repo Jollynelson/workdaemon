@@ -739,10 +739,20 @@ export default async function handler(req, res) {
     // then force one corrective answer grounded in them. The corrective runs on
     // the fast cloud model when the slow primary already ate the budget — a
     // promise must never be the final word.
-    const PROMISE_RE = /\b(let me (check|look|pull|dig|verify|find)|i(?:'|’)?ll (check|look into|get back|pull|dig|find out)|give me a (moment|minute|sec)|checking (that|this|now)|one (moment|sec|minute)|hold on)\b/i;
+    const PROMISE_RE = /\b(let me (check|look|pull|dig|verify|find|fetch|scan|grab|gather|review|investigate|confirm|run)|i(?:'|’)?(?:ll| will|'?m going to|'?m gonna| am going to) (check|look|get back|pull|dig|find|fetch|scan|verify|review|investigate|confirm|run|gather)|i(?:'|’)?m (checking|pulling|looking|scanning|fetching|digging|reviewing|gathering|verifying|investigating|confirming|running)|going to (check|look|pull|dig|fetch|scan|verify|review|confirm)|give me a (moment|minute|sec|second)|one (moment|sec|second|minute)|hold on|stand by|bear with me|on it|working on it|right back)\b/i;
+    // Gerund-initial promise stub ("Checking X directly.", "Pulling the data…").
+    // PRECISE: requires gerund-at-start AND a promise tail (directly/now/…) AND a
+    // short reply — so a real short answer that opens "Reviewing the data, I found
+    // three issues:" never trips it (no promise tail → ignored).
+    const GERUND_RE = /(^|\n)\s*(checking|pulling|looking into|scanning|searching|fetching|digging into|reviewing|gathering|grabbing|running (?:a|the)|verifying|investigating|analy[sz]ing|inspecting|confirming|querying)\b/i;
+    const GERUND_TAIL_RE = /\b(directly|right now|as we speak|real quick|in a (?:sec|second|moment|minute)|for you|now|shortly|momentarily)\b[.!]?\s*$|(?:…|\.\.\.)\s*$/i;
     const visibleText = (p) => (p?.blocks || []).map(b => [b.md, b.content, b.title].filter(Boolean).join(' ')).join(' ');
+    const promiseText = visibleText(parsed);
+    const promiseIsStub = promiseText.replace(/\s+/g, ' ').trim().length < 280;
+    const promised = PROMISE_RE.test(promiseText)
+      || (promiseIsStub && GERUND_RE.test(promiseText) && GERUND_TAIL_RE.test(promiseText));
     if (isUserTurn && !Array.isArray(parsed?.brain_queries) && (parsed?.blocks || []).length <= 2
-        && PROMISE_RE.test(visibleText(parsed)) && budgetLeft() > 15000) {
+        && promised && budgetLeft() > 15000) {
       try {
         emit({ type: 'status', label: 'ACTUALLY CHECKING…' });
         // Do the promised lookup OURSELVES — the question defines the query.
