@@ -4,6 +4,31 @@ import { generateCompanyGoals, generateStaffGoals } from '../_lib/goals.js';
 import { assignRoleSkills } from '../_lib/skills.js';
 import { waitUntil } from '@vercel/functions';
 
+// Server-side geocode of a free-text location → structured {city,region,country,
+// countrycode} via Photon (komoot — free, keyless). Fixed host (no SSRF), short
+// timeout, best-effort: returns null on any failure so it never blocks setup.
+async function geocodePhoton(q) {
+  if (!q || q.trim().length < 2) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1&lang=en`, { signal: ctrl.signal });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const p = d.features?.[0]?.properties;
+    if (!p || !p.country) return null;
+    const isPlace = /(city|town|village|hamlet|municipality|locality|suburb)/i.test(p.osm_value || p.type || '');
+    const meta = {
+      city: (p.city || (isPlace ? p.name : '') || '').slice(0, 80),
+      region: (p.state || '').slice(0, 80),
+      country: (p.country || '').slice(0, 80),
+      countrycode: (p.countrycode || '').toUpperCase().slice(0, 2),
+    };
+    return (meta.country || meta.region || meta.city) ? meta : null;
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -108,6 +133,20 @@ export default async function handler(req, res) {
   // onboards, their daemon gets role goals + a brain-assigned skill toolkit.
   // All idempotent + fire-and-forget — onboarding never waits on the LLM.
   waitUntil((async () => {
+    // If the user didn't pick a structured location from the dropdown, geocode
+    // their final free-text value on save so we still capture country/region.
+    if (!locMeta && location) {
+      try {
+        const meta = await geocodePhoton(location);
+        if (meta) {
+          const gdb = adminClient();
+          const { data: cur } = await gdb.from('workspaces').select('context').eq('id', workspace.id).single();
+          const ctx = (cur?.context && typeof cur.context === 'object') ? cur.context : {};
+          ctx.location = meta;
+          await gdb.from('workspaces').update({ context: ctx }).eq('id', workspace.id);
+        }
+      } catch (e) { console.warn('[setup] geocode:', e.message); }
+    }
     try { await generateCompanyGoals(adminClient(), { workspaceId: workspace.id }); }
     catch (e) { console.warn('[setup] company goals:', e.message); }
     try { await generateStaffGoals(adminClient(), { workspaceId: workspace.id, userId: user.id, role: role || title || null }); }
