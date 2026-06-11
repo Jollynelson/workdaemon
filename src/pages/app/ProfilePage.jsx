@@ -83,7 +83,7 @@ export function ProfilePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ width: 52, height: 52, borderRadius: 14, background: '#3b6ef7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 20, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initial}</div>
           <div>
-            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 19 : 23, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>{form.name || 'Your profile'}</h1>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, margin: 0, letterSpacing: '-0.03em' }}>{form.name || 'Your profile'}</h1>
             <p style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, marginTop: 3 }}>{[form.title, company].filter(Boolean).join(' · ')}</p>
           </div>
         </div>

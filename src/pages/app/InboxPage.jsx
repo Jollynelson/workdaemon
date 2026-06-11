@@ -120,7 +120,7 @@ export function InboxPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>INBOX</p>
-            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 }}>
               Messages
               {unread > 0 && <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--mono)', color: '#3b6ef7', background: 'rgba(59,110,247,0.09)', border: '1px solid rgba(59,110,247,0.22)', borderRadius: 20, padding: '2px 10px', letterSpacing: '0.05em' }}>{unread} new</span>}
             </h1>

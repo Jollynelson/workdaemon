@@ -67,7 +67,7 @@ export function CalendarPage() {
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg }}>
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
         <p className="wd-label-blue" style={{ marginBottom: 6 }}>SCHEDULING</p>
-        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 18 }}>Calendar</h1>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em', marginBottom: 18 }}>Calendar</h1>
 
         {/* Connect row */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>

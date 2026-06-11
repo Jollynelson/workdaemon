@@ -300,7 +300,7 @@ export function TasksPage() {
         <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'flex-end', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 20, gap: isMobile ? 12 : 0 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>CROSS-DAEMON TASKS</p>
-            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Tasks</h1>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em' }}>Tasks</h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {/* View toggle (Kanban / List) + priority filter — IA §5.5 */}

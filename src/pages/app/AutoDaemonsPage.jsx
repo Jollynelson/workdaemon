@@ -66,7 +66,7 @@ export function AutoDaemonsPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}>
           <div>
             <p className="wd-label-blue" style={{ marginBottom: 6 }}>AUTONOMOUS</p>
-            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em' }}>Daemons</h1>
+            <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em' }}>Daemons</h1>
           </div>
           <button type="button" onClick={() => { setShowCreate(s => !s); setSelected(null); }}
             style={{ padding: '9px 16px', borderRadius: 9, background: '#3b6ef7', border: 'none', color: '#fff', fontFamily: 'var(--inter)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>

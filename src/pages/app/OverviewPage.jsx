@@ -20,7 +20,7 @@ export function OverviewPage() {
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
       <div style={{ maxWidth: 860, margin: '0 auto' }}>
         <p className="wd-label-blue" style={{ marginBottom: 8 }}>ADMIN</p>
-        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 22, fontWeight: 600, color: c.text, letterSpacing: '-0.03em', marginBottom: 24 }}>Company Overview</h1>
+        <h1 style={{ fontFamily: 'var(--inter)', fontSize: isMobile ? 20 : 24, fontWeight: 700, color: c.text, letterSpacing: '-0.03em', marginBottom: 24 }}>Company Overview</h1>
 
         {error && <BlockAlert block={{ level: 'danger', content: `Failed to load overview: ${error}` }} />}
 
