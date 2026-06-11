@@ -262,62 +262,61 @@ async function resolveLLMInner(workspaceId, db) {
 }
 
 export async function callLLM(cfg, sys, user, opts = {}) {
-  const text = await callLLMInner(cfg, sys, user, opts);
+  const meter = {}; // callLLMInner sets meter.usage to EXACT provider counts
+  const text = await callLLMInner(cfg, sys, user, opts, meter);
   try {
     recordUsage({
       workspaceId: cfg?._meter?.workspaceId, provider: cfg?.provider, model: cfg?.model,
-      promptText: `${sys}\n${user}`, completionText: text,
+      usage: meter.usage, promptText: `${sys}\n${user}`, completionText: text,
     });
   } catch { /* metering must never break synthesis */ }
   return text;
 }
 
-async function callLLMInner({ provider, api_key, model, endpoint }, sys, user, { maxTokens = 1200 } = {}) {
+async function callLLMInner({ provider, api_key, model, endpoint }, sys, user, { maxTokens = 1200 } = {}, meter = {}) {
+  // Capture the provider's EXACT token usage (no estimates) off each response.
+  const oai = (r) => {
+    if (r?.usage) meter.usage = {
+      prompt_tokens: r.usage.prompt_tokens || 0,
+      completion_tokens: r.usage.completion_tokens || 0,
+      total_tokens: r.usage.total_tokens || ((r.usage.prompt_tokens || 0) + (r.usage.completion_tokens || 0)),
+    };
+    return r.choices[0]?.message?.content ?? '';
+  };
   switch (provider) {
     case 'deepseek': {
       const client = new OpenAI({ baseURL: (endpoint || 'https://api.deepseek.com').replace(/\/$/, ''), apiKey: api_key });
-      const r = await client.chat.completions.create({
-        model: model || 'deepseek-chat',
-        max_tokens: maxTokens,
+      return oai(await client.chat.completions.create({
+        model: model || 'deepseek-chat', max_tokens: maxTokens,
         messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      });
-      return r.choices[0]?.message?.content ?? '';
+      }));
     }
     case 'openrouter': {
       const client = new OpenAI({
-        baseURL: 'https://openrouter.ai/api/v1',
-        apiKey: api_key,
+        baseURL: 'https://openrouter.ai/api/v1', apiKey: api_key,
         defaultHeaders: { 'HTTP-Referer': 'https://workdaemon.com', 'X-Title': 'WorkDaemon' },
       });
-      const r = await client.chat.completions.create({
-        model: model || 'anthropic/claude-sonnet-4-5',
-        max_tokens: maxTokens,
+      return oai(await client.chat.completions.create({
+        model: model || 'anthropic/claude-sonnet-4-5', max_tokens: maxTokens,
         messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      });
-      return r.choices[0]?.message?.content ?? '';
+      }));
     }
     case 'openai': {
       const client = new OpenAI({ apiKey: api_key });
-      const r = await client.chat.completions.create({
-        model: model || 'gpt-4o',
-        max_tokens: maxTokens,
+      return oai(await client.chat.completions.create({
+        model: model || 'gpt-4o', max_tokens: maxTokens,
         messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      });
-      return r.choices[0]?.message?.content ?? '';
+      }));
     }
     case 'anthropic': {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: model || 'claude-sonnet-4-6',
-          max_tokens: maxTokens,
-          system: sys,
-          messages: [{ role: 'user', content: user }],
-        }),
+        body: JSON.stringify({ model: model || 'claude-sonnet-4-6', max_tokens: maxTokens, system: sys, messages: [{ role: 'user', content: user }] }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Anthropic error');
+      if (d.usage) meter.usage = { prompt_tokens: d.usage.input_tokens || 0, completion_tokens: d.usage.output_tokens || 0, total_tokens: (d.usage.input_tokens || 0) + (d.usage.output_tokens || 0) };
       return d.content?.find(b => b.type === 'text')?.text ?? '';
     }
     // Per-company / shared Hermes agent gateway (OpenAI-compatible). Resilience:
@@ -327,13 +326,11 @@ async function callLLMInner({ provider, api_key, model, endpoint }, sys, user, {
       const msgs = [{ role: 'system', content: sys }, { role: 'user', content: user }];
       try {
         const client = new OpenAI({ baseURL: (endpoint || '').replace(/\/$/, ''), apiKey: api_key || 'hermes' });
-        const r = await client.chat.completions.create({ model: model || 'hermes', max_tokens: maxTokens, messages: msgs });
-        return r.choices[0]?.message?.content ?? '';
+        return oai(await client.chat.completions.create({ model: model || 'hermes', max_tokens: maxTokens, messages: msgs }));
       } catch (e) {
         if (process.env.DEEPSEEK_API_KEY) {
           const client = new OpenAI({ baseURL: (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, ''), apiKey: process.env.DEEPSEEK_API_KEY });
-          const r = await client.chat.completions.create({ model: 'deepseek-chat', max_tokens: maxTokens, messages: msgs });
-          return r.choices[0]?.message?.content ?? '';
+          return oai(await client.chat.completions.create({ model: 'deepseek-chat', max_tokens: maxTokens, messages: msgs }));
         }
         throw e;
       }

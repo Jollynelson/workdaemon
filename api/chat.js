@@ -644,8 +644,9 @@ export default async function handler(req, res) {
   const identity = { workspaceId, userId: user.id };
   const runModel = async (cfg, msgs) => {
     let text;
+    const meter = {}; // providers populate meter.usage with EXACT token counts
     if (!wantsStream) {
-      text = await callProvider(cfg, sys, msgs, identity);
+      text = await callProvider(cfg, sys, msgs, identity, meter);
     } else {
       emit({ type: 'reset' });
       const env = createEnvelopeStream({
@@ -653,19 +654,19 @@ export default async function handler(req, res) {
         onBlock: (block) => emit({ type: 'block', block }),
       });
       try {
-        text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d));
+        text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d), meter);
         env.end();
       } catch (e) {
         console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
         emit({ type: 'reset' });
-        text = await callProvider(cfg, sys, msgs, identity);
+        text = await callProvider(cfg, sys, msgs, identity, meter);
       }
     }
-    // Meter token usage (estimated from text) — fire-and-forget, never blocks.
+    // Meter token usage — exact provider counts; fire-and-forget, never blocks.
     try {
       recordUsage({
         workspaceId, userId: user.id, provider: cfg.provider, model: cfg.model,
-        promptText: sys + msgs.map(m => m.content || '').join('\n'), completionText: text,
+        usage: meter.usage, promptText: sys + msgs.map(m => m.content || '').join('\n'), completionText: text,
       });
     } catch { /* never break the turn on metering */ }
     return text;

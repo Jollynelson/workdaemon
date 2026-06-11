@@ -33,9 +33,23 @@ export function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
 }
 
-export function callProvider(cfg, sys, messages, identity = {}) {
+// Normalise each provider's usage block → { prompt_tokens, completion_tokens,
+// total_tokens }. Returns undefined when the provider reported nothing.
+export const oaiUsage = (r) => r?.usage
+  ? { prompt_tokens: r.usage.prompt_tokens || 0, completion_tokens: r.usage.completion_tokens || 0, total_tokens: r.usage.total_tokens || ((r.usage.prompt_tokens || 0) + (r.usage.completion_tokens || 0)) }
+  : undefined;
+const anthropicUsage = (u) => u
+  ? { prompt_tokens: u.input_tokens || 0, completion_tokens: u.output_tokens || 0, total_tokens: (u.input_tokens || 0) + (u.output_tokens || 0) }
+  : undefined;
+const googleUsage = (m) => m
+  ? { prompt_tokens: m.promptTokenCount || 0, completion_tokens: m.candidatesTokenCount || 0, total_tokens: m.totalTokenCount || ((m.promptTokenCount || 0) + (m.candidatesTokenCount || 0)) }
+  : undefined;
+
+// `meter` is an out-param: providers set meter.usage to the EXACT token counts
+// the provider reported (no estimates). Callers read it after the call resolves.
+export function callProvider(cfg, sys, messages, identity = {}, meter = {}) {
   const ms = cfg.provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
-  return withTimeout(callProviderInner(cfg, sys, messages, identity), ms, `provider:${cfg.provider}`);
+  return withTimeout(callProviderInner(cfg, sys, messages, identity, meter), ms, `provider:${cfg.provider}`);
 }
 
 // ── Streaming variant ─────────────────────────────────────────────────────────
@@ -49,28 +63,33 @@ export function callProvider(cfg, sys, messages, identity = {}) {
 // never killed for total duration — the caller's phase budget bounds the turn).
 const STREAM_IDLE_MS = Number(process.env.CHAT_STREAM_IDLE_MS) || 15000;
 
-export async function callProviderStream(cfg, sys, messages, identity = {}, onDelta = () => {}) {
+export async function callProviderStream(cfg, sys, messages, identity = {}, onDelta = () => {}, meter = {}) {
   const { provider, api_key, endpoint, model } = cfg;
   const firstTokenMs = provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
 
   // OpenAI-compatible streaming (openrouter/openai/deepseek/mistral/ollama/hermes/azure).
+  // stream_options.include_usage asks the server to emit a final usage chunk with
+  // EXACT token counts; servers that don't support it ignore it (and the caller's
+  // try/catch falls back to a non-streamed call that returns usage anyway).
   async function oaiStream(client, params, opts = {}) {
     const ac = new AbortController();
     let timer = setTimeout(() => ac.abort(), firstTokenMs);
     const arm = (ms) => { clearTimeout(timer); timer = setTimeout(() => ac.abort(), ms); };
     try {
       const stream = await client.chat.completions.create(
-        { ...params, stream: true },
+        { ...params, stream: true, stream_options: { include_usage: true } },
         { ...opts, signal: ac.signal },
       );
       let text = '';
       for await (const ch of stream) {
         const d = ch.choices?.[0]?.delta?.content || '';
         if (d) { text += d; onDelta(d); }
+        const u = oaiUsage(ch);          // final chunk carries usage (choices empty)
+        if (u) meter.usage = u;
         arm(STREAM_IDLE_MS);
       }
       clearTimeout(timer);
-      console.log('[chat] %s STREAM text_len=%d', provider, text.length);
+      console.log('[chat] %s STREAM text_len=%d tok=%s', provider, text.length, meter.usage?.total_tokens ?? '?');
       return text;
     } catch (e) {
       clearTimeout(timer);
@@ -161,7 +180,7 @@ export async function callProviderStream(cfg, sys, messages, identity = {}, onDe
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error?.message || 'Anthropic error'); }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
-        let buf = '', text = '';
+        let buf = '', text = '', inTok = 0, outTok = 0;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -173,13 +192,17 @@ export async function callProviderStream(cfg, sys, messages, identity = {}, onDe
             if (!line.startsWith('data:')) continue;
             try {
               const ev = JSON.parse(line.slice(5).trim());
+              // EXACT usage: message_start carries input_tokens, message_delta the running output_tokens.
+              if (ev.type === 'message_start' && ev.message?.usage) inTok = ev.message.usage.input_tokens || inTok;
+              if (ev.usage?.output_tokens != null) outTok = ev.usage.output_tokens;
               const d = ev.type === 'content_block_delta' ? (ev.delta?.text || '') : '';
               if (d) { text += d; onDelta(d); }
             } catch { /* keep-alives / partial lines */ }
           }
         }
         clearTimeout(timer);
-        console.log('[chat] anthropic STREAM text_len=%d', text.length);
+        if (inTok || outTok) meter.usage = { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok };
+        console.log('[chat] anthropic STREAM text_len=%d tok=%d', text.length, inTok + outTok);
         return text;
       } catch (e) {
         clearTimeout(timer);
@@ -191,14 +214,14 @@ export async function callProviderStream(cfg, sys, messages, identity = {}, onDe
     // No streaming surface → regular call, one delta (UX degrades to "all at
     // once", quality identical).
     default: {
-      const text = await callProvider(cfg, sys, messages, identity);
+      const text = await callProvider(cfg, sys, messages, identity, meter);
       onDelta(text);
       return text;
     }
   }
 }
 
-async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {
+async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}, meter = {}) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {
 
@@ -215,6 +238,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
         response_format: { type: 'json_object' },  // force a valid JSON envelope
       });
       const text = r.choices[0]?.message?.content ?? '';
+      meter.usage = oaiUsage(r) || meter.usage;
       console.log('[chat] openrouter text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
       return text;
     }
@@ -237,6 +261,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
       const d = await r.json();
       if (!r.ok) throw new Error(d.error?.message || 'Anthropic error');
       const textBlock = d.content?.find(b => b.type === 'text');
+      meter.usage = anthropicUsage(d.usage) || meter.usage;
       console.log('[chat] anthropic stop=%s text_len=%d', d.stop_reason, textBlock?.text?.length ?? 0);
       return textBlock?.text ?? '';
     }
@@ -251,6 +276,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
         ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
+      meter.usage = oaiUsage(r) || meter.usage;
       console.log('[chat] openai text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
       return text;
     }
@@ -268,6 +294,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
         ...reasoningParams(model),
       });
       const text = r.choices[0]?.message?.content ?? '';
+      meter.usage = oaiUsage(r) || meter.usage;
       console.log('[chat] deepseek text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
       return text;
     }
@@ -297,6 +324,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
       const parts = d.candidates?.[0]?.content?.parts || [];
       const nonThought = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
       const text = nonThought || parts.filter(p => p.text).map(p => p.text).join('');
+      meter.usage = googleUsage(d.usageMetadata) || meter.usage;
       console.log('[chat] google parts=%d text_len=%d', parts.length, text.length);
       return text;
     }
@@ -349,6 +377,7 @@ async function callProviderInner({ provider, api_key, endpoint, model }, sys, me
         messages: [{ role: 'system', content: sys }, ...messages],
       }, { headers });
       const text = r.choices[0]?.message?.content ?? '';
+      meter.usage = oaiUsage(r) || meter.usage;
       console.log('[chat] hermes text_len=%d finish=%s', text.length, r.choices[0]?.finish_reason);
       return text;
     }
