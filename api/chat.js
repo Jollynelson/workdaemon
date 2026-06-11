@@ -721,27 +721,42 @@ export default async function handler(req, res) {
     parsed = healNested(parsed);
 
     // ── FAKE-PROMISE GUARD (owner: "it simply said good question and nothing
-    // done"). If the reply PROMISES to check something instead of doing it —
-    // and didn't request any brain tools — force one corrective pass: use the
-    // tools NOW or answer from knowledge. The corrected response flows into the
-    // normal brain-pull hop below, so promised lookups actually happen.
+    // done"). If the reply PROMISES to check something instead of doing it, the
+    // SERVER does the check: fetch live web results for the question right now,
+    // then force one corrective answer grounded in them. The corrective runs on
+    // the fast cloud model when the slow primary already ate the budget — a
+    // promise must never be the final word.
     const PROMISE_RE = /\b(let me (check|look|pull|dig|verify|find)|i(?:'|’)?ll (check|look into|get back|pull|dig|find out)|give me a (moment|minute|sec)|checking (that|this|now)|one (moment|sec|minute)|hold on)\b/i;
     const visibleText = (p) => (p?.blocks || []).map(b => [b.md, b.content, b.title].filter(Boolean).join(' ')).join(' ');
     if (isUserTurn && !Array.isArray(parsed?.brain_queries) && (parsed?.blocks || []).length <= 2
-        && PROMISE_RE.test(visibleText(parsed)) && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
+        && PROMISE_RE.test(visibleText(parsed)) && budgetLeft() > 15000) {
       try {
         emit({ type: 'status', label: 'ACTUALLY CHECKING…' });
+        // Do the promised lookup OURSELVES — the question defines the query.
+        const liveQ = `${wsObj?.name || ''} ${newMsgNormalized.content}`.replace(/\s+/g, ' ').trim().slice(0, 180);
+        const web = await webResearch([liveQ], { count: 5, readPages: 2 }).catch(() => null);
+        for (const s of web?.snippets || []) {
+          if (s.url && s.content) webIngest.push({ external_id: s.url, doc_type: 'webpage', title: s.title || s.url, content: s.content, url: s.url });
+        }
+        const liveCtx = web?.snippets?.length
+          ? buildWebContext(web, { attempted: true })
+          : '\nWEB CHECK RESULT: the live search returned nothing usable. Answer from the COMPANY CONTEXT and your knowledge; if the data truly requires a private connection, say so plainly and emit a "connect" block.\n';
         const corrective = [
           ...trimmed,
           { role: 'assistant', content: JSON.stringify({ blocks: parsed.blocks }) },
-          { role: 'user', content: 'You just promised to check instead of answering — you CANNOT act between turns, so a promise is a dead end. Do it NOW: either include a top-level "brain_queries" array (e.g. {"tool":"web","q":"…"} or {"tool":"search","q":"…"}) to fetch exactly what you need, or give the full answer from what you already know. Return ONE complete JSON envelope with real content. Never promise future work.' },
+          { role: 'user', content: `You promised to check instead of answering — you CANNOT act between turns, so a promise is a dead end. The check has now been DONE FOR YOU:\n${liveCtx}\nGive the full, final answer NOW from these results + COMPANY CONTEXT (cite sources). Return ONE complete JSON envelope. Never promise future work.` },
         ];
-        const fixed = healNested(parseJsonResponse(await runModel({ ...resolvedKey, model: usedModel }, corrective)));
+        // Budget-aware model choice: plenty left → same model (voice
+        // consistency); tight → the fast cloud model (an answer beats a promise).
+        const quick = (budgetLeft() <= LLM_CALL_TIMEOUT_MS + 4000 && process.env.DEEPSEEK_API_KEY)
+          ? { provider: 'deepseek', api_key: process.env.DEEPSEEK_API_KEY, endpoint: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com', model: 'deepseek-chat' }
+          : { ...resolvedKey, model: usedModel };
+        const fixed = healNested(parseJsonResponse(await runModel(quick, corrective)));
         if (fixed?.blocks?.length || Array.isArray(fixed?.brain_queries)) {
           parsed = fixed;
-          console.log('[chat] fake-promise corrected (queries=%s)', Array.isArray(fixed?.brain_queries) ? fixed.brain_queries.length : 0);
+          console.log('[chat] fake-promise corrected via %s (web=%d)', quick.provider, web?.snippets?.length || 0);
         }
-      } catch { /* keep the original answer */ }
+      } catch (e) { console.warn('[chat] fake-promise guard:', e.message); /* keep the original */ }
     }
 
     // ── Agentic Company-Brain pull (one hop; all providers; multi-tenant) ──────
