@@ -87,7 +87,7 @@ export default async function handler(req, res) {
     db.from('workspace_integrations').select('provider, status, updated_at').eq('workspace_id', ws),
     db.from('daemon_actions').select('title, type, status, created_at').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(8),
     db.from('brain_interactions').select('user_id').eq('workspace_id', ws).gte('created_at', dayAgoISO),
-    db.from('token_usage').select('user_id, total_tokens').eq('workspace_id', ws).gte('created_at', monthISO).limit(20000),
+    db.from('token_usage').select('user_id, total_tokens, estimated').eq('workspace_id', ws).gte('created_at', monthISO).limit(20000),
   ]);
 
   const members = membersRes.data ?? [];
@@ -134,15 +134,17 @@ export default async function handler(req, res) {
 
   // Token usage this month (IA §9) — total + per-employee breakdown.
   const nameById = {}; for (const m of members) nameById[m.id] = m.name || 'Member';
-  const byUser = {}; let totalTokens = 0;
+  const byUser = {}; let totalTokens = 0; let anyEstimated = false;
   for (const r of (tokenRes.data ?? [])) {
     const t = r.total_tokens || 0;
     totalTokens += t;
+    if (r.estimated) anyEstimated = true;
     const k = r.user_id || 'system';
     byUser[k] = (byUser[k] || 0) + t;
   }
   const tokenUsage = {
     total: totalTokens,
+    estimated: anyEstimated,
     monthLabel: monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
     byUser: Object.entries(byUser)
       .map(([id, tokens]) => ({ name: id === 'system' ? 'Autonomous / system' : (nameById[id] || 'Member'), tokens }))

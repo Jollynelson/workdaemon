@@ -133,7 +133,8 @@ export function OverviewPage() {
                   </div>
                 )}
                 <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text4, marginTop: 10, lineHeight: 1.5 }}>
-                  Estimated from model traffic. Budget alerts arrive with billing — usage runs on your BYOK keys (<strong style={{ color: c.text3 }}>Settings → AI &amp; Model</strong>).
+                  {tokenUsage?.estimated ? 'Includes estimates where a provider reported no usage. ' : 'Metered from actual model usage. '}
+                  Budget alerts arrive with billing — usage runs on your BYOK keys (<strong style={{ color: c.text3 }}>Settings → AI &amp; Model</strong>).
                 </div>
               </div>
             </div>
