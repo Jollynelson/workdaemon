@@ -234,15 +234,157 @@ function StepWorkspace({ data, setData }) {
       </div>
       <div>
         <label style={labelSt}>Primary market / location</label>
-        <FocusInput
-          placeholder="e.g. Lagos, Nigeria"
-          value={data.location || ''}
-          onChange={e => setData(d => ({ ...d, location: e.target.value }))}
-        />
+        <LocationField data={data} setData={setData} />
         <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(255,255,255,0.34)', marginTop: 6 }}>
           We use this to watch for news, regulation and trends that affect your business. Auto-filled — edit if it's off.
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Location typeahead ─────────────────────────────────────────────────────────
+// Debounced city/state/country autocomplete via Photon (komoot) — free, keyless,
+// CORS-enabled, no backend function. Captures STRUCTURED fields (city / region /
+// country / ISO code) on select so the data is usable later for geo-targeting,
+// while staying fully free-text if the service is slow or unreachable.
+function photonLabel(p) {
+  const parts = [p.name, p.state, p.country].map(s => (s || '').trim()).filter(Boolean);
+  return parts.filter((x, i) => parts.indexOf(x) === i).join(', ');
+}
+function photonMeta(p) {
+  const isPlace = /(city|town|village|hamlet|municipality|locality|suburb)/i.test(p.osm_value || p.type || '');
+  return {
+    city: (p.city || (isPlace ? p.name : '') || '').trim(),
+    region: (p.state || '').trim(),
+    country: (p.country || '').trim(),
+    countrycode: (p.countrycode || '').toUpperCase(),
+  };
+}
+
+function LocationField({ data, setData }) {
+  const [query, setQuery] = useState(data.location || '');
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [highlighted, setHighlighted] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+  const dropRef = useRef(null);
+  const timerRef = useRef(null);
+  const abortRef = useRef(null);
+
+  // Reflect a late external auto-fill (edge-detected location lands after mount).
+  useEffect(() => {
+    if (data.location && !query) setQuery(data.location);
+  }, [data.location]); // eslint-disable-line
+
+  const runSearch = useCallback((q) => {
+    clearTimeout(timerRef.current);
+    if (q.trim().length < 2) { setItems([]); setLoading(false); return; }
+    setLoading(true);
+    timerRef.current = setTimeout(async () => {
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const timeout = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lang=en`, { signal: ctrl.signal });
+        const d = await r.json();
+        const seen = new Set();
+        const next = (d.features || [])
+          .map(f => f.properties).filter(p => p && p.country)
+          .map(p => ({ label: photonLabel(p), meta: photonMeta(p) }))
+          .filter(it => it.label && !seen.has(it.label) && seen.add(it.label));
+        setItems(next);
+      } catch { /* offline / slow / aborted → stay free-text */ }
+      finally { clearTimeout(timeout); setLoading(false); }
+    }, 250);
+  }, []);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    setOpen(true);
+    setHighlighted(0);
+    // Manual edit invalidates any previously selected structured value.
+    setData(d => ({ ...d, location: val, locationMeta: null }));
+    runSearch(val);
+  };
+
+  const commit = useCallback((it) => {
+    setQuery(it.label);
+    setData(d => ({ ...d, location: it.label, locationMeta: it.meta }));
+    setItems([]);
+    setOpen(false);
+  }, [setData]);
+
+  const handleKeyDown = (e) => {
+    if (!open || items.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, items.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (items[highlighted]) commit(items[highlighted]); }
+    else if (e.key === 'Escape') setOpen(false);
+  };
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (!inputRef.current?.contains(e.target) && !dropRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const showDrop = open && items.length > 0;
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={handleChange}
+        onFocus={() => { setOpen(true); if (query.trim().length >= 2 && items.length === 0) runSearch(query); }}
+        onKeyDown={handleKeyDown}
+        placeholder="Start typing a city, state or country…"
+        autoComplete="off"
+        style={{
+          width: '100%', padding: '11px 16px',
+          background: open ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.05)',
+          border: `1px solid ${open ? 'rgba(59,110,247,0.55)' : 'rgba(255,255,255,0.1)'}`,
+          borderRadius: showDrop ? '8px 8px 0 0' : 8,
+          color: '#e8e8e8', fontSize: 15, fontFamily: 'var(--dmsans)', outline: 'none',
+          transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+          boxShadow: open ? '0 0 0 2px rgba(59,110,247,0.18)' : 'none', boxSizing: 'border-box',
+        }}
+      />
+      {loading && !showDrop && (
+        <span style={{ position: 'absolute', right: 14, top: 13, fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>searching…</span>
+      )}
+      {showDrop && (
+        <div ref={dropRef} style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          background: '#1e1e1e', border: '1px solid rgba(59,110,247,0.35)', borderTop: 'none',
+          borderRadius: '0 0 8px 8px', overflow: 'hidden', zIndex: 50,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.55)', maxHeight: 252, overflowY: 'auto',
+        }}>
+          {items.map((it, i) => (
+            <button key={it.label} type="button"
+              onMouseEnter={() => setHighlighted(i)}
+              onMouseDown={e => { e.preventDefault(); commit(it); }}
+              style={{
+                width: '100%', textAlign: 'left', padding: '10px 16px',
+                background: i === highlighted ? 'rgba(59,110,247,0.1)' : 'transparent',
+                border: 'none', cursor: 'pointer',
+                borderBottom: i < items.length - 1 ? '1px solid rgba(255,255,255,0.045)' : 'none',
+                transition: 'background 0.1s', display: 'flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: i === highlighted ? '#a8c0ff' : 'rgba(232,232,232,0.78)' }}>{it.label}</span>
+              {it.meta.countrycode && (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'rgba(232,232,232,0.32)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, padding: '1px 5px', marginLeft: 'auto' }}>{it.meta.countrycode}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -680,6 +822,7 @@ export default function Onboarding() {
           role:     data.role,
           industry: data.industry,
           location: data.location,
+          location_meta: data.locationMeta || null,  // structured {city,region,country,countrycode}
           slug:     data.slug,
         }),
       });

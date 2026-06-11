@@ -14,20 +14,34 @@ export default async function handler(req, res) {
 
   // Strict schema: company required; all fields length-bounded; slug charset-checked.
   const parsed = parseBody(res, req.body, {
-    name:     { type: 'string', max: 120 },
-    title:    { type: 'string', max: 120 },
-    company:  { type: 'string', required: true, min: 1, max: 160 },
-    size:     { type: 'string', max: 40 },
-    role:     { type: 'string', max: 120 },
-    industry: { type: 'string', max: 120 },
-    location: { type: 'string', max: 120 },
-    slug:     { type: 'string', max: 63, pattern: /^[a-z0-9-]+$/i },
+    name:          { type: 'string', max: 120 },
+    title:         { type: 'string', max: 120 },
+    company:       { type: 'string', required: true, min: 1, max: 160 },
+    size:          { type: 'string', max: 40 },
+    role:          { type: 'string', max: 120 },
+    industry:      { type: 'string', max: 120 },
+    location:      { type: 'string', max: 120 },
+    location_meta: { type: 'object' },   // structured {city,region,country,countrycode} from the typeahead
+    slug:          { type: 'string', max: 63, pattern: /^[a-z0-9-]+$/i },
   });
   if (!parsed) return;
   const { name, title, company, size, role, industry } = parsed;
   const slug = parsed.slug ? parsed.slug.toLowerCase() : null;
   // Prefer the value the user confirmed; fall back to edge-detected location.
   const location = (parsed.location && parsed.location.trim()) || detectLocation(req) || null;
+
+  // Structured location (city / region / country / ISO code) for later geo-targeting.
+  // Sanitised + length-capped; null unless at least a country or region is present.
+  const locMeta = (() => {
+    const m = parsed.location_meta;
+    if (!m || typeof m !== 'object') return null;
+    const s = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+    const out = {
+      city: s(m.city, 80), region: s(m.region, 80),
+      country: s(m.country, 80), countrycode: s(m.countrycode, 2).toUpperCase(),
+    };
+    return (out.country || out.region || out.city) ? out : null;
+  })();
 
   const db = adminClient();
 
@@ -41,10 +55,17 @@ export default async function handler(req, res) {
   let workspace;
 
   if (existing?.workspace_id) {
-    // Update existing workspace
+    // Update existing workspace — merge structured location into context (don't clobber timezone etc.)
+    let ctxPatch;
+    if (locMeta) {
+      const { data: cur } = await db.from('workspaces').select('context').eq('id', existing.workspace_id).single();
+      const ctx = (cur?.context && typeof cur.context === 'object') ? cur.context : {};
+      ctx.location = locMeta;
+      ctxPatch = { context: ctx };
+    }
     const { data: ws } = await db
       .from('workspaces')
-      .update({ name: company, size, industry, location })
+      .update({ name: company, size, industry, location, ...(ctxPatch || {}) })
       .eq('id', existing.workspace_id)
       .select()
       .single();
@@ -53,7 +74,7 @@ export default async function handler(req, res) {
     // Create new workspace
     const { data: ws, error: wsError } = await db
       .from('workspaces')
-      .insert({ name: company, size, industry, location, owner_id: user.id, slug: slug || null })
+      .insert({ name: company, size, industry, location, owner_id: user.id, slug: slug || null, ...(locMeta ? { context: { location: locMeta } } : {}) })
       .select()
       .single();
 
