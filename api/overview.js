@@ -51,6 +51,29 @@ export default async function handler(req, res) {
   const todayISO = todayStart.toISOString();
   const dayAgoISO = new Date(Date.now() - 86400000).toISOString();
 
+  // ── Crew directory (§4) — teammates + their Daemons. Open to all members. ────
+  if (req.query.view === 'crew') {
+    const [profRes, activeRes, tasksRes] = await Promise.all([
+      db.from('profiles').select('id, name, title, role, permission_level, created_at').eq('workspace_id', ws),
+      db.from('brain_interactions').select('user_id, created_at').eq('workspace_id', ws).gte('created_at', dayAgoISO),
+      db.from('tasks').select('assignee_id, title, status, updated_at').eq('workspace_id', ws).order('updated_at', { ascending: false }).limit(80),
+    ]);
+    const lastActive = {};
+    for (const r of (activeRes.data ?? [])) { if (!lastActive[r.user_id] || r.created_at > lastActive[r.user_id]) lastActive[r.user_id] = r.created_at; }
+    const latestTask = {};
+    for (const t of (tasksRes.data ?? [])) { if (t.assignee_id && !latestTask[t.assignee_id]) latestTask[t.assignee_id] = t; }
+    const crew = (profRes.data ?? []).map(m => ({
+      id: m.id,
+      name: m.name || 'Member',
+      role: m.title || m.role || 'Member',
+      level: m.permission_level ?? 2,
+      joinedAt: m.created_at || null,
+      status: lastActive[m.id] ? 'online' : 'away',
+      activity: latestTask[m.id] ? `${latestTask[m.id].status === 'done' ? 'Completed' : 'Working on'}: ${latestTask[m.id].title}` : null,
+    }));
+    return res.status(200).json({ crew, me: user.id });
+  }
+
   // All independent — fan out, and never let one failed table sink the page.
   const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes] = await Promise.all([
     // profiles is the reliable membership source (a fragile workspace_members→profiles

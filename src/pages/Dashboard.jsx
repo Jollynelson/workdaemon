@@ -10,6 +10,7 @@ import { useC } from '../lib/theme.jsx';
 // single 5,000-line module / one giant chunk before the 2026-06-10 split).
 const DaemonPage       = lazy(() => import('./app/DaemonPage.jsx'));
 const AutoDaemonsPage  = lazy(() => import('./app/AutoDaemonsPage.jsx'));
+const CrewPage         = lazy(() => import('./app/CrewPage.jsx'));
 const SkillsPage       = lazy(() => import('./app/SkillsPage.jsx'));
 const CalendarPage     = lazy(() => import('./app/CalendarPage.jsx'));
 const BrainPage        = lazy(() => import('./app/BrainPage.jsx'));
@@ -99,6 +100,7 @@ export default function Dashboard() {
           <Route path="/"            element={<Navigate to="daemon" replace />} />
           <Route path="daemon"       element={<DaemonPage onMenu={openMenu} onChatChange={setInChat} />} />
           <Route path="daemons"      element={<AutoDaemonsPage />} />
+          <Route path="crew"         element={<CrewPage />} />
           <Route path="skills"       element={<SkillsPage />} />
           <Route path="calendar"     element={<CalendarPage />} />
           <Route path="brain"        element={<AdminRoute isAdmin={isAdmin}><BrainPage /></AdminRoute>} />
