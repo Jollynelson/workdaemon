@@ -426,3 +426,50 @@ importing a company's pre-existing history on demand.
   fail-soft. Plus the 5-step shipping checklist (incl. tick the catalog, verify
   via `backfill_brain.mjs --ws=`).
 - Embeddings re-verified 100% after the re-runs (Cobalt 27/27).
+
+## 2026-06-10 → 06-11 · Ambition engine, streaming, daemon outreach, self-seeding brain, Graphite design
+
+Marathon session. Everything below is on `main`, deployed to workdaemon-prod, and verified live (migrations 034 + 035 applied).
+
+### 1. The Ambition Engine — goals that upgrade themselves (migration 034)
+- **`brain_goals`**: the brain writes an aggressive company goal book at workspace creation and 3 role goals per staff daemon at onboarding (`api/_lib/goals.js`, hooks in `user/setup.js` + daily cron `ensureGoals`).
+- **Self-upgrading review** (`reviewGoals`, daily): measures progress from real activity (approved actions, completed tasks, resolved findings, interactions), **raises the bar** on every achieved goal (successor chained via `parent_goal_id`), **upgrades** too-easy/mis-aimed targets in place, **adds** goals the evidence justifies (cap 7 company / 5 staff), escalates stalls as hunt findings.
+- Injected everywhere: chat prompts (`goalsPromptBlock`), autonomous daemons (`agent_engine`), Hermes MCP (`?action=mcp&tool=goals`), new **GOALS tab** on BrainPage (progress bars, ambition badges, bar-raised chains, review/generate).
+- Verified live on Cobalt: 5 company + 21 staff goals, grounded in real context.
+
+### 2. Skills — brain-assigned toolkits + open Hermes-style library
+- **`daemon_skills`**: at onboarding the brain picks 4-6 library skills for the role and *generates* up to 2 missing ones; pinned in every prompt (`relevantSkills` userId boost). Cron auto-equips pre-existing staff.
+- **Open library**: paste a SKILL.md, import from any URL/GitHub link (`import_skill`), or search the web and import (`search_skills_online`) — full 4-mode UI on the Skills page. FIXED latent prod bug: `add_skill` had been violating the `learned_from` check constraint since migration 030.
+- **8 marketing/social skills seeded globally** (audit, content calendar, platform playbooks, brand voice, engagement loop, social listening, launch play, funnel thinking) — global library now 26.
+
+### 3. Speed + streaming (zero quality loss)
+- **Chat hot path**: pre-LLM phase collapsed from ~8 serial round-trip phases into ONE `Promise.all` (context, patterns, slack, events, graph, docs, learning, skills, goals, provider key, live web work) — context phase now ~2.7s.
+- **Streaming** (opt-in `stream:true`): NDJSON events `status/reset/delta/block/final`; new incremental envelope parser (`stream_envelope.js`, 11 unit tests) live-types prose and lands structured blocks whole; `callProviderStream` for all 8 providers w/ first-token + idle-stall timeouts. Routing, escalation, brain-pull, retries, cloud fallback all preserved and all stream; the **final envelope comes from the same `parseJsonResponse`** as before. Requires `supportsResponseStreaming: true`. Verified live: 209 events on a real turn.
+- Hermes-gateway first token ≈20s (the agent's own tool loop) — provider-bound now; staged thinking indicator (server-driven labels) covers the wait.
+
+### 4. Daemon outreach + session continuity (migration 035)
+- **`daemon_outbox`**: "message me by 3pm about X" → model books a `schedule` → delivered INTO THE CHAT at the time — within ~60s online (`/api/chat?poll=1`, exactly-once) or on next open (sweep rides into history + pre-turn). Warning/critical findings also chat-delivered. Verified live end-to-end (booked → due → delivered → second poll empty).
+- **Session continuity**: <4h since last activity → instant resume, NO LLM ping; 4–24h → `[SESSION_RESUME]`; >24h → full boot. (1am users don't get cold-booted at 8am.)
+- **Prompt now carries current UTC time** — the model was guessing the clock ("in 2 minutes" booked 6.7h out).
+
+### 5. Intelligence guards
+- **Fake-promise guard v2**: "let me check…" with no tool use → the SERVER runs the live web search itself and forces one corrective grounded answer (fast cloud model when budget is tight). Verified live: the social-presence question that used to dead-end now answers with real findings.
+- **Nested-envelope heal** after every model attempt (Hermes double-wrap misfire rendered raw JSON).
+- **Suggestion chips guaranteed + adaptive**: context blocks moved INSIDE the prompt (contract stays at the end — the root cause of vanished chips), server synthesizes topic-aware fallbacks (live question first, then goals).
+- **Hunt relevance gate** (Akwa Ibom fix): scan queries are business-led (industry/description/competitors; location only qualifies), the scanner finally receives WHAT THE COMPANY DOES, and zero findings is a successful scan. Junk findings resolved in prod.
+
+### 6. Self-seeding brain — the social learning loop
+- **`discoverSocialPresence`**: finds the company's public footprint with no connection — website footer links (authoritative) + verified web search (slug≡name or domain cited; else marked *unverified*). New `socials`/`website` context fields (Brain → Overview).
+- **`refreshSocialSnapshots`** (weekly): re-reads profiles into the document store — the brain learns from what the company actually posts.
+- **`socialPresenceAudit`** (weekly): strategist pass → opportunity findings routed to marketing/CEO with ready-to-post drafts. Live on Beta Tenant: 3 real findings (LinkedIn missing website link; dead X account + post draft; LinkedIn category mismatch).
+- **`backfillInboxPush` wired into the cron** (existed, never called): every unpushed finding now reaches inboxes + chat.
+- **Connect-to-act**: new `connect` block — just-in-time connect card → Integrations, emitted only for actions/private data, always AFTER the public-data answer.
+
+### 7. Design — Graphite v4 + Cloudflare-grade consistency
+- Dark = neutral near-black **Graphite** (zero chroma; the navy tint was the AI tell), sidebar shares the canvas, flat body, Electric Blue #3b6ef7 as the single accent; DM Sans is the daemon's chat voice; ChatGPT-style reply toolbar (copy + SVG thumbs); Md renderer fixed (line breaks + dash bullets); press-scale 0.96, no `transition: all`.
+- Light/dark **parity audited in-browser**: token discipline held, no breakage. All 11 page titles unified to one treatment (20/24px · 700 · −0.03em).
+
+### Current state / open items
+- First-token latency on Hermes workspaces is the remaining speed lever (gateway agent loop ~20s); DeepSeek-direct workspaces feel dramatically faster on the same pipeline.
+- Social connect path for PRIVATE data (posting, analytics): connect-card pattern is in place; a unified social API (Ayrshare-style) is the candidate connector when wanted.
+- Browser sessions drop on deploys (re-login needed when verifying via agent-browser).
