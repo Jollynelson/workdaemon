@@ -710,6 +710,23 @@ export default async function handler(req, res) {
       } catch (e) { console.error('[chat] brain pull:', e.message); /* keep the first answer */ }
     }
 
+    // HEAL a model misfire where the entire envelope arrives as an ESCAPED JSON
+    // string inside a single text block (Hermes does this occasionally — the UI
+    // would render raw JSON). Same recovery the client applies to stored history,
+    // now applied to live replies too. The healed inner envelope replaces the
+    // wrapper; its suggestions win when present.
+    if (parsed?.blocks?.length === 1 && parsed.blocks[0]?.type === 'text'
+        && typeof parsed.blocks[0].md === 'string'
+        && parsed.blocks[0].md.trimStart().startsWith('{')
+        && parsed.blocks[0].md.includes('"blocks"')) {
+      const inner = parseJsonResponse(parsed.blocks[0].md);
+      const isSameWrapper = inner?.blocks?.length === 1 && inner.blocks[0]?.md === parsed.blocks[0].md;
+      if (inner?.blocks?.length && !isSameWrapper) {
+        console.log('[chat] healed nested envelope: %d inner block(s)', inner.blocks.length);
+        parsed = { ...inner, suggestions: inner.suggestions?.length ? inner.suggestions : parsed.suggestions };
+      }
+    }
+
     // CONTEXT-BUTTON GUARANTEE: the suggestion chips are part of the product
     // contract. If a truncated or disobedient model response lost them, synthesize
     // grounded fallbacks from the goal book + open findings so the chat never
