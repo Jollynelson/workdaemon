@@ -8,9 +8,10 @@ export const estimateTokens = (s) => Math.ceil(String(s || '').length / 4);
 
 export function recordUsage({ workspaceId, userId, provider, model, promptText, completionText, usage }) {
   if (!workspaceId) return; // nothing to attribute it to
-  const prompt = usage?.prompt_tokens ?? estimateTokens(promptText);
-  const completion = usage?.completion_tokens ?? estimateTokens(completionText);
-  const total = usage?.total_tokens ?? (prompt + completion);
+  const exact = !!(usage && (usage.total_tokens || usage.prompt_tokens || usage.completion_tokens));
+  const prompt = exact ? (usage.prompt_tokens || 0) : estimateTokens(promptText);
+  const completion = exact ? (usage.completion_tokens || 0) : estimateTokens(completionText);
+  const total = exact ? (usage.total_tokens || prompt + completion) : (prompt + completion);
   if (!total) return;
   (async () => {
     try {
@@ -22,6 +23,7 @@ export function recordUsage({ workspaceId, userId, provider, model, promptText, 
         prompt_tokens: prompt,
         completion_tokens: completion,
         total_tokens: total,
+        estimated: !exact,
       });
     } catch (e) { console.warn('[metering]', e.message); }
   })();
