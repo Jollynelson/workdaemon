@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
-import { researchRole, researchCompany, scanOneWorkspace, backfillInboxPush, SCAN_COLUMNS } from './_lib/research_actions.js';
+import { researchRole, researchCompany, prefetchCompanyIntel, scanOneWorkspace, backfillInboxPush, SCAN_COLUMNS } from './_lib/research_actions.js';
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken, timingSafeEqualStr } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken, getUserTokens } from './_lib/oauth.js';
@@ -865,6 +865,17 @@ export default async function handler(req, res) {
   if (!(await enforceRateLimit(res, { key: `brain:${user.id}`, max: 120, windowSec: 60 }))) return;
 
   const db = adminClient();
+
+  // ── EAGER onboarding prefetch — runs BEFORE a workspace exists, so it must sit
+  // ABOVE the workspace guard. Researches the company from the work-email domain
+  // (site + socials + web) and stashes intel keyed by the user; setup.js merges it
+  // into the new workspace's Brain on create.
+  if (req.method === 'POST' && req.body?.action === 'prefetch_company') {
+    if (!(await enforceRateLimit(res, { key: `prefetch:${user.id}`, max: 8, windowSec: 3600 }))) return;
+    const result = await prefetchCompanyIntel(db, user.id, req.body || {});
+    return res.status(result.status).json(result.body);
+  }
+
   const profile = await resolveWorkspace(user.id, db);
   const workspaceId = profile?.workspace_id ?? null;
   if (!workspaceId) return res.status(400).json({ error: 'No workspace' });

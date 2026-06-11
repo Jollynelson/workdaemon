@@ -639,3 +639,75 @@ export async function researchCompany(db, workspaceId, ws, body = {}) {
     },
   };
 }
+
+// ── EAGER onboarding seeding (no workspace yet) ───────────────────────────────
+// Fired the moment a user types a work email: derive the domain, READ the
+// company's own site + its live SOCIAL profiles + the open web, synthesise rich
+// intel, and stash it keyed by the user. setup.js merges it into the new
+// workspace's Brain context — so company-name + location are confirmation of
+// data we already have. Bounded + best-effort; never throws to the caller.
+const SOCIAL_HOST_RE = /linkedin\.com|twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|youtube\.com|crunchbase\.com/i;
+
+export async function prefetchCompanyIntel(db, userId, body = {}) {
+  if (!userId) return { status: 400, body: { error: 'no user' } };
+  const domain = (body.domain || '').toString().trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    || companyDomainFromEmail(body.email) || null;
+  if (!domain) return { status: 200, body: { skipped: 'no corporate domain (personal email)' } };
+  const company = oneLine(body.company, 120) || domain.split('.')[0];
+  const location = oneLine(body.location, 80) || null;
+
+  await db.from('company_prefetch').upsert(
+    { user_id: userId, domain, company, status: 'pending', updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' },
+  );
+
+  const fail = async (msg) => {
+    await db.from('company_prefetch').update({ status: 'error', updated_at: new Date().toISOString() }).eq('user_id', userId);
+    return { status: 502, body: { error: msg } };
+  };
+
+  const llm = await resolveLLM(null, db); // env provider — no workspace exists yet
+  if (!llm) return fail('no AI provider configured');
+
+  // Read the company site, the open web, AND find its social profiles — together.
+  const bizQueries = [`site:${domain}`, `"${company}" what they do`, `"${company}" competitors`];
+  const socialQueries = [`"${company}" site:linkedin.com/company`, `"${company}" (site:x.com OR site:instagram.com OR site:facebook.com)`];
+  const [site, research, socialSearch] = await Promise.all([
+    readCompanyWebsite(domain).catch(() => null),
+    braveSearchMany([...new Set(bizQueries)], { count: 6, freshness: 'py' }).catch(() => ({ grounded: false, snippets: [], sources: [] })),
+    braveSearchMany([...new Set(socialQueries)], { count: 5 }).catch(() => ({ snippets: [] })),
+  ]);
+
+  // Collect + READ the top social profiles (this is the "pull info from socials" the brain seeds on).
+  const socialUrls = (socialSearch.snippets || []).map(s => s.url).filter(u => u && SOCIAL_HOST_RE.test(u)).filter((u, i, a) => a.indexOf(u) === i).slice(0, 3);
+  const socialReads = (await Promise.all(socialUrls.map(u => fetchPageText(u, { maxChars: 1500, timeoutMs: 5000 }).catch(() => null)))).filter(Boolean);
+
+  const { sys, user: userPrompt } = buildCompanyPrompt({ company, industry: null, location, existingDesc: null, research, site, domain });
+  const socialBlock = socialReads.length
+    ? `\n\nLIVE SOCIAL PROFILES (read just now — use for positioning, audience, activity level):\n${delimitUntrusted(socialReads.join('\n---\n').slice(0, 3000))}`
+    : '';
+
+  let intel;
+  try { intel = extractJson(await callLLM(llm, sys, userPrompt + socialBlock, { maxTokens: 1500 })); }
+  catch (e) { return fail(e.message || 'synthesis failed'); }
+  if (!intel) return fail('could not parse research');
+
+  const out = {
+    website: domain,
+    summary: intel.company_summary || null,
+    positioning: intel.positioning || null,
+    competitors: Array.isArray(intel.competitors) ? intel.competitors.filter(Boolean) : [],
+    industry: intel.industry || null,
+    industry_trends: intel.industry_trends || null,
+    location: intel.location || location || null,
+    socials: socialUrls,
+    socials_read: socialReads.length,
+    site_read: !!site,
+    researched_at: new Date().toISOString(),
+  };
+  await db.from('company_prefetch').upsert(
+    { user_id: userId, domain, company, status: 'ready', intel: out, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' },
+  );
+  return { status: 200, body: { ok: true, domain, socials: socialUrls.length, site_read: !!site } };
+}
