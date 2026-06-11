@@ -18,6 +18,13 @@ function timeAgo(iso) {
 
 const HEALTH_COLOR = { connected: '#10b981', error: '#ef4444', disconnected: '#f59e0b' };
 
+function fmtTokens(n) {
+  if (!n) return '0';
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K`;
+  return String(n);
+}
+
 export function OverviewPage() {
   const c = useC();
   const navigate = useNavigate();
@@ -31,6 +38,7 @@ export function OverviewPage() {
   const integrations = data?.integrations || [];
   const alerts       = data?.alerts       || [];
   const brainLastSync = data?.brainLastSync || null;
+  const tokenUsage   = data?.tokenUsage   || null;
 
   const quickActions = [
     { label: 'Invite team member', icon: '＋', to: '/app/team' },
@@ -110,8 +118,22 @@ export function OverviewPage() {
             <div>
               <p className="wd-label" style={{ marginBottom: 14 }}>TOKEN USAGE</p>
               <div style={{ padding: '14px 16px', background: c.row, border: `1px solid ${c.rowBorder}`, borderRadius: 9 }}>
-                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, lineHeight: 1.55 }}>
-                  Per-employee usage and budget alerts arrive with billing. All tiers currently run on your own provider keys (BYOK) — set them in <strong style={{ color: c.text2 }}>Settings → AI &amp; Model</strong>.
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: tokenUsage?.byUser?.length ? 12 : 4 }}>
+                  <span style={{ fontFamily: 'var(--orbitron)', fontSize: 22, fontWeight: 700, color: c.text }}>{fmtTokens(tokenUsage?.total || 0)}</span>
+                  <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3 }}>tokens · {tokenUsage?.monthLabel || 'this month'}</span>
+                </div>
+                {tokenUsage?.byUser?.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: `1px solid ${c.subtleBorder}`, paddingTop: 10 }}>
+                    {tokenUsage.byUser.map((u, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontFamily: 'var(--dmsans)', fontSize: 12.5 }}>
+                        <span style={{ color: c.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name}</span>
+                        <span style={{ color: c.text3, fontFamily: 'var(--mono)', fontSize: 11, flexShrink: 0 }}>{fmtTokens(u.tokens)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontFamily: 'var(--dmsans)', fontSize: 11, color: c.text4, marginTop: 10, lineHeight: 1.5 }}>
+                  Estimated from model traffic. Budget alerts arrive with billing — usage runs on your BYOK keys (<strong style={{ color: c.text3 }}>Settings → AI &amp; Model</strong>).
                 </div>
               </div>
             </div>

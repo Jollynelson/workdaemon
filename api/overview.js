@@ -50,6 +50,8 @@ export default async function handler(req, res) {
   const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
   const todayISO = todayStart.toISOString();
   const dayAgoISO = new Date(Date.now() - 86400000).toISOString();
+  const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
+  const monthISO = monthStart.toISOString();
 
   // ── Crew directory (§4) — teammates + their Daemons. Open to all members. ────
   if (req.query.view === 'crew') {
@@ -75,7 +77,7 @@ export default async function handler(req, res) {
   }
 
   // All independent — fan out, and never let one failed table sink the page.
-  const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes] = await Promise.all([
+  const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes, tokenRes] = await Promise.all([
     // profiles is the reliable membership source (a fragile workspace_members→profiles
     // embed silently errored → Active Daemons read 0 for workspaces with members).
     db.from('profiles').select('id, name, title, role').eq('workspace_id', ws),
@@ -85,6 +87,7 @@ export default async function handler(req, res) {
     db.from('workspace_integrations').select('provider, status, updated_at').eq('workspace_id', ws),
     db.from('daemon_actions').select('title, type, status, created_at').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(8),
     db.from('brain_interactions').select('user_id').eq('workspace_id', ws).gte('created_at', dayAgoISO),
+    db.from('token_usage').select('user_id, total_tokens').eq('workspace_id', ws).gte('created_at', monthISO).limit(20000),
   ]);
 
   const members = membersRes.data ?? [];
@@ -129,5 +132,23 @@ export default async function handler(req, res) {
     time: a.created_at,
   }));
 
-  return res.status(200).json({ stats, team, activity, integrations: integHealth, alerts, brainLastSync });
+  // Token usage this month (IA §9) — total + per-employee breakdown.
+  const nameById = {}; for (const m of members) nameById[m.id] = m.name || 'Member';
+  const byUser = {}; let totalTokens = 0;
+  for (const r of (tokenRes.data ?? [])) {
+    const t = r.total_tokens || 0;
+    totalTokens += t;
+    const k = r.user_id || 'system';
+    byUser[k] = (byUser[k] || 0) + t;
+  }
+  const tokenUsage = {
+    total: totalTokens,
+    monthLabel: monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    byUser: Object.entries(byUser)
+      .map(([id, tokens]) => ({ name: id === 'system' ? 'Autonomous / system' : (nameById[id] || 'Member'), tokens }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 5),
+  };
+
+  return res.status(200).json({ stats, team, activity, integrations: integHealth, alerts, brainLastSync, tokenUsage });
 }

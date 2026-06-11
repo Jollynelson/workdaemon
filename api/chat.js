@@ -2,6 +2,7 @@ import { requireAuth, adminClient } from './_lib/supabase.js';
 import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody, signServiceToken } from './_lib/security.js';
 import { webResearch, fetchPageText, extractUrls } from './_lib/research.js';
 import { callProvider, callProviderStream, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
+import { recordUsage } from './_lib/metering.js';
 import { createEnvelopeStream } from './_lib/stream_envelope.js';
 import { buildDaemonSystemPrompt } from './_lib/prompt.js';
 import { extractTopicTags } from './_lib/topics.js';
@@ -642,21 +643,32 @@ export default async function handler(req, res) {
   // ever. A stream failure quietly retries non-streaming — never quality loss.
   const identity = { workspaceId, userId: user.id };
   const runModel = async (cfg, msgs) => {
-    if (!wantsStream) return callProvider(cfg, sys, msgs, identity);
-    emit({ type: 'reset' });
-    const env = createEnvelopeStream({
-      onDelta: (md) => emit({ type: 'delta', md }),
-      onBlock: (block) => emit({ type: 'block', block }),
-    });
-    try {
-      const text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d));
-      env.end();
-      return text;
-    } catch (e) {
-      console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
+    let text;
+    if (!wantsStream) {
+      text = await callProvider(cfg, sys, msgs, identity);
+    } else {
       emit({ type: 'reset' });
-      return callProvider(cfg, sys, msgs, identity);
+      const env = createEnvelopeStream({
+        onDelta: (md) => emit({ type: 'delta', md }),
+        onBlock: (block) => emit({ type: 'block', block }),
+      });
+      try {
+        text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d));
+        env.end();
+      } catch (e) {
+        console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
+        emit({ type: 'reset' });
+        text = await callProvider(cfg, sys, msgs, identity);
+      }
     }
+    // Meter token usage (estimated from text) — fire-and-forget, never blocks.
+    try {
+      recordUsage({
+        workspaceId, userId: user.id, provider: cfg.provider, model: cfg.model,
+        promptText: sys + msgs.map(m => m.content || '').join('\n'), completionText: text,
+      });
+    } catch { /* never break the turn on metering */ }
+    return text;
   };
 
   // Resilience: a self-hosted provider (hermes) going down must NEVER break the

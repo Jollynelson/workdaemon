@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { decryptSecret, assertSafeUrl } from './security.js';
+import { recordUsage } from './metering.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared research engine: web search (Brave) + LLM synthesis.
@@ -202,6 +203,12 @@ export async function webResearch(queries, { count = 6, freshness = null, readPa
 
 // ── Resolve an LLM (workspace key first, then env fallback) ───────────────────
 export async function resolveLLM(workspaceId, db) {
+  const cfg = await resolveLLMInner(workspaceId, db);
+  if (cfg && workspaceId) cfg._meter = { workspaceId };  // lets callLLM attribute token usage
+  return cfg;
+}
+
+async function resolveLLMInner(workspaceId, db) {
   if (workspaceId) {
     const { data: keys } = await db
       .from('workspace_api_keys')
@@ -254,7 +261,18 @@ export async function resolveLLM(workspaceId, db) {
   return null;
 }
 
-export async function callLLM({ provider, api_key, model, endpoint }, sys, user, { maxTokens = 1200 } = {}) {
+export async function callLLM(cfg, sys, user, opts = {}) {
+  const text = await callLLMInner(cfg, sys, user, opts);
+  try {
+    recordUsage({
+      workspaceId: cfg?._meter?.workspaceId, provider: cfg?.provider, model: cfg?.model,
+      promptText: `${sys}\n${user}`, completionText: text,
+    });
+  } catch { /* metering must never break synthesis */ }
+  return text;
+}
+
+async function callLLMInner({ provider, api_key, model, endpoint }, sys, user, { maxTokens = 1200 } = {}) {
   switch (provider) {
     case 'deepseek': {
       const client = new OpenAI({ baseURL: (endpoint || 'https://api.deepseek.com').replace(/\/$/, ''), apiKey: api_key });
