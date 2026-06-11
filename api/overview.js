@@ -53,7 +53,9 @@ export default async function handler(req, res) {
 
   // All independent — fan out, and never let one failed table sink the page.
   const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes] = await Promise.all([
-    db.from('workspace_members').select('user_id, role, joined_at, profiles(name, title)').eq('workspace_id', ws),
+    // profiles is the reliable membership source (a fragile workspace_members→profiles
+    // embed silently errored → Active Daemons read 0 for workspaces with members).
+    db.from('profiles').select('id, name, title, role').eq('workspace_id', ws),
     db.from('tasks').select('status, updated_at').eq('workspace_id', ws),
     db.from('brain_interactions').select('id', { count: 'exact', head: true }).eq('workspace_id', ws).gte('created_at', todayISO),
     db.from('daemon_actions').select('created_at', { count: 'exact' }).eq('workspace_id', ws).eq('status', 'pending'),
@@ -81,9 +83,9 @@ export default async function handler(req, res) {
   ];
 
   const team = members.map(m => ({
-    name: m.profiles?.name || 'Member',
-    role: m.profiles?.title || m.role || 'Member',
-    status: activeIds.has(m.user_id) ? 'online' : 'away',
+    name: m.name || 'Member',
+    role: m.title || m.role || 'Member',
+    status: activeIds.has(m.id) ? 'online' : 'away',
   }));
 
   const integHealth = integrations.map(i => ({ provider: i.provider, status: i.status || 'unknown', lastSync: i.updated_at || null }));
