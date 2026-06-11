@@ -150,6 +150,23 @@ export function ProfilePage() {
               </button>
             </div>
           ))}
+
+          {/* Telegram connect + toggle */}
+          <div style={{ height: 1, background: c.subtleBorder, margin: '2px 0' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, color: c.text }}>Telegram notifications</span>
+            <button type="button" onClick={() => togglePref('telegram')}
+              style={{ width: 40, height: 23, borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0, position: 'relative', transition: 'background 0.15s', background: prefs.telegram ? '#3b6ef7' : c.subtleBorder }}>
+              <span style={{ position: 'absolute', top: 2, left: prefs.telegram ? 19 : 2, width: 19, height: 19, borderRadius: '50%', background: '#fff', transition: 'left 0.15s' }} />
+            </button>
+          </div>
+          {prefs.telegram && (
+            <ProfileField label="Telegram chat ID">
+              <input value={prefs.telegram_chat_id || ''} onChange={e => setPrefs(p => ({ ...p, telegram_chat_id: e.target.value.trim() }))}
+                placeholder="e.g. 123456789 — message @WorkDaemonBot then /start to get yours" style={inputSt} />
+            </ProfileField>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => save()} disabled={busy} style={{ ...mkGhostBtn(c), padding: '8px 16px', fontSize: 13 }}>Save notifications</button>
           </div>
@@ -162,14 +179,34 @@ export function ProfilePage() {
           <button type="button" onClick={() => navigate('/app/integrations')} style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Manage →</button>
         </div>
 
+        {/* API key (BYOK — Pro/Enterprise) */}
+        {sectionLabel('API KEY')}
+        <div style={{ ...cardSt, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>Personal BYOK key</div>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>Bring your own model key (Pro &amp; Enterprise). Workspace-wide keys live in Settings → AI &amp; Model.</div>
+          </div>
+          <button type="button" onClick={() => navigate('/app/settings')} style={{ ...mkGhostBtn(c, { color: '#3b6ef7', borderColor: 'rgba(59,110,247,0.3)' }), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Manage keys →</button>
+        </div>
+
         {/* Security */}
         {sectionLabel('SECURITY')}
-        <div style={{ ...cardSt, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 }}>
-          <div>
-            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>Password</div>
-            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>We'll email you a secure reset link.</div>
+        <div style={{ ...cardSt, marginBottom: 30 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>Password</div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>We'll email you a secure reset link.</div>
+            </div>
+            <button type="button" onClick={sendReset} disabled={busy} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Reset password</button>
           </div>
-          <button type="button" onClick={sendReset} disabled={busy} style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap' }}>Reset password</button>
+          <div style={{ height: 1, background: c.subtleBorder }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text }}>Two-factor authentication</div>
+              <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 2 }}>Adds a one-time code at sign-in. Rolling out soon.</div>
+            </div>
+            <button type="button" disabled style={{ ...mkGhostBtn(c), padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap', opacity: 0.5, cursor: 'not-allowed' }}>Coming soon</button>
+          </div>
         </div>
       </div>
     </div>

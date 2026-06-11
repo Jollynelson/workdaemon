@@ -43,26 +43,66 @@ export default async function handler(req, res) {
     .single();
 
   if (!profile?.workspace_id) {
-    return res.status(200).json({ metrics: {}, activity: [], team: [] });
+    return res.status(200).json({ stats: [], activity: [], team: [], integrations: [], alerts: [], brainLastSync: null });
   }
+  const ws = profile.workspace_id;
 
-  const [tasksRes, membersRes] = await Promise.all([
-    db.from('tasks').select('status').eq('workspace_id', profile.workspace_id),
-    db.from('workspace_members')
-      .select('user_id, role, joined_at, profiles(name, title)')
-      .eq('workspace_id', profile.workspace_id),
+  const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
+  const todayISO = todayStart.toISOString();
+  const dayAgoISO = new Date(Date.now() - 86400000).toISOString();
+
+  // All independent — fan out, and never let one failed table sink the page.
+  const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes] = await Promise.all([
+    db.from('workspace_members').select('user_id, role, joined_at, profiles(name, title)').eq('workspace_id', ws),
+    db.from('tasks').select('status, updated_at').eq('workspace_id', ws),
+    db.from('brain_interactions').select('id', { count: 'exact', head: true }).eq('workspace_id', ws).gte('created_at', todayISO),
+    db.from('daemon_actions').select('created_at', { count: 'exact' }).eq('workspace_id', ws).eq('status', 'pending'),
+    db.from('workspace_integrations').select('provider, status, updated_at').eq('workspace_id', ws),
+    db.from('daemon_actions').select('title, type, status, created_at').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(8),
+    db.from('brain_interactions').select('user_id').eq('workspace_id', ws).gte('created_at', dayAgoISO),
   ]);
 
-  const tasks = tasksRes.data ?? [];
   const members = membersRes.data ?? [];
+  const tasks = tasksRes.data ?? [];
+  const integrations = integRes.data ?? [];
+  const pending = pendingRes.data ?? [];
+  const activeIds = new Set((activeRes.data ?? []).map(r => r.user_id));
 
-  return res.status(200).json({
-    metrics: {
-      totalTasks: tasks.length,
-      completedTasks: tasks.filter(t => t.status === 'done').length,
-      teamSize: members.length,
-    },
-    activity: [],
-    team: members,
-  });
+  const completedToday = tasks.filter(t => t.status === 'done' && t.updated_at && t.updated_at >= todayISO).length;
+  const brainToday = brainCountRes.count ?? 0;
+  const pendingApprovals = pendingRes.count ?? pending.length;
+
+  // Spec §9 metric cards.
+  const stats = [
+    { label: 'Active Daemons',      value: String(members.length),  unit: 'members',  accent: 'blue' },
+    { label: 'Tasks Done Today',    value: String(completedToday),  unit: 'today',    accent: 'green' },
+    { label: 'Brain Queries Today', value: String(brainToday),      unit: 'today',    accent: 'purple' },
+    { label: 'Pending Approvals',   value: String(pendingApprovals), unit: 'awaiting', accent: 'amber' },
+  ];
+
+  const team = members.map(m => ({
+    name: m.profiles?.name || 'Member',
+    role: m.profiles?.title || m.role || 'Member',
+    status: activeIds.has(m.user_id) ? 'online' : 'away',
+  }));
+
+  const integHealth = integrations.map(i => ({ provider: i.provider, status: i.status || 'unknown', lastSync: i.updated_at || null }));
+  const brainLastSync = integrations.reduce((max, i) => (i.updated_at && (!max || i.updated_at > max) ? i.updated_at : max), null);
+
+  // Spec §9 system alerts — derived from real state.
+  const alerts = [];
+  const staleApprovals = pending.filter(a => a.created_at && a.created_at < dayAgoISO).length;
+  if (staleApprovals > 0) alerts.push({ level: 'warning', text: `${staleApprovals} approval${staleApprovals > 1 ? 's' : ''} pending over 24h` });
+  for (const i of integHealth) {
+    if (i.status && i.status !== 'connected') alerts.push({ level: 'danger', text: `${i.provider} integration: ${i.status}` });
+  }
+
+  const activity = (actRes.data ?? []).map(a => ({
+    icon: '◆',
+    text: a.title || a.type || 'Daemon action',
+    source: a.type || 'daemon',
+    time: a.created_at,
+  }));
+
+  return res.status(200).json({ stats, team, activity, integrations: integHealth, alerts, brainLastSync });
 }
