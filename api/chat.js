@@ -13,6 +13,7 @@ import { parseJsonResponse } from './_lib/envelope.js';
 import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
 import { activeGoals, goalsPromptBlock } from './_lib/goals.js';
+import { sweepOutbox } from './_lib/outbox.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -149,11 +150,23 @@ async function prewarmHermes(db, userId) {
   } catch { /* prewarm is best-effort */ }
 }
 
-// ── GET: chat history ─────────────────────────────────────────────────────────
+// ── GET: chat history (+ outbox delivery / online poll) ──────────────────────
 async function handleHistory(req, res) {
   const user = await requireAuth(req, res);
   if (!user) return;
   const db = adminClient();
+
+  // Deliver due daemon-initiated messages FIRST (scheduled reminders, report-
+  // backs, important findings) so they ride into history — "next time online".
+  const swept = await sweepOutbox(db, user.id).catch(() => []);
+
+  // Online poll: the open chat asks every minute "anything for me?" — returns
+  // ONLY freshly delivered outbox messages (the claim inside sweepOutbox makes
+  // this exactly-once, so the client can append without dedup bookkeeping).
+  if (req.query?.poll === '1') {
+    return res.status(200).json({ messages: swept });
+  }
+
   prewarmHermes(db, user.id); // fire-and-forget: warm the gateway while history loads
   const { data: rows, error } = await db
     .from('daemon_messages')
@@ -252,6 +265,10 @@ export default async function handler(req, res) {
   };
 
   const db = adminClient();
+
+  // Deliver any due daemon-initiated messages BEFORE building context, so a
+  // just-fired reminder is already part of the history this very turn.
+  await sweepOutbox(db, user.id).catch(() => {});
 
   // Resolve user + workspace context
   const { data: profile } = await db
@@ -599,6 +616,26 @@ export default async function handler(req, res) {
     } catch (e) { console.warn('[chat] brain token mint skipped:', e.message); }
   }
 
+  // HEAL a model misfire where the entire envelope arrives as an ESCAPED JSON
+  // string inside a single text block (Hermes does this occasionally — the UI
+  // would render raw JSON). Applied after every model attempt, including the
+  // brain-pull follow-up. The healed inner envelope replaces the wrapper; its
+  // suggestions win when present.
+  const healNested = (p) => {
+    if (p?.blocks?.length === 1 && p.blocks[0]?.type === 'text'
+        && typeof p.blocks[0].md === 'string'
+        && p.blocks[0].md.trimStart().startsWith('{')
+        && p.blocks[0].md.includes('"blocks"')) {
+      const inner = parseJsonResponse(p.blocks[0].md);
+      const isSameWrapper = inner?.blocks?.length === 1 && inner.blocks[0]?.md === p.blocks[0].md;
+      if (inner?.blocks?.length && !isSameWrapper) {
+        console.log('[chat] healed nested envelope: %d inner block(s)', inner.blocks.length);
+        return { ...inner, suggestions: inner.suggestions?.length ? inner.suggestions : p.suggestions };
+      }
+    }
+    return p;
+  };
+
   // One model-call gate for every attempt (primary, escalation, retries, brain
   // pull). Streaming: tokens flow through the incremental envelope parser into
   // client events while the FULL text returns to the same parseJsonResponse as
@@ -681,6 +718,31 @@ export default async function handler(req, res) {
     }
     console.log('[chat] route depth=%s complexity=%s model=%s escalated=%s',
       route.depth, route.complexity || '-', usedModel, escalated);
+    parsed = healNested(parsed);
+
+    // ── FAKE-PROMISE GUARD (owner: "it simply said good question and nothing
+    // done"). If the reply PROMISES to check something instead of doing it —
+    // and didn't request any brain tools — force one corrective pass: use the
+    // tools NOW or answer from knowledge. The corrected response flows into the
+    // normal brain-pull hop below, so promised lookups actually happen.
+    const PROMISE_RE = /\b(let me (check|look|pull|dig|verify|find)|i(?:'|’)?ll (check|look into|get back|pull|dig|find out)|give me a (moment|minute|sec)|checking (that|this|now)|one (moment|sec|minute)|hold on)\b/i;
+    const visibleText = (p) => (p?.blocks || []).map(b => [b.md, b.content, b.title].filter(Boolean).join(' ')).join(' ');
+    if (isUserTurn && !Array.isArray(parsed?.brain_queries) && (parsed?.blocks || []).length <= 2
+        && PROMISE_RE.test(visibleText(parsed)) && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
+      try {
+        emit({ type: 'status', label: 'ACTUALLY CHECKING…' });
+        const corrective = [
+          ...trimmed,
+          { role: 'assistant', content: JSON.stringify({ blocks: parsed.blocks }) },
+          { role: 'user', content: 'You just promised to check instead of answering — you CANNOT act between turns, so a promise is a dead end. Do it NOW: either include a top-level "brain_queries" array (e.g. {"tool":"web","q":"…"} or {"tool":"search","q":"…"}) to fetch exactly what you need, or give the full answer from what you already know. Return ONE complete JSON envelope with real content. Never promise future work.' },
+        ];
+        const fixed = healNested(parseJsonResponse(await runModel({ ...resolvedKey, model: usedModel }, corrective)));
+        if (fixed?.blocks?.length || Array.isArray(fixed?.brain_queries)) {
+          parsed = fixed;
+          console.log('[chat] fake-promise corrected (queries=%s)', Array.isArray(fixed?.brain_queries) ? fixed.brain_queries.length : 0);
+        }
+      } catch { /* keep the original answer */ }
+    }
 
     // ── Agentic Company-Brain pull (one hop; all providers; multi-tenant) ──────
     // If the agent asked for deeper brain data via a top-level "brain_queries"
@@ -710,33 +772,21 @@ export default async function handler(req, res) {
       } catch (e) { console.error('[chat] brain pull:', e.message); /* keep the first answer */ }
     }
 
-    // HEAL a model misfire where the entire envelope arrives as an ESCAPED JSON
-    // string inside a single text block (Hermes does this occasionally — the UI
-    // would render raw JSON). Same recovery the client applies to stored history,
-    // now applied to live replies too. The healed inner envelope replaces the
-    // wrapper; its suggestions win when present.
-    if (parsed?.blocks?.length === 1 && parsed.blocks[0]?.type === 'text'
-        && typeof parsed.blocks[0].md === 'string'
-        && parsed.blocks[0].md.trimStart().startsWith('{')
-        && parsed.blocks[0].md.includes('"blocks"')) {
-      const inner = parseJsonResponse(parsed.blocks[0].md);
-      const isSameWrapper = inner?.blocks?.length === 1 && inner.blocks[0]?.md === parsed.blocks[0].md;
-      if (inner?.blocks?.length && !isSameWrapper) {
-        console.log('[chat] healed nested envelope: %d inner block(s)', inner.blocks.length);
-        parsed = { ...inner, suggestions: inner.suggestions?.length ? inner.suggestions : parsed.suggestions };
-      }
-    }
+    // Heal again — the brain-pull / fake-promise follow-ups can misfire the same way.
+    parsed = healNested(parsed);
 
     // CONTEXT-BUTTON GUARANTEE: the suggestion chips are part of the product
     // contract. If a truncated or disobedient model response lost them, synthesize
-    // grounded fallbacks from the goal book + open findings so the chat never
-    // renders a dead end.
+    // fallbacks that ADAPT to the conversation — the live question first, then
+    // the goal book — so the chips never feel canned or stale.
     if (!Array.isArray(parsed.suggestions) || !parsed.suggestions.some(s => typeof s === 'string' && s.trim())) {
-      const clip = (s, n) => { s = String(s); if (s.length <= n) return s; const cut = s.slice(0, n); return cut.slice(0, cut.lastIndexOf(' ') > n - 20 ? cut.lastIndexOf(' ') : n) + '…'; };
+      const clip = (s, n) => { s = String(s).replace(/\s+/g, ' ').trim(); if (s.length <= n) return s; const cut = s.slice(0, n); return cut.slice(0, cut.lastIndexOf(' ') > n - 20 ? cut.lastIndexOf(' ') : n) + '…'; };
       const fb = [];
+      const lastQ = isUserTurn && !/^\[SESSION_(START|RESUME)\]$/.test(newMsgNormalized.content)
+        ? clip(newMsgNormalized.content, 56) : '';
+      if (lastQ) fb.push(`Go deeper on: ${lastQ}`, `What should I do about ${lastQ.replace(/\?+$/, '')}?`);
       const g = goalBook?.staff?.[0] || goalBook?.company?.[0];
       if (g?.title) fb.push(`What's the fastest next step on "${clip(g.title, 60)}"?`);
-      if (huntFindings[0]?.pattern) fb.push(`Walk me through: ${clip(huntFindings[0].pattern, 70)}`);
       if (connectedTools.includes('slack')) fb.push("What's happening in Slack today?");
       fb.push('What needs my attention today?', 'Show our goal progress');
       parsed.suggestions = [...new Set(fb)].slice(0, 3);
@@ -786,6 +836,26 @@ export default async function handler(req, res) {
             }));
             await db.from('daemon_memory').upsert(rows, { onConflict: 'user_id,key' });
           }
+        }
+
+        // 3a-bis. SCHEDULED OUTREACH the daemon booked this turn ("message me by
+        // 3pm about X") → daemon_outbox. Delivered into the chat at the booked
+        // time: within ~60s if the user is online (poll), else next open.
+        if (workspaceId && parsed.schedule && typeof parsed.schedule === 'object' && !Array.isArray(parsed.schedule)) {
+          try {
+            const when = new Date(parsed.schedule.deliver_at || '');
+            const msg = String(parsed.schedule.message || '').trim().slice(0, 2000);
+            if (msg && !Number.isNaN(when.getTime())) {
+              // Clamp: at least 1 min out, at most 30 days out.
+              const clamped = new Date(Math.min(Math.max(when.getTime(), Date.now() + 60e3), Date.now() + 30 * 864e5));
+              await db.from('daemon_outbox').insert({
+                workspace_id: workspaceId, user_id: user.id, kind: 'reminder',
+                title: String(parsed.schedule.title || '').slice(0, 200) || null,
+                message: msg, deliver_at: clamped.toISOString(), source: 'user_request',
+              });
+              console.log('[chat] outbox: reminder booked for %s', clamped.toISOString());
+            }
+          } catch (e) { console.error('[chat] outbox schedule:', e.message); }
         }
 
         // 3b. Compound web knowledge into the Company Brain: every page this

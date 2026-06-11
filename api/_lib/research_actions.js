@@ -306,6 +306,19 @@ async function pushFindingToInbox(db, { workspaceId, members, findingId, mode, s
   const { error } = await db.from('inbox_items').insert(rows);
   if (error) { console.error('[scan_external] inbox push err:', error.message); return; }
   await db.from('hunt_findings').update({ pushed_to_inbox: true }).eq('id', findingId);
+
+  // Warning/critical findings ALSO reach the chat (owner directive: the daemon
+  // messages you if online, or shows it next time you open — nothing important
+  // can be missed). Info-level stays inbox-only to keep chat signal high.
+  if (!published && ['warning', 'critical'].includes(severity)) {
+    try {
+      const { queueFindingDelivery } = await import('./outbox.js');
+      await queueFindingDelivery(db, {
+        workspaceId, userIds: targets.map(m => m.id),
+        headline, recommendation, findingId,
+      });
+    } catch (e) { console.error('[scan_external] chat delivery err:', e.message); }
+  }
 }
 
 // Push any unresolved findings that were created before inbox-push existed (or

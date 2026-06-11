@@ -61,6 +61,11 @@ export function ChatView({ context, onBack, onMenu }) {
   const inputRef  = useRef(null);
   const startedRef = useRef(false);
   const hadHistoryRef = useRef(false);
+  // Session continuity (owner directive): someone using their daemon at 1am
+  // shouldn't get a cold re-boot at 8am. <4h since last activity → pick up
+  // instantly with NO LLM ping; 4–24h → brief [SESSION_RESUME]; >24h or first
+  // ever → full [SESSION_START] boot.
+  const sessionModeRef = useRef('start'); // 'none' | 'resume' | 'start'
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,6 +78,28 @@ export function ChatView({ context, onBack, onMenu }) {
     const t = setInterval(() => setThinkStage(s => Math.min(s + 1, 2)), 2200);
     return () => clearInterval(t);
   }, [thinking]);
+
+  // Daemon-initiated delivery while ONLINE: every 60s the chat asks the outbox
+  // for due messages (scheduled reminders, report-backs, important findings) and
+  // they appear right in the thread. Delivery is exactly-once server-side, so
+  // appending is safe; paused while a turn is streaming or the tab is hidden.
+  const thinkingRef = useRef(false);
+  useEffect(() => { thinkingRef.current = thinking; }, [thinking]);
+  useEffect(() => {
+    if (!authToken) return;
+    const tick = async () => {
+      if (document.hidden || thinkingRef.current) return;
+      try {
+        const r = await fetch('/api/chat?poll=1', { headers: { Authorization: `Bearer ${authToken}` } });
+        const d = await r.json().catch(() => ({}));
+        if (Array.isArray(d.messages) && d.messages.length) {
+          setMsgs(m => [...m, ...d.messages.map(dbMsgToDisplay)]);
+        }
+      } catch { /* poll is best-effort */ }
+    };
+    const t = setInterval(tick, 60000);
+    return () => clearInterval(t);
+  }, [authToken]);
 
   // Seed the composer from elsewhere (e.g. Inbox "Use draft"), then clear it.
   useEffect(() => {
@@ -101,6 +128,11 @@ export function ChatView({ context, onBack, onMenu }) {
         if (real.length) {
           setMsgs(real.map(dbMsgToDisplay));
           hadHistoryRef.current = true;
+          const lastAt = new Date(real[real.length - 1].created_at || 0).getTime();
+          const hours = (Date.now() - lastAt) / 3600e3;
+          sessionModeRef.current = hours < 4 ? 'none' : hours < 24 ? 'resume' : 'start';
+        } else {
+          sessionModeRef.current = 'start';
         }
       })
       .catch(() => {})
@@ -187,8 +219,14 @@ export function ChatView({ context, onBack, onMenu }) {
   useEffect(() => {
     if (startedRef.current || !authToken || !historyLoaded) return;
     startedRef.current = true;
+    // Continuity: recent activity → pick up the thread instantly, zero LLM cost,
+    // zero wait. The conversation is simply THERE, like a real chat app.
+    if (sessionModeRef.current === 'none') {
+      setTimeout(() => inputRef.current?.focus(), 50);
+      return;
+    }
     setThinking(true);
-    const sentinel = hadHistoryRef.current ? '[SESSION_RESUME]' : '[SESSION_START]';
+    const sentinel = (hadHistoryRef.current && sessionModeRef.current === 'resume') ? '[SESSION_RESUME]' : '[SESSION_START]';
     const params = { messages: [...msgs, { role: 'user', text: sentinel }], authToken, onEvent: applyStreamEvent };
     callDaemonAPI(params)
       .then(({ blocks, suggestions: sugs }) => {
