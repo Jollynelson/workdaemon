@@ -53,6 +53,7 @@ export function ChatView({ context, onBack, onMenu }) {
   const [input, setInput]             = useState('');
   const [thinking, setThinking]       = useState(false);
   const [thinkStage, setThinkStage]   = useState(0);
+  const [streamStatus, setStreamStatus] = useState(''); // server-driven stage label
   const [error, setError]             = useState('');
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [feedback, setFeedback]       = useState({}); // msg index → 'up'|'down' once rated
@@ -106,6 +107,30 @@ export function ChatView({ context, onBack, onMenu }) {
       .finally(() => setHistoryLoaded(true));
   }, [authToken]);
 
+  // Live streaming: progressive events build a transient "streaming" daemon
+  // message in place; the FINAL envelope (same shape/quality as before) then
+  // replaces it atomically, so the end state is identical to non-streaming.
+  const applyStreamEvent = useCallback((ev) => {
+    if (ev.type === 'status') { if (ev.label) setStreamStatus(ev.label); return; }
+    setMsgs(ms => {
+      const last = ms[ms.length - 1];
+      const isLive = Boolean(last?.streaming);
+      const live = isLive ? { ...last } : { role: 'daemon', streaming: true, blocks: [], text: '' };
+      if (ev.type === 'reset') { live.blocks = []; live.text = ''; }
+      else if (ev.type === 'delta') live.text = (live.text || '') + (ev.md || '');
+      else if (ev.type === 'block' && ev.block) { live.blocks = [...(live.blocks || []), ev.block]; live.text = ''; }
+      else return ms;
+      return isLive ? [...ms.slice(0, -1), live] : [...ms, live];
+    });
+  }, []);
+  const settleLive = useCallback((blocks) => {
+    // Swap the streamed view for the authoritative envelope in ONE update (no flicker).
+    setMsgs(ms => {
+      const base = ms[ms.length - 1]?.streaming ? ms.slice(0, -1) : ms;
+      return blocks ? [...base, { role: 'daemon', blocks }] : base;
+    });
+  }, []);
+
   const send = useCallback(async (text) => {
     const q = text.trim();
     if (!q || thinking) return;
@@ -116,25 +141,29 @@ export function ChatView({ context, onBack, onMenu }) {
     setInput('');
     setThinking(true);
     try {
-      const callParams = { messages: [...msgs, userMsg], authToken };
+      const callParams = { messages: [...msgs, userMsg], authToken, onEvent: applyStreamEvent };
       let result;
       try {
         result = await callDaemonAPI(callParams);
       } catch {
         // One automatic retry after a short pause for transient errors.
+        settleLive(null);
+        setStreamStatus('');
         await new Promise(r => setTimeout(r, 1200));
         result = await callDaemonAPI(callParams);
       }
       const { blocks, suggestions: nextSugs } = result;
-      setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
+      settleLive(blocks || []);
       setSuggestions(nextSugs || []);
     } catch (e) {
+      settleLive(null);
       setError(e.message || 'Something went wrong. Try again.');
     } finally {
       setThinking(false);
+      setStreamStatus('');
       setTimeout(() => inputRef.current?.focus(), 50);
     }
-  }, [msgs, authToken, thinking]);
+  }, [msgs, authToken, thinking, applyStreamEvent, settleLive]);
 
   // Rate the daemon's most recent answer → trains the daemon's style over time
   // (server distills repeated 👎/edits into durable LEARNED PREFERENCES).
@@ -160,19 +189,20 @@ export function ChatView({ context, onBack, onMenu }) {
     startedRef.current = true;
     setThinking(true);
     const sentinel = hadHistoryRef.current ? '[SESSION_RESUME]' : '[SESSION_START]';
-    const params = { messages: [...msgs, { role: 'user', text: sentinel }], authToken };
+    const params = { messages: [...msgs, { role: 'user', text: sentinel }], authToken, onEvent: applyStreamEvent };
     callDaemonAPI(params)
       .then(({ blocks, suggestions: sugs }) => {
-        setMsgs(m => [...m, { role: 'daemon', blocks: blocks || [] }]);
+        settleLive(blocks || []);
         setSuggestions(sugs || []);
       })
       .catch(() => {
+        settleLive(null);
         // SESSION_RESUME failures are silent — history is already visible and the
         // error would confuse users who haven't done anything wrong.
         if (sentinel === '[SESSION_RESUME]') return;
         setError('Failed to load Daemon. Try refreshing.');
       })
-      .finally(() => setThinking(false));
+      .finally(() => { setThinking(false); setStreamStatus(''); });
   }, [authToken, historyLoaded]);
 
   const onConfirmAction = useCallback(async (actionId, exec) => {
@@ -411,13 +441,13 @@ export function ChatView({ context, onBack, onMenu }) {
             </div>
           ))}
 
-          {thinking && (
+          {thinking && !(msgs[msgs.length - 1]?.streaming && (msgs[msgs.length - 1].blocks?.length || msgs[msgs.length - 1].text)) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <DaemonMark size={16} />
               <div style={{ padding: '10px 16px', background: c.thinkingBg, border: `1px solid ${c.thinkingBorder}`, borderRadius: '18px 18px 18px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Spinner />
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: c.text3, letterSpacing: '0.08em' }}>
-                  {['REACHING YOUR DAEMON…', 'READING THE COMPANY BRAIN…', 'COMPOSING…'][thinkStage]}
+                  {streamStatus || ['REACHING YOUR DAEMON…', 'READING THE COMPANY BRAIN…', 'COMPOSING…'][thinkStage]}
                 </span>
               </div>
             </div>

@@ -38,6 +38,166 @@ export function callProvider(cfg, sys, messages, identity = {}) {
   return withTimeout(callProviderInner(cfg, sys, messages, identity), ms, `provider:${cfg.provider}`);
 }
 
+// ── Streaming variant ─────────────────────────────────────────────────────────
+// Same providers, same prompts, same params — but tokens arrive via onDelta as
+// they generate, and the FULL text is returned at the end (callers parse it with
+// the exact same parseJsonResponse as the non-streaming path, so quality is
+// identical; only liveness changes). Providers without a streaming surface
+// (google, modal) fall back to the regular call and emit one delta.
+// Timeouts: first token gets the provider's normal call budget; after that an
+// inactivity window guards a mid-stream stall (an actively-talking model is
+// never killed for total duration — the caller's phase budget bounds the turn).
+const STREAM_IDLE_MS = Number(process.env.CHAT_STREAM_IDLE_MS) || 15000;
+
+export async function callProviderStream(cfg, sys, messages, identity = {}, onDelta = () => {}) {
+  const { provider, api_key, endpoint, model } = cfg;
+  const firstTokenMs = provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
+
+  // OpenAI-compatible streaming (openrouter/openai/deepseek/mistral/ollama/hermes/azure).
+  async function oaiStream(client, params, opts = {}) {
+    const ac = new AbortController();
+    let timer = setTimeout(() => ac.abort(), firstTokenMs);
+    const arm = (ms) => { clearTimeout(timer); timer = setTimeout(() => ac.abort(), ms); };
+    try {
+      const stream = await client.chat.completions.create(
+        { ...params, stream: true },
+        { ...opts, signal: ac.signal },
+      );
+      let text = '';
+      for await (const ch of stream) {
+        const d = ch.choices?.[0]?.delta?.content || '';
+        if (d) { text += d; onDelta(d); }
+        arm(STREAM_IDLE_MS);
+      }
+      clearTimeout(timer);
+      console.log('[chat] %s STREAM text_len=%d', provider, text.length);
+      return text;
+    } catch (e) {
+      clearTimeout(timer);
+      if (ac.signal.aborted) throw new Error(`provider:${provider} stream stalled`, { cause: e });
+      throw e;
+    }
+  }
+
+  switch (provider) {
+    case 'openrouter':
+      return oaiStream(new OpenAI({
+        baseURL: 'https://openrouter.ai/api/v1', apiKey: api_key,
+        defaultHeaders: { 'HTTP-Referer': 'https://workdaemon.com', 'X-Title': 'WorkDaemon' },
+      }), {
+        model: model || 'anthropic/claude-sonnet-4-5', max_tokens: 4096,
+        messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },
+      });
+
+    case 'openai':
+      return oaiStream(new OpenAI({ apiKey: api_key }), {
+        model: model || 'gpt-4o', max_tokens: 4096,
+        messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },
+        ...reasoningParams(model),
+      });
+
+    case 'deepseek':
+      return oaiStream(new OpenAI({ baseURL: (endpoint || 'https://api.deepseek.com').replace(/\/$/, ''), apiKey: api_key }), {
+        model: model || 'deepseek-chat', max_tokens: 4096,
+        messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },
+        ...reasoningParams(model),
+      });
+
+    case 'mistral':
+      return oaiStream(new OpenAI({ baseURL: 'https://api.mistral.ai/v1', apiKey: api_key }), {
+        model: model || 'mistral-large-latest', max_tokens: 4096,
+        messages: [{ role: 'system', content: sys }, ...messages],
+        response_format: { type: 'json_object' },
+      });
+
+    case 'ollama': {
+      if (!endpoint) throw new Error('Ollama provider requires an endpoint');
+      const base = (await assertSafeUrl(endpoint, { allowHttp: true })).replace(/\/$/, '');
+      return oaiStream(new OpenAI({ baseURL: `${base}/v1`, apiKey: 'ollama' }), {
+        model: model || 'llama3',
+        messages: [{ role: 'system', content: sys }, ...messages],
+      });
+    }
+
+    case 'hermes': {
+      if (!endpoint) throw new Error('Hermes provider requires an endpoint (gateway API URL)');
+      let base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
+      if (!base.endsWith('/v1')) base = `${base}/v1`;
+      const headers = {};
+      if (identity.workspaceId && identity.userId) {
+        headers['X-Hermes-Session-Key'] = `${identity.workspaceId}:${identity.userId}`.slice(0, 256);
+      }
+      return oaiStream(new OpenAI({ baseURL: base, apiKey: api_key || 'hermes' }), {
+        model: model || 'hermes',
+        messages: [{ role: 'system', content: sys }, ...messages],
+      }, { headers });
+    }
+
+    case 'azure': {
+      if (!endpoint) throw new Error('Azure provider requires an endpoint');
+      const base = (await assertSafeUrl(endpoint)).replace(/\/$/, '');
+      return oaiStream(new OpenAI({
+        baseURL: `${base}/openai/deployments/${model}`, apiKey: api_key,
+        defaultQuery: { 'api-version': '2024-02-15-preview' },
+        defaultHeaders: { 'api-key': api_key },
+      }), { model, messages: [{ role: 'system', content: sys }, ...messages] });
+    }
+
+    case 'anthropic': {
+      // SSE over fetch (no SDK dependency) — content_block_delta carries text.
+      const ac = new AbortController();
+      let timer = setTimeout(() => ac.abort(), firstTokenMs);
+      const arm = (ms) => { clearTimeout(timer); timer = setTimeout(() => ac.abort(), ms); };
+      try {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model: model || 'claude-sonnet-4-6', max_tokens: 4096, system: sys, messages, stream: true }),
+          signal: ac.signal,
+        });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error?.message || 'Anthropic error'); }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '', text = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          arm(STREAM_IDLE_MS);
+          buf += dec.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+            if (!line.startsWith('data:')) continue;
+            try {
+              const ev = JSON.parse(line.slice(5).trim());
+              const d = ev.type === 'content_block_delta' ? (ev.delta?.text || '') : '';
+              if (d) { text += d; onDelta(d); }
+            } catch { /* keep-alives / partial lines */ }
+          }
+        }
+        clearTimeout(timer);
+        console.log('[chat] anthropic STREAM text_len=%d', text.length);
+        return text;
+      } catch (e) {
+        clearTimeout(timer);
+        if (ac.signal.aborted) throw new Error('provider:anthropic stream stalled', { cause: e });
+        throw e;
+      }
+    }
+
+    // No streaming surface → regular call, one delta (UX degrades to "all at
+    // once", quality identical).
+    default: {
+      const text = await callProvider(cfg, sys, messages, identity);
+      onDelta(text);
+      return text;
+    }
+  }
+}
+
 async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {

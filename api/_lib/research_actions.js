@@ -226,18 +226,31 @@ export const ROLE_TAGS = [
   'operations', 'finance', 'hr', 'legal', 'customer-success',
 ];
 
-function buildScanPrompt({ company, industry, location, roles, research }) {
+function buildScanPrompt({ company, industry, location, roles, research, description = null, customers = null, competitors = null }) {
   const safeCompany  = oneLine(company, 120) || 'the company';
   const safeIndustry = oneLine(industry, 80);
   const safeLocation = oneLine(location, 120);
+  const safeDesc     = oneLine(description, 300);
+  const safeCust     = oneLine(customers, 200);
+  const safeComp     = oneLine(competitors, 200);
   const safeRoles    = (roles || []).map(r => oneLine(r, 60)).filter(Boolean).slice(0, 12);
 
+  // THE BUSINESS, not the postcode: every finding must trace to what this
+  // company sells and who it sells to. Location is context for the market the
+  // company operates in — never a topic by itself. (Owner escalation: the brain
+  // was pushing generic regional news — university accreditations, state
+  // ceremonies — because the scan never told the model what the company does.)
+  const businessLine = safeDesc
+    ? `WHAT ${safeCompany.toUpperCase()} DOES: ${safeDesc}`
+    : `WHAT ${safeCompany.toUpperCase()} DOES: a ${safeIndustry || 'business'} company (no fuller description on file — be EXTRA strict about relevance).`;
+
   const sys = `You are the Company Brain for "${safeCompany}"${safeIndustry ? `, a ${safeIndustry} company` : ''}${safeLocation ? ` operating in ${safeLocation}` : ''}. `
-    + `You continuously scan the outside world for developments that MATERIALLY affect this company, then decide who internally should act.\n`
-    + `From the web results, select only MATERIAL, RECENT developments — a new law/regulation, a market or competitor move, a notable trend, a local event — that THIS specific company should respond to. Ignore generic, stale, or unrelated news.\n`
+    + `You continuously scan the outside world for developments that MATERIALLY affect this company's BUSINESS, then decide who internally should act.\n`
+    + `From the web results, select only MATERIAL, RECENT developments — a law/regulation governing its industry, a competitor move, a shift in its customer segment, a market trend in its space — that THIS specific company should respond to.\n`
+    + `HARD RELEVANCE GATE — apply to every candidate finding: "Would ${safeCompany}${safeDesc ? ` (${safeDesc.slice(0, 120)})` : ''} win revenue, lose revenue, or have to change how it operates because of this?" If the causal link to the company's product, customers, or market takes more than ONE step of reasoning, DROP it. General regional/government/education/ceremonial news from the company's location is NOT material just because it is nearby — a tenancy law matters to a rental platform; a university accreditation or a state electricity ceremony does not. ZERO findings is a SUCCESSFUL scan; an irrelevant finding actively damages trust in the Brain.\n`
     + `Return ONE JSON object, no prose, no code fence:\n`
-    + `{"findings":[{"mode":"opportunity|threat","headline":"specific recent development, phrased to be said aloud e.g. 'Lagos State introduced new tenancy laws (May 2026)'","why":"one sentence on why it matters to ${safeCompany}","severity":"info|warning|critical","affected_roles":["one or more of: ${ROLE_TAGS.join(', ')}"],"recommendation":"a concrete action for those roles, e.g. 'Marketing should publish an explainer positioning us as the compliant choice'","draft":"see rule below or null"}]}\n`
-    + `Rules: 0-4 findings; each specific and tied to the company's market/industry; affected_roles MUST come from the allowed list; if nothing is material, return {"findings":[]}.\n`
+    + `{"findings":[{"mode":"opportunity|threat","headline":"specific recent development, phrased to be said aloud e.g. 'Lagos State introduced new tenancy laws (May 2026)'","why":"one sentence naming the DIRECT link to ${safeCompany}'s product/customers/market","severity":"info|warning|critical","affected_roles":["one or more of: ${ROLE_TAGS.join(', ')}"],"recommendation":"a concrete action for those roles, e.g. 'Marketing should publish an explainer positioning us as the compliant choice'","draft":"see rule below or null"}]}\n`
+    + `Rules: 0-4 findings; each must pass the relevance gate and name its causal link in "why"; affected_roles MUST come from the allowed list; if nothing passes, return {"findings":[]}.\n`
     + `draft: when affected_roles includes "marketing" AND the development warrants public content, write a ready-to-post social media draft for ${safeCompany} — 2-4 sentences, strong hook, clear value, soft CTA, on-brand and specific to the development; no hashtag spam. Otherwise set draft to null.\n`
     + UNTRUSTED_DATA_NOTICE;
 
@@ -248,8 +261,11 @@ function buildScanPrompt({ company, industry, location, roles, research }) {
   );
 
   const user = `COMPANY: ${safeCompany}\n`
+    + `${businessLine}\n`
     + `INDUSTRY: ${safeIndustry || 'unspecified'}\n`
-    + `MARKET/LOCATION: ${safeLocation || 'unspecified'}\n`
+    + (safeCust ? `CUSTOMERS / ICP: ${safeCust}\n` : '')
+    + (safeComp ? `COMPETITORS: ${safeComp}\n` : '')
+    + `MARKET/LOCATION (context only — never a topic by itself): ${safeLocation || 'unspecified'}\n`
     + (safeRoles.length ? `INTERNAL ROLES (target findings to these where relevant): ${safeRoles.join(', ')}\n` : '')
     + `\n${grounding}`;
 
@@ -342,15 +358,25 @@ export async function scanExternal(db, workspaceId, ws, roles = []) {
   const llm = await resolveLLM(workspaceId, db);
   if (!llm) return { workspaceId, skipped: 'no llm' };
 
+  // BUSINESS-led queries: anchor every search on what the company sells (industry,
+  // description keywords, competitors). Location only ever QUALIFIES an industry
+  // query — a bare "<location> news" query is how the brain ended up pushing
+  // university accreditations and state ceremonies to a rental platform.
+  const descTerms = oneLine(ctx.description, 90);
+  const competitorTerms = oneLine(ctx.competitors, 80).split(/[,;·]/).map(s => s.trim()).filter(Boolean).slice(0, 2);
   const queries = [
-    `${industry || company} news ${location || ''}`.trim(),
-    `${location || industry || company} ${industry ? `${industry} ` : ''}regulation policy law`.trim(),
-    `${industry || company} trends ${location || ''}`.trim(),
+    `${industry || descTerms || company} news ${location || ''}`.trim(),
+    `${industry || descTerms || company} regulation policy ${location || ''}`.trim(),
+    descTerms ? `${descTerms} market trends` : `${industry || company} trends`,
+    ...competitorTerms.map(c => `${c} news`),
   ];
-  const research = await braveSearchMany([...new Set(queries)], { count: 6, freshness: 'pw' });
+  const research = await braveSearchMany([...new Set(queries)].slice(0, 4), { count: 6, freshness: 'pw' });
   if (!research.grounded) return { workspaceId, skipped: 'no fresh results' };
 
-  const { sys, user } = buildScanPrompt({ company, industry, location, roles, research });
+  const { sys, user } = buildScanPrompt({
+    company, industry, location, roles, research,
+    description: ctx.description, customers: ctx.customers, competitors: ctx.competitors,
+  });
 
   let intel;
   try {

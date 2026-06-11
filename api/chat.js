@@ -1,7 +1,8 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody, signServiceToken } from './_lib/security.js';
 import { webResearch, fetchPageText, extractUrls } from './_lib/research.js';
-import { callProvider, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
+import { callProvider, callProviderStream, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
+import { createEnvelopeStream } from './_lib/stream_envelope.js';
 import { buildDaemonSystemPrompt } from './_lib/prompt.js';
 import { extractTopicTags } from './_lib/topics.js';
 import { classifyTurn, pickTierModels, responseIsThin, wantsDeep } from './_lib/brain_router.js';
@@ -220,9 +221,35 @@ export default async function handler(req, res) {
   // enough never to break real sessions, low enough to reject abusive payloads.
   const body = parseBody(res, req.body, {
     messages: { type: 'array', required: true, min: 1, max: 1000, items: { type: 'object' } },
+    stream:   { type: 'boolean' },
   });
   if (!body) return;
   const messages = body.messages;
+
+  // ── Streaming (opt-in, fully additive) ──────────────────────────────────────
+  // When the client sends stream:true, the response is NDJSON events:
+  //   {type:"status",label}  what the daemon is doing right now
+  //   {type:"reset"}         discard streamed content (a better attempt follows)
+  //   {type:"delta",md}      live fragment of the current text block
+  //   {type:"block",block}   a completed structured block
+  //   {type:"final",payload} the AUTHORITATIVE envelope — parsed by the exact
+  //                          same parseJsonResponse as the non-streaming path,
+  //                          so final quality is identical; only liveness changes.
+  // Without stream:true, behavior is byte-for-byte the previous JSON response.
+  const wantsStream = body.stream === true;
+  let streamStarted = false;
+  const emit = (ev) => {
+    if (!wantsStream) return;
+    if (!streamStarted) {
+      streamStarted = true;
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      });
+    }
+    res.write(JSON.stringify(ev) + '\n');
+  };
 
   const db = adminClient();
 
@@ -572,6 +599,29 @@ export default async function handler(req, res) {
     } catch (e) { console.warn('[chat] brain token mint skipped:', e.message); }
   }
 
+  // One model-call gate for every attempt (primary, escalation, retries, brain
+  // pull). Streaming: tokens flow through the incremental envelope parser into
+  // client events while the FULL text returns to the same parseJsonResponse as
+  // ever. A stream failure quietly retries non-streaming — never quality loss.
+  const identity = { workspaceId, userId: user.id };
+  const runModel = async (cfg, msgs) => {
+    if (!wantsStream) return callProvider(cfg, sys, msgs, identity);
+    emit({ type: 'reset' });
+    const env = createEnvelopeStream({
+      onDelta: (md) => emit({ type: 'delta', md }),
+      onBlock: (block) => emit({ type: 'block', block }),
+    });
+    try {
+      const text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d));
+      env.end();
+      return text;
+    } catch (e) {
+      console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
+      emit({ type: 'reset' });
+      return callProvider(cfg, sys, msgs, identity);
+    }
+  };
+
   // Resilience: a self-hosted provider (hermes) going down must NEVER break the
   // daemon. If the primary provider fails, fall back to a cloud model. No-op when
   // the primary already IS a cloud provider (those just surface the error).
@@ -583,7 +633,7 @@ export default async function handler(req, res) {
     else if (process.env.ANTHROPIC_API_KEY) fb = { provider: 'anthropic', api_key: process.env.ANTHROPIC_API_KEY, model: 'claude-sonnet-4-6' };
     if (!fb) throw err;
     console.warn('[chat] provider=%s failed (%s) → cloud fallback %s', resolvedKey.provider, err.message, fb.provider);
-    return parseJsonResponse(await callProvider(fb, sys, trimmed, { workspaceId, userId: user.id }));
+    return parseJsonResponse(await runModel(fb, trimmed));
   };
 
   // Wall-clock budget for the whole LLM phase. Optional extra hops (escalation,
@@ -607,13 +657,13 @@ export default async function handler(req, res) {
     let escalated = false;
     let parsed;
     try {
-      const identity = { workspaceId, userId: user.id };
-      parsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, trimmed, identity));
+      parsed = parseJsonResponse(await runModel({ ...resolvedKey, model: usedModel }, trimmed));
       // Escalation gate: a fast-tier answer that came back thin → retry on deep.
       // Skip when the time budget is too tight to afford another full call.
       if (tiers.twoTier && !goDeep && responseIsThin(parsed) && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
         try {
-          const deepParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: tiers.deep }, sys, trimmed, identity));
+          emit({ type: 'status', label: 'GOING DEEPER…' });
+          const deepParsed = parseJsonResponse(await runModel({ ...resolvedKey, model: tiers.deep }, trimmed));
           if (!responseIsThin(deepParsed)) { parsed = deepParsed; usedModel = tiers.deep; escalated = true; }
         } catch { /* keep the fast result */ }
       }
@@ -622,7 +672,7 @@ export default async function handler(req, res) {
       // then to a cloud provider (so a hermes outage never breaks the daemon).
       if (usedModel !== resolvedKey.model) {
         try {
-          parsed = parseJsonResponse(await callProvider(resolvedKey, sys, trimmed, { workspaceId, userId: user.id }));
+          parsed = parseJsonResponse(await runModel(resolvedKey, trimmed));
           usedModel = resolvedKey.model;
         } catch (e2) { parsed = await cloudFallback(e2); usedModel = 'cloud-fallback'; }
       } else {
@@ -654,7 +704,8 @@ export default async function handler(req, res) {
           { role: 'assistant', content: JSON.stringify({ brain_queries: qs }) },
           { role: 'user', content: `COMPANY BRAIN RESULTS (from your queries — ground your answer in these and cite source + title; never mention this lookup step):\n${delimitUntrusted(JSON.stringify(results), 6000)}\n\nNow give your full answer to my previous message as ONE JSON object — no "brain_queries" this time.` },
         ];
-        const followParsed = parseJsonResponse(await callProvider({ ...resolvedKey, model: usedModel }, sys, followup, { workspaceId, userId: user.id }));
+        emit({ type: 'status', label: 'QUERYING THE COMPANY BRAIN…' });
+        const followParsed = parseJsonResponse(await runModel({ ...resolvedKey, model: usedModel }, followup));
         if (followParsed?.blocks?.length) { parsed = followParsed; console.log('[chat] brain pull: %d quer(ies) → answered', qs.length); }
       } catch (e) { console.error('[chat] brain pull:', e.message); /* keep the first answer */ }
     }
@@ -866,6 +917,13 @@ export default async function handler(req, res) {
     // history/memories/interactions/agent-profile writes were silently lost.
     waitUntil(persist());
 
+    if (streamStarted) {
+      // The final envelope is AUTHORITATIVE — the client reconciles its streamed
+      // view against this exact payload (same shape as the JSON response).
+      emit({ type: 'final', payload: parsed });
+      res.end();
+      return;
+    }
     return res.status(200).json(parsed);
   } catch (e) {
     console.error('[chat] provider=%s error=%s', keyRow.provider, e.message, e.stack);
@@ -874,6 +932,14 @@ export default async function handler(req, res) {
       workspaceId: workspaceId || null, domain: 'codebase', subjectType: 'error', subjectId: 'chat.handler',
       signal: 'error', meta: { where: 'chat.handler', provider: keyRow?.provider, message: e.message, stack: String(e.stack || '').slice(0, 1000) },
     });
+    if (streamStarted) {
+      try { res.write(JSON.stringify({ type: 'error', error: 'AI request failed. Please try again.' }) + '\n'); res.end(); } catch { /* socket gone */ }
+      return;
+    }
     return res.status(502).json({ error: 'AI request failed. Please try again.' });
   }
 }
+
+// Vercel Node runtime: allow chunked/streamed responses for this function
+// (maxDuration continues to come from vercel.json).
+export const config = { supportsResponseStreaming: true };

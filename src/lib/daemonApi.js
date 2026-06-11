@@ -38,7 +38,14 @@ export function parseJsonResponse(text) {
 // authenticated session — the client only sends messages + the auth token.
 // (A legacy direct-browser Anthropic path with a client-built prompt was
 // removed here: it bypassed every server-side defense and nothing set its key.)
-export async function callDaemonAPI({ messages, authToken }) {
+//
+// Streaming: pass onEvent and the server answers as NDJSON events —
+//   {type:"status"|"reset"|"delta"|"block"} progressively, then {type:"final"}.
+// callDaemonAPI still RESOLVES with the final {blocks, suggestions} envelope
+// (identical shape to the non-streaming response), so callers that ignore
+// onEvent behave exactly as before. If the server answers with plain JSON
+// (older deploy, deterministic short-circuits), that JSON is returned as-is.
+export async function callDaemonAPI({ messages, authToken, onEvent }) {
   // New FINAL-spec Brain backend (DeepSeek), when configured. Identity is derived
   // server-side from the auth token, so we only send the latest message + history.
   const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
@@ -65,7 +72,7 @@ export async function callDaemonAPI({ messages, authToken }) {
     };
   }
 
-  // Legacy backend endpoint (old /api/chat on the same origin)
+  // Same-origin /api/chat — streaming when onEvent is provided.
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: {
@@ -74,13 +81,44 @@ export async function callDaemonAPI({ messages, authToken }) {
     },
     body: JSON.stringify({
       messages: messages.map(serializeDaemonMsg),
+      ...(onEvent ? { stream: true } : {}),
     }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Server error ${res.status}`);
   }
-  return res.json();
+  const ct = res.headers.get('content-type') || '';
+  if (!onEvent || !ct.includes('ndjson') || !res.body?.getReader) return res.json();
+
+  // NDJSON reader: forward progressive events; resolve with the final envelope.
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let final = null;
+  let streamError = null;
+  const handleLine = (line) => {
+    if (!line) return;
+    let ev;
+    try { ev = JSON.parse(line); } catch { return; }
+    if (ev.type === 'final') final = ev.payload;
+    else if (ev.type === 'error') streamError = ev.error || 'AI request failed.';
+    else { try { onEvent(ev); } catch { /* UI handler must never kill the stream */ } }
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      handleLine(buf.slice(0, nl).trim());
+      buf = buf.slice(nl + 1);
+    }
+  }
+  handleLine(buf.trim());
+  if (streamError) throw new Error(streamError);
+  if (!final) throw new Error('Connection dropped mid-answer. Try again.');
+  return final;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
