@@ -33,6 +33,8 @@ export const BRAIN_FIELDS = [
     fields: [
       { key: 'customers',   label: 'Customers / ICP', placeholder: 'Who buys from you? Any notable names or segments?', multiline: true, rows: 2 },
       { key: 'competitors', label: 'Competitors', placeholder: 'e.g. Notion, Linear, Asana — and how you differ', multiline: false },
+      { key: 'website',     label: 'Website', placeholder: 'e.g. betatenant.com — the brain reads it on its own', multiline: false },
+      { key: 'socials',     label: 'Social profiles', placeholder: 'Auto-discovered by the brain — or paste links: X, Instagram, LinkedIn…', multiline: true, rows: 2 },
     ],
   },
   {

@@ -728,6 +728,15 @@ export default async function handler(req, res) {
         catch (e) { console.error('[brain] ensureGoals ws=%s:', w.id, e.message); }
         try { if (elapsed() < BUDGET_MS) await reviewGoals(cronDb, w.id); }
         catch (e) { console.error('[brain] reviewGoals ws=%s:', w.id, e.message); }
+        // SELF-SEEDING: the brain fills its own knowledge gaps. Social presence
+        // discovered from the company's website + web search — no connection
+        // needed (cheap no-op once context.socials is filled).
+        try {
+          if (elapsed() < BUDGET_MS) {
+            const { discoverSocialPresence } = await import('./_lib/social.js');
+            await discoverSocialPresence(cronDb, { workspaceId: w.id });
+          }
+        } catch (e) { console.error('[brain] socialPresence ws=%s:', w.id, e.message); }
         // Equip every staff daemon with its brain-assigned skill toolkit —
         // covers members onboarded before this feature (cheap no-op once equipped).
         try {

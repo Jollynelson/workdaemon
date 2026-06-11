@@ -93,6 +93,12 @@ export default async function handler(req, res) {
     catch (e) { console.warn('[setup] staff goals:', e.message); }
     try { await assignRoleSkills(adminClient(), { workspaceId: workspace.id, userId: user.id, role: role || title || null }); }
     catch (e) { console.warn('[setup] skill assignment:', e.message); }
+    // SELF-SEEDING: the brain finds the company's public social footprint on its
+    // own (website footer links + web search) — no connection required.
+    try {
+      const { discoverSocialPresence } = await import('../_lib/social.js');
+      await discoverSocialPresence(adminClient(), { workspaceId: workspace.id });
+    } catch (e) { console.warn('[setup] social discovery:', e.message); }
   })());
 
   return res.status(200).json({ workspace, inviteLink });

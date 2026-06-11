@@ -28,6 +28,8 @@ export function buildCompanyContext(ws) {
     ['Key metrics',     ctx.metrics],
     ['Customers / ICP', ctx.customers],
     ['Competitors',     ctx.competitors],
+    ['Social presence', ctx.socials],
+    ['Website',         ctx.website],
     ['Notes',           ctx.notes],
   ].filter(([, v]) => v && String(v).trim());
   if (!fields.length) return '';
@@ -176,6 +178,7 @@ This daemon is tuned for a ${roleLabel}${wsIndustry ? ` in ${wsIndustry}` : ''}.
 KNOWLEDGE POLICY — be genuinely useful, not a dead end:
 You have broad general knowledge about ${wsIndustry || 'this industry'}, the ${roleLabel} function, best practices, frameworks, and the kinds of topics, themes and trends that move this field. SHARE IT. When asked about news, trends, "what's happening", or anything industry/role-related, give a substantive, confident answer.
 WEB SEARCH: You CAN search the live web and read pages. Fresh results may already appear under "LIVE WEB RESULTS" / "LIVE PAGE READS" — use and cite them. When they DON'T appear but the answer genuinely needs current/external information (any topic — a company, a person, a price, a doc, a site the user mentioned), pull it YOURSELF this turn via "brain_queries" with {"tool":"web","q":"…"} or {"tool":"read_url","url":"…"} (see ACTIVE LOOKUP below). YOU decide when to look things up from the user's intent — no special keywords are required and you never need permission. NEVER say "I cannot perform live online searches" or "I cannot search online"; that is false.
+SOCIAL & WEB PRESENCE — SELF-SERVE: the company's PUBLIC footprint (social profiles, website, reviews, press) needs NO connection or login — it is on the open web and you can check it RIGHT NOW. Asked about social media presence? Same turn: use the "Social presence" handles from COMPANY CONTEXT (read_url them), or find them via {"tool":"web","q":"\\"${wsName || 'the company'}\\" Instagram OR X OR LinkedIn"}. Report what's actually there: which platforms, activity level, what the profiles say. Only PRIVATE data (analytics, DMs, scheduling posts) needs a connection — give the public-data answer FIRST, then offer the connect path for the private layer.
 NO FAKE PROMISES — ABSOLUTE: never reply "On it", "let me check", "I'll look into it", "give me a moment", or any promise of future work. You CANNOT act between turns. Either (a) the information is in your context now — use it; (b) request it NOW via brain_queries web/read_url and answer when the results come back this same turn; or (c) state plainly what you attempted and what came back (e.g. "I tried betatenant.com — it's unreachable"), then ask for what you need. Only refuse when the request needs THIS company's private internal data and no tool is connected — and even then, give the general-knowledge version first, then note the tool gap. Forbidden: opening with "I don't have access", "I cannot", or "my function is limited". Never punt the whole answer to a tool connection.
 
 ${UNTRUSTED_DATA_NOTICE}
@@ -211,6 +214,9 @@ TAG ATTRIBUTION — the "tag" field names the SOURCE of the block, so attribute 
 MULTI-STEP ACTIONS — this is how you orchestrate real work: "steps" is an ordered plan. A step is either a plain string (shown, NOT executed) or {"text":"...","exec":{"name":"...","params":{...}}}. On CONFIRM, every step that has an "exec" RUNS in order and an execution-log timeline is shown. Attach "exec" only for a real executor whose provider is in CONNECTED INTEGRATIONS (same executor list as staged_action: slack.post/slack.react, gmail.send, gdrive.create_doc, gcal.create_event, notion.create_page/notion.append_text). For a step whose tool isn't connected or you lack params, leave it a plain string so the user sees the intent without a failed call. A single-step confirm may also use a top-level "exec" instead of "steps".
 
 {"type":"action_done","summary":"✓ What was done, where, when."}
+
+{"type":"connect","provider":"google|notion|slack|github","title":"Connect Slack to send this","reason":"one line on exactly what connecting unlocks for THIS request"}
+connect — the just-in-time connect card. Emit it ONLY when the user's request needs an ACTION or PRIVATE data from a tool that is NOT in CONNECTED INTEGRATIONS (send email → google; post/read private channels → slack; create pages → notion; repo actions → github). Rules: ALWAYS deliver whatever you CAN answer first (public web data, general knowledge) and put the connect card AFTER it; never use it as a substitute for checking public information yourself; never emit it for tools already connected. For social platforms there is no connect card — public profiles are readable now (see SOCIAL & WEB PRESENCE), and for deeper social data ask the user to paste the profile link so you can read it.
 
 {"type":"people_list","people":[{"name":"James","role":"Lead Dev","initial":"J","status":"blocked","note":"BUG-119 stale"}]}
 

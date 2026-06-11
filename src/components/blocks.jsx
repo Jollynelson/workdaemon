@@ -291,6 +291,35 @@ export function BlockActionDone({ block }) {
   );
 }
 
+// Just-in-time connect card (IA §9.3 "Connect to act") — the daemon needs a
+// tool that isn't connected for THIS request; one click takes the user to the
+// Integrations page. Always rendered AFTER whatever the daemon could answer
+// from public data, never as a substitute for it.
+const CONNECT_LABELS = { google: 'Google (Gmail · Calendar · Drive)', notion: 'Notion', slack: 'Slack', github: 'GitHub' };
+export function BlockConnect({ block }) {
+  const c = useC();
+  const label = CONNECT_LABELS[block.provider] || (block.provider ? block.provider[0].toUpperCase() + block.provider.slice(1) : 'a tool');
+  return (
+    <div style={{ padding: '14px 16px', background: 'rgba(59,110,247,0.06)', border: '1px solid rgba(59,110,247,0.22)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ width: 34, height: 34, borderRadius: 9, background: 'rgba(59,110,247,0.12)', border: '1px solid rgba(59,110,247,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b6ef7', flexShrink: 0 }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 17H7A5 5 0 0 1 7 7h2" /><path d="M15 7h2a5 5 0 1 1 0 10h-2" /><line x1="8" x2="16" y1="12" y2="12" />
+        </svg>
+      </div>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{block.title || `Connect ${label}`}</div>
+        {block.reason && <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: c.text3, marginTop: 2, lineHeight: 1.5 }}>{block.reason}</div>}
+      </div>
+      <a href="/app/integrations" style={{
+        padding: '8px 16px', borderRadius: 8, background: '#3b6ef7', color: '#fff',
+        fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+      }}>
+        Connect {label.split(' ')[0]}
+      </a>
+    </div>
+  );
+}
+
 // Adaptive action card — the daemon proposes something the user approves in one
 // click; the buttons adapt to the conversation (Verify & Apply / Reject for a
 // tool mutation, Copy / Email for produced content). A button's `exec` runs a
@@ -461,6 +490,7 @@ export function renderBlock(block, i, { onConfirm, onCancel, onBroadcast, onExec
     case 'invoice_table':  return wrap(<BlockInvoiceTable block={block} />);
     case 'broadcast':      return wrap(<BlockBroadcast block={block} onBroadcast={onBroadcast} />);
     case 'staged_action':  return wrap(<BlockStagedAction block={block} onExec={onExec} />);
+    case 'connect':        return wrap(<BlockConnect block={block} />);
     default:               return wrap(<BlockText block={{ md: typeof block === 'string' ? block : JSON.stringify(block) }} />);
   }
 }
