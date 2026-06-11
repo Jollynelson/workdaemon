@@ -868,6 +868,7 @@ export default function Onboarding() {
   // Pre-fill name/title from the signed-in profile (Google gives us full_name +
   // avatar on first sign-in) and the primary-market field from edge-detected
   // location — never clobbering anything the user has already typed.
+  const prefetchFired = useRef(false);
   useEffect(() => {
     fetch('/api/auth/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.ok ? r.json() : null)
@@ -888,6 +889,18 @@ export default function Onboarding() {
           location:    prev.location    || d.detectedLocation || '',
           emailDomain: prev.emailDomain || (emailDom && !FREE.includes(emailDom.toLowerCase()) ? emailDom : ''),
         }));
+        // EAGER SEED: the instant we know the work-email domain, research the
+        // company (site + socials + web) in the background so the Brain is seeded
+        // by the time they finish onboarding. One-shot, fire-and-forget.
+        const corpDom = emailDom && !FREE.includes(emailDom.toLowerCase()) ? emailDom : '';
+        if (corpDom && !prefetchFired.current) {
+          prefetchFired.current = true;
+          fetch('/api/brain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ action: 'prefetch_company', domain: corpDom, email: d.user?.email }),
+          }).catch(() => {});
+        }
       })
       .catch(() => {});
   }, [token]);

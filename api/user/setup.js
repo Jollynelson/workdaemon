@@ -88,6 +88,29 @@ export default async function handler(req, res) {
   const ctxAdditions = {};
   if (locMeta) ctxAdditions.location = locMeta;
   if (emailDomain) ctxAdditions.email_domain = emailDomain;
+
+  // EAGER SEED: merge the company intel researched while they filled the form
+  // (from their work-email domain — site + socials + web) into the new Brain, so
+  // the very first daemon session is company-specific. Name/location just confirm.
+  try {
+    const { data: pf } = await db.from('company_prefetch').select('intel, status').eq('user_id', user.id).maybeSingle();
+    const intel = pf?.status === 'ready' ? pf.intel : null;
+    if (intel) {
+      if (intel.summary)            ctxAdditions.description = intel.summary;
+      if (intel.website)            ctxAdditions.website = intel.website;
+      if (intel.competitors?.length) ctxAdditions.competitors = intel.competitors.join(', ');
+      if (intel.socials?.length)    ctxAdditions.socials = intel.socials.join(' · ');
+      ctxAdditions.market_intel = {
+        summary: intel.summary || null, positioning: intel.positioning || null,
+        competitors: intel.competitors || [], industry_trends: intel.industry_trends || null,
+        location: intel.location || null, socials: intel.socials || [],
+        researched_at: intel.researched_at || null, source: 'eager_prefetch',
+      };
+    }
+    // One-shot: clear the prefetch row whether or not it was ready.
+    if (pf) db.from('company_prefetch').delete().eq('user_id', user.id).then(() => {}, () => {});
+  } catch (e) { console.warn('[setup] prefetch merge:', e.message); }
+
   const hasCtx = Object.keys(ctxAdditions).length > 0;
 
   if (existing?.workspace_id) {
