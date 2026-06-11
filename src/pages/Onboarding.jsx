@@ -111,11 +111,16 @@ function StepProfile({ data, setData }) {
             background: 'rgba(255,255,255,0.06)',
             border: '1px solid rgba(255,255,255,0.11)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0, cursor: 'pointer',
+            flexShrink: 0, cursor: 'pointer', overflow: 'hidden',
           }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.38)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
-            </svg>
+            {data.avatar ? (
+              <img src={data.avatar} alt="" referrerPolicy="no-referrer"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.38)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+            )}
           </div>
           <FocusInput
             placeholder="Your full name"
@@ -627,14 +632,24 @@ export default function Onboarding() {
     return () => clearTimeout(t);
   }, []);
 
-  // Pre-fill the primary-market field from edge-detected location (no prompt).
+  // Pre-fill name/title from the signed-in profile (Google gives us full_name +
+  // avatar on first sign-in) and the primary-market field from edge-detected
+  // location — never clobbering anything the user has already typed.
   useEffect(() => {
     fetch('/api/auth/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (d?.detectedLocation) {
-          setData(prev => (prev.location ? prev : { ...prev, location: d.detectedLocation }));
-        }
+        if (!d) return;
+        const meta = d.user?.user_metadata || {};
+        const fullName = d.profile?.name || meta.full_name || meta.name || '';
+        const avatar = d.profile?.avatar_url || meta.avatar_url || meta.picture || '';
+        setData(prev => ({
+          ...prev,
+          name:     prev.name     || fullName,
+          title:    prev.title    || d.profile?.title || '',
+          avatar:   prev.avatar   || avatar,
+          location: prev.location || d.detectedLocation || '',
+        }));
       })
       .catch(() => {});
   }, [token]);
