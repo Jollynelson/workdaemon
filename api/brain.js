@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { requireAuth, adminClient } from './_lib/supabase.js';
-import { researchRole, researchCompany, scanOneWorkspace, SCAN_COLUMNS } from './_lib/research_actions.js';
+import { researchRole, researchCompany, scanOneWorkspace, backfillInboxPush, SCAN_COLUMNS } from './_lib/research_actions.js';
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken, timingSafeEqualStr } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
 import { getAccessToken, getUserTokens } from './_lib/oauth.js';
@@ -728,15 +728,25 @@ export default async function handler(req, res) {
         catch (e) { console.error('[brain] ensureGoals ws=%s:', w.id, e.message); }
         try { if (elapsed() < BUDGET_MS) await reviewGoals(cronDb, w.id); }
         catch (e) { console.error('[brain] reviewGoals ws=%s:', w.id, e.message); }
-        // SELF-SEEDING: the brain fills its own knowledge gaps. Social presence
-        // discovered from the company's website + web search — no connection
-        // needed (cheap no-op once context.socials is filled).
+        // SELF-SEEDING + SOCIAL LEARNING LOOP: discover the company's public
+        // footprint (no connection needed), keep re-reading the profiles weekly
+        // so the brain learns from what the company actually posts, and audit
+        // the presence for improvements (findings → marketing/CEO daemons with
+        // ready drafts). Each step is internally gated — cheap no-ops between
+        // cadences.
         try {
           if (elapsed() < BUDGET_MS) {
-            const { discoverSocialPresence } = await import('./_lib/social.js');
+            const { discoverSocialPresence, refreshSocialSnapshots, socialPresenceAudit } = await import('./_lib/social.js');
             await discoverSocialPresence(cronDb, { workspaceId: w.id });
+            if (elapsed() < BUDGET_MS) await refreshSocialSnapshots(cronDb, w.id);
+            if (elapsed() < BUDGET_MS) await socialPresenceAudit(cronDb, w.id);
           }
-        } catch (e) { console.error('[brain] socialPresence ws=%s:', w.id, e.message); }
+        } catch (e) { console.error('[brain] socialLoop ws=%s:', w.id, e.message); }
+        // Route every unpushed finding (social audits, chat-detected knowledge
+        // gaps, anything that skipped its own push) to the right members' inbox
+        // — and chat for warning/critical. Idempotent via pushed_to_inbox.
+        try { if (elapsed() < BUDGET_MS) await backfillInboxPush(cronDb, { workspaceId: w.id }); }
+        catch (e) { console.error('[brain] backfillInbox ws=%s:', w.id, e.message); }
         // Equip every staff daemon with its brain-assigned skill toolkit —
         // covers members onboarded before this feature (cheap no-op once equipped).
         try {

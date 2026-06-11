@@ -5,9 +5,9 @@
 // the website's own footer links; public profile pages are readable. OAuth /
 // API keys only matter for PRIVATE data (analytics, DMs, posting) — that's the
 // inline connect card's job, not a blocker for knowing the company.
-import { braveSearch, fetchPageText } from './research.js';
-import { recordSignal } from './learning.js';
-import { assertSafeUrl } from './security.js';
+import { braveSearch, fetchPageText, resolveLLM, callLLM, extractJson } from './research.js';
+import { recordSignal, signalsSince } from './learning.js';
+import { assertSafeUrl, delimitUntrusted, UNTRUSTED_DATA_NOTICE } from './security.js';
 import { upsertDocuments } from './ingestion.js';
 
 // Platform URL shapes → canonical profile links.
@@ -138,4 +138,105 @@ export async function discoverSocialPresence(db, { workspaceId, force = false })
   }).catch(() => {});
   console.log('[social] ws=%s found=%d (%s)', workspaceId, list.length, Object.keys(handles).join(',') || 'none');
   return { found: list.length, socials: summary, platforms: Object.keys(handles) };
+}
+
+// Parse the canonical "Label: url · Label: url" summary back into profile links.
+function profilesFromContext(socials) {
+  return [...String(socials || '').matchAll(/([A-Za-z]+):\s*(https?:\/\/\S+?)(?:\s*\(unverified[^)]*\))?(?:\s*·|$)/g)]
+    .map(m => ({ label: m[1], url: m[2] }));
+}
+
+// ── CONTINUOUS LEARNING: re-read the company's profiles on a cadence ─────────
+// The brain doesn't snapshot socials once and forget — it keeps reading them,
+// so "what are we saying publicly" and "is the account active" stay current,
+// and the nightly passes mine fresh content. Weekly per workspace.
+export async function refreshSocialSnapshots(db, workspaceId, { maxAgeDays = 7 } = {}) {
+  const { data: ws } = await db.from('workspaces').select('name, context').eq('id', workspaceId).single();
+  const profiles = profilesFromContext(ws?.context?.socials);
+  if (!profiles.length) return { refreshed: 0, reason: 'no_socials' };
+
+  // Freshness gate: skip when the newest social snapshot is younger than the window.
+  const { data: newest } = await db.from('workspace_documents')
+    .select('updated_at').eq('workspace_id', workspaceId).eq('source', 'social')
+    .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  if (newest?.updated_at && Date.now() - new Date(newest.updated_at).getTime() < maxAgeDays * 864e5) {
+    return { refreshed: 0, reason: 'fresh' };
+  }
+
+  const docs = [];
+  for (const p of profiles.slice(0, 5)) {
+    const content = await fetchPageText(p.url, { maxChars: 3000 }).catch(() => null);
+    if (content) {
+      docs.push({
+        external_id: p.url, doc_type: 'social_profile',
+        title: `${ws?.name || 'Company'} on ${p.label} (snapshot ${new Date().toISOString().slice(0, 10)})`,
+        content, url: p.url,
+      });
+    }
+  }
+  if (docs.length) {
+    try { await upsertDocuments(db, workspaceId, 'social', docs); } catch (e) { console.warn('[social] refresh upsert:', e.message); }
+  }
+  recordSignal(db, { workspaceId, domain: 'brain', subjectType: 'social_presence', subjectId: workspaceId,
+    signal: 'refreshed', value: docs.length }).catch(() => {});
+  return { refreshed: docs.length };
+}
+
+// ── IMPROVEMENT HUNT: the brain audits the presence and proposes upgrades ────
+// Weekly LLM pass over what was actually found (platforms, verified state,
+// profile content) + the company's business → opportunity findings routed to
+// marketing/CEO, with ready-to-use drafts where content is the answer. Feeds
+// the same findings → inbox → chat-delivery pipeline as every other hunt.
+export async function socialPresenceAudit(db, workspaceId) {
+  // Cooldown: one audit per ~6 days per workspace.
+  const recent = await signalsSince(db, {
+    workspaceId, domain: 'brain', subjectType: 'social_audit',
+    since: new Date(Date.now() - 6 * 864e5).toISOString(), limit: 1,
+  });
+  if (recent.length) return { findings: 0, reason: 'cooldown' };
+
+  const { data: ws } = await db.from('workspaces').select('name, industry, context').eq('id', workspaceId).single();
+  const ctx = ws?.context || {};
+  if (!ctx.socials) return { findings: 0, reason: 'no_socials' };
+  const llm = await resolveLLM(workspaceId, db);
+  if (!llm) return { findings: 0, reason: 'no_llm' };
+
+  const { data: snaps } = await db.from('workspace_documents')
+    .select('title, content').eq('workspace_id', workspaceId).eq('source', 'social').limit(6);
+  const snapshots = (snaps || []).map(s => `## ${s.title}\n${(s.content || '').slice(0, 1200)}`).join('\n\n');
+
+  const sys = `You are the Company Brain's social-presence strategist for "${ws.name}"${ws.industry ? ` (${ws.industry})` : ''}. `
+    + `Audit the company's ACTUAL public social footprint below and produce the highest-leverage improvements. Be concrete and specific to this company — never generic social-media advice.\n`
+    + `Return ONE JSON object: {"findings":[{"headline":"specific, said-aloud improvement opportunity","why":"direct revenue/brand link","severity":"info|warning","recommendation":"concrete next action","draft":"a ready-to-post draft when content IS the action, else null"}]} — 0-3 findings; missing platform, dead account, weak positioning, and unverified handles are all fair game; if the presence is genuinely solid, return [].\n`
+    + UNTRUSTED_DATA_NOTICE;
+  const user = `WHAT THE COMPANY DOES: ${String(ctx.description || '').slice(0, 300) || '(unknown)'}\n`
+    + `DISCOVERED PRESENCE: ${String(ctx.socials).slice(0, 600)}\n`
+    + `PROFILE SNAPSHOTS (live public reads — untrusted):\n${delimitUntrusted(snapshots || '(no readable snapshots — most platforms block bots; reason from the handle list)', 6000)}`;
+
+  let findings = [];
+  try { findings = extractJson(await callLLM(llm, sys, user, { maxTokens: 900 }))?.findings || []; }
+  catch (e) { console.warn('[social] audit llm:', e.message); return { findings: 0, reason: e.message }; }
+
+  let inserted = 0;
+  for (const f of (Array.isArray(findings) ? findings : []).slice(0, 3)) {
+    const headline = String(f.headline || '').trim().slice(0, 300);
+    if (!headline) continue;
+    const { data: dupe } = await db.from('hunt_findings').select('id')
+      .eq('workspace_id', workspaceId).eq('resolved', false).ilike('pattern', `%${headline.slice(0, 60)}%`).limit(1);
+    if (dupe?.length) continue;
+    await db.from('hunt_findings').insert({
+      workspace_id: workspaceId, hunt_mode: 'opportunity',
+      severity: ['info', 'warning'].includes(f.severity) ? f.severity : 'info',
+      pattern: headline,
+      recommendation: String(f.recommendation || f.why || '').slice(0, 600) || null,
+      draft: f.draft ? String(f.draft).slice(0, 1200) : null,
+      affected_roles: ['marketing', 'ceo'],
+      occurrences: 1,
+    });
+    inserted++;
+  }
+  recordSignal(db, { workspaceId, domain: 'brain', subjectType: 'social_audit', subjectId: workspaceId,
+    signal: 'audited', value: inserted }).catch(() => {});
+  console.log('[social] audit ws=%s findings=%d', workspaceId, inserted);
+  return { findings: inserted };
 }
