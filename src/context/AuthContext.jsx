@@ -141,11 +141,16 @@ export function AuthProvider({ children }) {
     setUser(body.user);
   }, [storeSession]);
 
-  const loginWithGoogle = useCallback(() =>
-    supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/app` },
-    }), []);
+  const loginWithGoogle = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/google');
+      const { url } = await res.json();
+      if (url) window.location.href = url;
+    } catch (err) {
+      console.error('Google sign-in initiation failed:', err);
+      throw new Error('Could not initiate Google sign-in');
+    }
+  }, []);
 
   const loginWithGitHub = useCallback(() =>
     supabase.auth.signInWithOAuth({
