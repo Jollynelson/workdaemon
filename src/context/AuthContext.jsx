@@ -51,6 +51,20 @@ export function AuthProvider({ children }) {
   // On mount: restore session from storage or Supabase OAuth callback
   useEffect(() => {
     async function init() {
+      // Native Google sign-in hands us tokens in the URL fragment
+      // (#access_token=…&refresh_token=…). Establish the session explicitly so
+      // we don't depend on Supabase's flowType-sensitive detectSessionInUrl.
+      if (window.location.hash.includes('access_token')) {
+        const p = new URLSearchParams(window.location.hash.slice(1));
+        const access_token = p.get('access_token');
+        const refresh_token = p.get('refresh_token');
+        if (access_token && refresh_token) {
+          await supabase.auth.setSession({ access_token, refresh_token }).catch(() => {});
+          // Scrub the tokens from the address bar.
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      }
+
       // Check for OAuth session (after Google/GitHub redirect)
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
