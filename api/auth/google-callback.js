@@ -67,25 +67,26 @@ export default async function handler(req, res) {
       throw new Error('Could not get email from Google');
     }
 
-    // Sign in or create user via Supabase
+    // Sign in or create user via Supabase admin API
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-    // Check if user exists
-    let { data: existingUser, error: fetchErr } = await supabase
-      .from('auth.users')
-      .select('id')
-      .eq('email', userInfo.email)
-      .single();
+    let userId;
+    let user;
 
-    if (fetchErr && fetchErr.code !== 'PGRST116') {
-      throw new Error(`User lookup failed: ${fetchErr.message}`);
+    // Try to find existing user by email
+    const { data: { users }, error: listErr } = await supabase.auth.admin.listUsers();
+    if (listErr) {
+      throw new Error(`User lookup failed: ${listErr.message}`);
     }
 
-    let userId = existingUser?.id;
+    const existingUser = users.find(u => u.email === userInfo.email);
 
-    // Create user if doesn't exist
-    if (!userId) {
-      const { data: authRes, error: authErr } = await supabase.auth.admin.createUser({
+    if (existingUser) {
+      userId = existingUser.id;
+      user = existingUser;
+    } else {
+      // Create new user
+      const { data: { user: newUser }, error: createErr } = await supabase.auth.admin.createUser({
         email: userInfo.email,
         email_confirm: true,
         user_metadata: {
@@ -94,15 +95,16 @@ export default async function handler(req, res) {
         },
       });
 
-      if (authErr) {
-        throw new Error(`User creation failed: ${authErr.message}`);
+      if (createErr) {
+        throw new Error(`User creation failed: ${createErr.message}`);
       }
 
-      userId = authRes.user.id;
+      userId = newUser.id;
+      user = newUser;
     }
 
-    // Generate a session token using Supabase
-    const { data: sessionData, error: sessionErr } = await supabase.auth.admin.createSession(userId);
+    // Create a session for the user
+    const { data: { session }, error: sessionErr } = await supabase.auth.admin.createSession(userId);
 
     if (sessionErr) {
       throw new Error(`Session creation failed: ${sessionErr.message}`);
@@ -111,8 +113,8 @@ export default async function handler(req, res) {
     // Redirect to app with fragment (preserves session in Supabase SDK)
     // Include access_token in URL fragment for the frontend to establish the session
     const fragment = new URLSearchParams({
-      access_token: sessionData.session.access_token,
-      refresh_token: sessionData.session.refresh_token,
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
       type: 'recovery',
     });
     res.setHeader('Location', `/app#${fragment}`);
