@@ -4,14 +4,13 @@ import DaemonMark from '../components/brand/DaemonMark.jsx';
 import { useViewport } from '../context/ThemeContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 
+// Founder onboarding — mirrors the IA spec §1: Account (signup) → Company
+// details → Your Daemon setup → Connect first integration → Invite team → land.
 const STEPS = [
-  { id: 'profile',   title: 'Set up your profile.',   sub: "Choose how you'll appear in WorkDaemon." },
-  { id: 'workspace', title: 'Name your workspace.',   sub: 'Your company name and team size.' },
-  { id: 'role',      title: "What's your role?",      sub: 'Type your title — your Daemon adapts to you.' },
-  { id: 'industry',  title: 'Pick your industry.',    sub: 'Context for your knowledge graph.' },
-  { id: 'invite',    title: 'Invite your team.',      sub: 'WorkDaemon is better with your whole team.' },
-  { id: 'github',    title: 'Connect GitHub.',        sub: 'Sync your code, PRs, and deployments.' },
-  { id: 'slack',     title: 'Connect Slack.',         sub: 'Bring WorkDaemon into your conversations.' },
+  { id: 'company',     title: 'Company details.',         sub: 'Name, size, industry, and your work domain.' },
+  { id: 'daemon',      title: 'Set up your Daemon.',      sub: 'Who you are and the role it adapts to.' },
+  { id: 'integration', title: 'Connect your first tool.', sub: 'Seeds the Company Brain. Google Workspace recommended.' },
+  { id: 'invite',      title: 'Invite your team.',        sub: 'WorkDaemon is better with your whole team.' },
 ];
 
 const ROLES = [
@@ -20,6 +19,7 @@ const ROLES = [
   { id: 'pm',      label: 'Product Manager', sub: 'Roadmap & prioritization' },
   { id: 'eng',     label: 'Eng Lead',        sub: 'Sprints & code review' },
   { id: 'sales',   label: 'Head of Sales',   sub: 'Pipeline & revenue' },
+  { id: 'hr',      label: 'Head of People / HR', sub: 'Hiring & culture' },
   { id: 'ops',     label: 'Operations',      sub: 'Processes & logistics' },
   { id: 'design',  label: 'Design Lead',     sub: 'UX & visual systems' },
   { id: 'finance', label: 'Finance',         sub: 'Budget & reporting' },
@@ -36,7 +36,13 @@ const INDUSTRIES = [
   { id: 'education',  label: 'Education' },
 ];
 
-const SIZES = ['1–5', '6–20', '21–100', '100+'];
+const SIZES = ['1–10', '10–50', '50–200', '200+'];
+
+const ONBOARD_TOOLS = [
+  { id: 'google', label: 'Google Workspace', desc: 'Gmail, Calendar & Drive — seeds the Company Brain.', recommended: true },
+  { id: 'slack',  label: 'Slack',            desc: 'Channels and messages your Daemon can read.' },
+  { id: 'notion', label: 'Notion',           desc: 'Docs and tasks for richer context.' },
+];
 
 const GITHUB_FEATURES = [
   { title: 'Track pull requests',    desc: 'See open PRs, review status, and merge activity in real-time.' },
@@ -649,6 +655,91 @@ function StepConnect({ features }) {
   );
 }
 
+// ── Composite steps (spec §1) ─────────────────────────────────────────────────
+const onbHint = { fontFamily: 'var(--dmsans)', fontSize: 12, color: 'rgba(255,255,255,0.34)', marginTop: 6 };
+
+// Step 1 — Company details: name, size, location, work domain, industry.
+function StepCompany({ data, setData }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <StepWorkspace data={data} setData={setData} />
+      <div>
+        <label style={labelSt}>Work email domain</label>
+        <FocusInput
+          placeholder="acme.com"
+          value={data.emailDomain || ''}
+          onChange={e => setData(d => ({ ...d, emailDomain: e.target.value.trim().replace(/^@/, '') }))}
+        />
+        <div style={onbHint}>Teammates who sign up with this domain are auto-approved.</div>
+      </div>
+      <div>
+        <label style={labelSt}>Industry</label>
+        <div style={{ marginTop: 8 }}><StepIndustry data={data} setData={setData} /></div>
+      </div>
+    </div>
+  );
+}
+
+// Step 2 — Your Daemon setup: identity (name, title, avatar) + role it adapts to.
+function StepDaemon({ data, setData }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+      <StepProfile data={data} setData={setData} />
+      <StepRole data={data} setData={setData} />
+    </div>
+  );
+}
+
+// Step 3 — Connect first integration. Google Workspace recommended; Slack / Notion
+// as alternatives; skippable. Starts the real workspace OAuth (settings oauth_start).
+function StepIntegration({ token }) {
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const connect = async (provider) => {
+    setBusy(provider); setErr('');
+    try {
+      const r = await fetch('/api/workspace/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: 'oauth_start', provider }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.url) { window.location.href = d.url; return; }
+      setErr(d.error || "That tool isn't available yet — you can connect it later from Integrations.");
+    } catch { setErr('Could not start the connection. You can connect later from Integrations.'); }
+    finally { setBusy(''); }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {ONBOARD_TOOLS.map(t => (
+        <button key={t.id} type="button" disabled={!!busy} onClick={() => connect(t.id)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+            padding: '14px 16px', borderRadius: 10, cursor: busy ? 'wait' : 'pointer',
+            background: 'rgba(255,255,255,0.04)',
+            border: `1px solid ${t.recommended ? 'rgba(59,110,247,0.4)' : 'rgba(255,255,255,0.09)'}`,
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={e => { if (!busy) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; } }}
+          onMouseLeave={e => { if (!busy) { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; } }}
+        >
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 500, color: 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {t.label}
+              {t.recommended && <span style={{ fontFamily: 'var(--dmsans)', fontSize: 10, fontWeight: 600, color: '#3b6ef7', background: 'rgba(59,110,247,0.12)', borderRadius: 100, padding: '2px 8px' }}>Recommended</span>}
+            </div>
+            <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12.5, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 }}>{t.desc}</div>
+          </div>
+          <span style={{ fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 500, color: busy === t.id ? 'rgba(255,255,255,0.4)' : '#3b6ef7', whiteSpace: 'nowrap' }}>
+            {busy === t.id ? 'Opening…' : 'Connect'}
+          </span>
+        </button>
+      ))}
+      {err && <div style={{ ...onbHint, color: '#f0a04b', marginTop: 8 }}>{err}</div>}
+    </div>
+  );
+}
+
 // ── Right panel visuals ───────────────────────────────────────────────────────
 
 function PanelDefault() {
@@ -785,22 +876,27 @@ export default function Onboarding() {
         const meta = d.user?.user_metadata || {};
         const fullName = d.profile?.name || meta.full_name || meta.name || '';
         const avatar = d.profile?.avatar_url || meta.avatar_url || meta.picture || '';
+        // Pre-fill the work email domain from the founder's email (unless it's a
+        // free provider — auto-approving gmail.com etc. would let anyone in).
+        const FREE = ['gmail.com','outlook.com','hotmail.com','yahoo.com','icloud.com','proton.me','protonmail.com','live.com','aol.com'];
+        const emailDom = (d.user?.email || '').split('@')[1] || '';
         setData(prev => ({
           ...prev,
-          name:     prev.name     || fullName,
-          title:    prev.title    || d.profile?.title || '',
-          avatar:   prev.avatar   || avatar,
-          location: prev.location || d.detectedLocation || '',
+          name:        prev.name        || fullName,
+          title:       prev.title       || d.profile?.title || '',
+          avatar:      prev.avatar      || avatar,
+          location:    prev.location    || d.detectedLocation || '',
+          emailDomain: prev.emailDomain || (emailDom && !FREE.includes(emailDom.toLowerCase()) ? emailDom : ''),
         }));
       })
       .catch(() => {});
   }, [token]);
 
   const canAdvance = () => {
-    if (step === 1) return !!data.company?.trim() && data.slugStatus === 'available';
-    if (step === 2) return !!(data.role?.trim());
-    if (step === 3) return !!data.industry;
-    return true;
+    // 0 = Company details (name + available slug + industry), 1 = Daemon setup (role).
+    if (step === 0) return !!data.company?.trim() && data.slugStatus === 'available' && !!data.industry;
+    if (step === 1) return !!(data.role?.trim());
+    return true; // 2 = integration, 3 = invite — both optional
   };
 
   // Submit profile + workspace data after the core setup steps
@@ -823,6 +919,7 @@ export default function Onboarding() {
           industry: data.industry,
           location: data.location,
           location_meta: data.locationMeta || null,  // structured {city,region,country,countrycode}
+          email_domain: data.emailDomain || null,    // auto-approve teammates on this domain
           slug:     data.slug,
         }),
       });
@@ -867,19 +964,13 @@ export default function Onboarding() {
   }, [data]);
 
   const advance = async () => {
-    // Submit after industry step (step 3), before moving to optional steps
-    if (step === 3) {
+    // Submit after the required steps (Company details + Daemon setup), before
+    // the optional Connect-integration and Invite steps.
+    if (step === 1) {
       const ok = await submitSetup();
       if (!ok) return;
       await refreshProfile();
     }
-    // GitHub and Slack integrations — skip for now, connect later from dashboard
-    if (step === 5 || step === 6) {
-      if (step < STEPS.length - 1) setStep(s => s + 1);
-      else navigate('/app');
-      return;
-    }
-
     if (step < STEPS.length - 1) setStep(s => s + 1);
     else navigate('/app');
   };
@@ -897,35 +988,28 @@ export default function Onboarding() {
         body: JSON.stringify({ emails }),
       }).catch(() => null);
     }
-    setStep(s => s + 1);
+    navigate('/app'); // Invite is the final step → land on My Daemon.
   };
 
-  const isOptional = step >= 4;
+  // Integration (2) and Invite (3) are optional.
+  const isOptional = step >= 2;
 
   const getButtonLabel = () => {
     if (saving) return '...';
-    if (step === 4) return 'Send invitations';
-    if (step === 5) return 'Connect GitHub';
-    if (step === 6) return 'Connect Slack';
+    if (step === 1) return 'Create workspace';
+    if (step === 3) return 'Send invitations';
     return 'Continue';
   };
 
-  const handleAdvance = step === 4 ? sendInvites : advance;
+  const handleAdvance = step === 3 ? sendInvites : advance;
 
-  const getRightPanel = () => {
-    if (step === 5) return <PanelGitHub />;
-    if (step === 6) return <PanelSlack />;
-    return <PanelDefault />;
-  };
+  const getRightPanel = () => <PanelDefault />;
 
   const forms = [
-    <StepProfile   key={0} data={data} setData={setData} />,
-    <StepWorkspace key={1} data={data} setData={setData} />,
-    <StepRole      key={2} data={data} setData={setData} />,
-    <StepIndustry  key={3} data={data} setData={setData} />,
-    <StepInvite    key={4} data={data} setData={setData} inviteLink={inviteLink} />,
-    <StepConnect   key={5} features={GITHUB_FEATURES} />,
-    <StepConnect   key={6} features={SLACK_FEATURES} />,
+    <StepCompany     key={0} data={data} setData={setData} />,
+    <StepDaemon      key={1} data={data} setData={setData} />,
+    <StepIntegration key={2} token={token} />,
+    <StepInvite      key={3} data={data} setData={setData} inviteLink={inviteLink} />,
   ];
 
   return (
@@ -936,7 +1020,8 @@ export default function Onboarding() {
         width: hideRight ? '100%' : '50%',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
+        overflowY: 'auto',
         padding: isMobile ? '80px 28px 60px' : '60px 80px',
         borderRight: hideRight ? 'none' : '1px solid rgba(255,255,255,0.06)',
         position: 'relative',
@@ -951,7 +1036,7 @@ export default function Onboarding() {
           <span style={{ fontFamily: 'var(--orbitron)', fontSize: 12, fontWeight: 700, color: '#3b6ef7', letterSpacing: '0.14em' }}>WORKDAEMON</span>
         </div>
 
-        <div style={{ maxWidth: 400 }}>
+        <div style={{ maxWidth: 400, width: '100%', margin: 'auto 0' }}>
           {/* Heading */}
           <h1 style={{ fontFamily: 'var(--dmsans)', fontSize: 26, fontWeight: 600, color: '#e8e8e8', marginBottom: 8, letterSpacing: '-0.02em', lineHeight: 1.25 }}>
             {STEPS[step].title}

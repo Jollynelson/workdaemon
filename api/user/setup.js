@@ -47,6 +47,7 @@ export default async function handler(req, res) {
     industry:      { type: 'string', max: 120 },
     location:      { type: 'string', max: 120 },
     location_meta: { type: 'object' },   // structured {city,region,country,countrycode} from the typeahead
+    email_domain:  { type: 'string', max: 120 },   // work domain → auto-approve teammates
     slug:          { type: 'string', max: 63, pattern: /^[a-z0-9-]+$/i },
   });
   if (!parsed) return;
@@ -54,6 +55,10 @@ export default async function handler(req, res) {
   const slug = parsed.slug ? parsed.slug.toLowerCase() : null;
   // Prefer the value the user confirmed; fall back to edge-detected location.
   const location = (parsed.location && parsed.location.trim()) || detectLocation(req) || null;
+  // Work email domain (auto-approve teammates) — normalised, no leading @.
+  const emailDomain = parsed.email_domain
+    ? parsed.email_domain.trim().toLowerCase().replace(/^@/, '').slice(0, 120) || null
+    : null;
 
   // Structured location (city / region / country / ISO code) for later geo-targeting.
   // Sanitised + length-capped; null unless at least a country or region is present.
@@ -79,14 +84,19 @@ export default async function handler(req, res) {
 
   let workspace;
 
+  // Structured location + work domain both live in the workspace context JSON.
+  const ctxAdditions = {};
+  if (locMeta) ctxAdditions.location = locMeta;
+  if (emailDomain) ctxAdditions.email_domain = emailDomain;
+  const hasCtx = Object.keys(ctxAdditions).length > 0;
+
   if (existing?.workspace_id) {
-    // Update existing workspace — merge structured location into context (don't clobber timezone etc.)
+    // Update existing workspace — merge into context (don't clobber timezone etc.)
     let ctxPatch;
-    if (locMeta) {
+    if (hasCtx) {
       const { data: cur } = await db.from('workspaces').select('context').eq('id', existing.workspace_id).single();
       const ctx = (cur?.context && typeof cur.context === 'object') ? cur.context : {};
-      ctx.location = locMeta;
-      ctxPatch = { context: ctx };
+      ctxPatch = { context: { ...ctx, ...ctxAdditions } };
     }
     const { data: ws } = await db
       .from('workspaces')
@@ -99,7 +109,7 @@ export default async function handler(req, res) {
     // Create new workspace
     const { data: ws, error: wsError } = await db
       .from('workspaces')
-      .insert({ name: company, size, industry, location, owner_id: user.id, slug: slug || null, ...(locMeta ? { context: { location: locMeta } } : {}) })
+      .insert({ name: company, size, industry, location, owner_id: user.id, slug: slug || null, ...(hasCtx ? { context: ctxAdditions } : {}) })
       .select()
       .single();
 
