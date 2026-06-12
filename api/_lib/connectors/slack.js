@@ -39,6 +39,48 @@ export function chunkLines(lines, maxChars = CHUNK_CHARS) {
   return chunks.length ? chunks : [''];
 }
 
+// ── Backfill support (the resumable deep-history worker) ──────────────────────
+// All readable tokens for a workspace (bot + every connected staff's). The worker
+// tries them in turn per channel — never persists a token (secrets stay server-side).
+export async function slackTokenPool(db, workspaceId) {
+  const pool = [];
+  const bot = await getAccessToken(db, workspaceId, 'slack', 'bot');
+  if (bot) pool.push(bot);
+  for (const { token } of await getUserTokens(db, workspaceId, 'slack')) if (token) pool.push(token);
+  return pool;
+}
+
+// Discover every channel the workspace can see (metadata only — no history, no
+// tokens persisted), with visibility resolved once so the worker can index safely.
+export async function discoverSlackChannels(db, workspaceId) {
+  const { data: umap } = await db.from('slack_user_map').select('slack_user_id, user_id').eq('workspace_id', workspaceId);
+  const userOf = Object.fromEntries((umap || []).map(u => [u.slack_user_id, u.user_id]).filter(([, v]) => v));
+  const byId = {};
+  for (const token of await slackTokenPool(db, workspaceId)) {
+    let convos = [];
+    try { convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 200 })).channels || []; }
+    catch { continue; }
+    for (const ch of convos) {
+      if (byId[ch.id]) continue; // first token that can see it wins
+      let visibility = 'public', allowed = [];
+      if (ch.is_private || ch.is_mpim) {
+        visibility = 'restricted';
+        const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 500 }).then(d => d.members).catch(() => [])) || [];
+        allowed = members.map(sid => userOf[sid]).filter(Boolean);
+      }
+      byId[ch.id] = { channelId: ch.id, channelName: ch.name || ch.id, visibility, allowed_users: allowed };
+    }
+  }
+  return Object.values(byId);
+}
+
+// One history page from a cursor (returns text messages + the next cursor).
+export async function fetchHistoryPage(token, channelId, cursor, limit = 200) {
+  const d = await slackApi(token, 'conversations.history', { channel: channelId, limit, ...(cursor ? { cursor } : {}) });
+  const messages = (d.messages || []).filter(m => m.type === 'message' && m.text);
+  return { messages, nextCursor: d.response_metadata?.next_cursor || '' };
+}
+
 // Pull the channels a TOKEN can see (user token → that staff's channels incl.
 // private; bot token → channels the bot is in). Private/mpim → scoped to members.
 // Returns deep per-channel line arrays (chunked into docs by the caller).
@@ -153,7 +195,9 @@ export async function ingest(db, workspaceId, botToken, { onProgress } = {}) {
     const want = new Set(docs.map(d => d.external_id));
     const { data: have } = await db.from('workspace_documents')
       .select('external_id').eq('workspace_id', workspaceId).eq('source', 'slack');
-    const stale = (have || []).map(r => r.external_id).filter(id => !want.has(id));
+    // NEVER reconcile away `-b<n>` backfill chunks — they're the deep-history worker's,
+    // not part of this recent rebuild.
+    const stale = (have || []).map(r => r.external_id).filter(id => !want.has(id) && !/-b\d+$/.test(id));
     if (stale.length) await db.from('workspace_documents').delete()
       .eq('workspace_id', workspaceId).eq('source', 'slack').in('external_id', stale);
   }
@@ -179,8 +223,13 @@ export async function foldSlackMessageIntoBrain(db, workspaceId, { channelId, li
     .select('external_id, content, title, visibility, allowed_users, metadata')
     .eq('workspace_id', workspaceId).eq('source', 'slack')
     .or(`external_id.eq.channel-${channelId},external_id.like.channel-${channelId}-%`);
+  // Only the FORWARD chunks (channel-<id>, -1, -2…) — never append onto a deep
+  // backfill `-b<n>` doc (those are the worker's, ordered independently).
   let latest = null;
-  for (const r of (rows || [])) if (!latest || idxOf(r.external_id) > idxOf(latest.external_id)) latest = r;
+  for (const r of (rows || [])) {
+    if (/-b\d+$/.test(r.external_id)) continue;
+    if (!latest || idxOf(r.external_id) > idxOf(latest.external_id)) latest = r;
+  }
 
   let title, visibility, allowed_users, metadata;
   if (latest) {

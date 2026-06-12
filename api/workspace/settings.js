@@ -4,6 +4,7 @@ import {
   PROVIDERS, providerConfigured, getRedirectUri, signState, buildAuthorizeUrl, handleOAuthCallback,
 } from '../_lib/oauth.js';
 import { startSeed, seedIntegration, getSeed, getSeeds } from '../_lib/seed.js';
+import { kickBackfillWorker } from '../_lib/backfill.js';
 import { waitUntil } from '@vercel/functions';
 
 // Fetch models from a provider's API (server-side to avoid CORS)
@@ -265,6 +266,9 @@ export default async function handler(req, res) {
       if (conn?.status !== 'connected') return res.status(400).json({ error: 'Connect the integration first' });
       await startSeed(db, { workspaceId, userId: user.id, provider: p });
       waitUntil(seedIntegration(db, { workspaceId, userId: user.id, provider: p }));
+      // Slack also gets a resumable, self-chaining DEEP-HISTORY backfill worker
+      // (years of conversations) — independent of the recent seed above.
+      if (p === 'slack') waitUntil(kickBackfillWorker(`https://${req.headers.host}`, workspaceId));
       const seed = await getSeed(db, { workspaceId, userId: user.id, provider: p });
       return res.status(200).json({ ok: true, seed });
     }

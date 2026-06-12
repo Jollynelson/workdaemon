@@ -10,6 +10,8 @@ import { ensureGoals, reviewGoals, generateCompanyGoals, generateStaffGoals } fr
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { runUserSlackTool } from './_lib/connectors/slack.js';
+import { startSlackBackfill, runBackfillSlice, kickBackfillWorker, backfillSweep } from './_lib/backfill.js';
+import { waitUntil } from '@vercel/functions';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
 import { scrubDaemonMessages } from './_lib/scrub.js';
@@ -901,6 +903,31 @@ export default async function handler(req, res) {
       console.error('[brain] daemon_act tool=%s error:', tool, e.message);
       return res.status(500).json({ error: 'daemon act failed' });
     }
+  }
+
+  // ── Deep-history backfill worker (service-token; self-chaining) ───────────────
+  // Runs one ~45s resumable slice for the token's workspace, then chains the next
+  // run on the same host while work remains. First run discovers the channels.
+  if (req.method === 'POST' && req.query?.action === 'run_backfill') {
+    const claims = verifyServiceToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+    if (!claims || claims.scope !== 'backfill' || !claims.workspace_id) return res.status(401).json({ error: 'Unauthorized' });
+    const ws = claims.workspace_id;
+    const mdb = adminClient();
+    const { count } = await mdb.from('backfill_channels').select('id', { count: 'exact', head: true }).eq('workspace_id', ws).eq('provider', 'slack');
+    if (!count) { try { await startSlackBackfill(mdb, ws); } catch (e) { console.error('[brain] backfill discover ws=%s:', ws, e.message); } }
+    let remaining = 0;
+    try { ({ remaining } = await runBackfillSlice(mdb, ws, { budgetMs: 45000 })); }
+    catch (e) { console.error('[brain] backfill slice ws=%s:', ws, e.message); }
+    if (remaining > 0) waitUntil(kickBackfillWorker(`https://${req.headers.host}`, ws)); // chain the next slice
+    return res.status(200).json({ ok: true, remaining });
+  }
+
+  // ── Cron backstop: resume any workspace whose backfill chain stalled ─────────
+  if (req.method === 'GET' && req.query?.action === 'backfill_sweep') {
+    const secret = process.env.CRON_SECRET;
+    if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
+    const r = await backfillSweep(adminClient(), `https://${req.headers.host}`);
+    return res.status(200).json({ ok: true, ...r });
   }
 
   const user = await requireAuth(req, res);
