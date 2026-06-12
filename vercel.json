@@ -5,7 +5,8 @@
   "functions": {
     "api/brain.js": { "maxDuration": 60 },
     "api/chat.js": { "maxDuration": 60 },
-    "api/inbox.js": { "maxDuration": 60 }
+    "api/inbox.js": { "maxDuration": 60 },
+    "api/workspace/settings.js": { "maxDuration": 60 }
   },
   "crons": [
     { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" },

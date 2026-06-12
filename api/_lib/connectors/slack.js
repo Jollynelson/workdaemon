@@ -8,13 +8,14 @@ import { upsertDocuments } from '../ingestion.js';
 // API token needed (works even when only the webhook feed is configured).
 // Pull the channels a TOKEN can see (user token → that staff's channels incl.
 // private; bot token → channels the bot is in). Private/mpim → scoped to members.
-async function _pullViaToken(token, userOf) {
+async function _pullViaToken(token, userOf, onStart, onChannel) {
   let convos = [];
   try {
     // Channels + group DMs the token can see. 1:1 DMs ('im') are deliberately
     // EXCLUDED — personal DMs don't belong in the shared company brain.
     convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 100 })).channels || [];
   } catch { return []; }
+  onStart?.(convos.length);
   const out = [];
   for (const ch of convos) {
     try {
@@ -54,13 +55,21 @@ async function _pullViaToken(token, userOf) {
       }
       out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names: memberNames });
     } catch { /* not_in_channel etc. */ }
+    onChannel?.();
   }
   return out;
 }
 
-export async function ingest(db, workspaceId, botToken) {
+// `onProgress({stage, done, total, doc_count})` (optional) lets the seed UI show
+// the brain filling up channel-by-channel; the nightly cron passes nothing.
+export async function ingest(db, workspaceId, botToken, { onProgress } = {}) {
   const { data: umap } = await db.from('slack_user_map').select('slack_user_id, user_id, real_name').eq('workspace_id', workspaceId);
   const userOf = Object.fromEntries((umap || []).map(u => [u.slack_user_id, u]));
+  // Progress bookkeeping: total grows as each token pull lists its channels; done
+  // ticks per channel processed. Monotonic enough for a clean progress bar.
+  let total = 0, done = 0;
+  const onStart = (n) => { total += n; onProgress?.({ stage: 'reading shared channels', done, total }); };
+  const onChannel = () => { done++; onProgress?.({ stage: 'reading shared channels', done, total }); };
 
   // Merge channel docs by stable channel id; union member access across whoever read it.
   const byId = {};
@@ -75,9 +84,9 @@ export async function ingest(db, workspaceId, botToken) {
 
   // 1. Per-staff: each connected staff's OWN token → their channels (incl. private),
   //    each private channel scoped to its members. This is the "connect your own daemon" path.
-  for (const { token } of await getUserTokens(db, workspaceId, 'slack')) merge(await _pullViaToken(token, userOf));
+  for (const { token } of await getUserTokens(db, workspaceId, 'slack')) merge(await _pullViaToken(token, userOf, onStart, onChannel));
   // 2. Workspace bot token → channels the bot is in (public + any it was invited to).
-  if (botToken) merge(await _pullViaToken(botToken, userOf));
+  if (botToken) merge(await _pullViaToken(botToken, userOf, onStart, onChannel));
 
   // 3. Fallback: webhook-fed / seeded local store (public), keyed by name.
   if (!Object.keys(byId).length) {
@@ -92,7 +101,10 @@ export async function ingest(db, workspaceId, botToken) {
     visibility: e.visibility, allowed_users: [...e.allowed],
     metadata: { channel: e.title.replace(/^#| \(Slack\)$/g, ''), member_names: [...e.names] },
   }));
-  return upsertDocuments(db, workspaceId, 'slack', docs);
+  onProgress?.({ stage: 'indexing', done: total, total, doc_count: docs.length });
+  const result = await upsertDocuments(db, workspaceId, 'slack', docs);
+  onProgress?.({ stage: 'indexed', done: total, total, doc_count: result?.upserted ?? docs.length });
+  return result;
 }
 
 // ── Slack connector — full read + action toolset (parity with Zapier's Slack) ──
@@ -321,4 +333,61 @@ export async function runUserSlackTool(db, workspaceId, userId, tool, args = {})
     const reconnect = /invalid_auth|token_revoked|account_inactive/.test(e.message);
     return { error: reconnect ? 'reconnect_slack' : 'slack_error', message: e.message };
   }
+}
+
+// ── Daemon catch-up (seed track 2) — get the staff's OWN daemon ready on Slack ──
+// Two jobs: (1) confirm the act-rail is live (their token + the scopes the daemon
+// needs); (2) scan their recent channels + DMs and log open commitments/deadlines
+// to their PRIVATE daemon_memory, so the daemon already knows what they've got in
+// flight. Reports per-conversation progress. The shared Brain is untouched.
+const _COMMIT_RE = /\b(by (mon|tues?|wed(nes)?|thur?s?|fri|sat|sun|tomorrow|today|tonight|eod|cob|end of (day|week)|next (week|month))|deadline|due (by|on|date)|can you|could you|would you|please (send|review|confirm|get|share)|get (back to me|this done)|need(s|ed)? .{0,30}\bby\b|by \d{1,2}(:\d{2})?\s?(am|pm)?|by (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))\b/i;
+// Exported for testing — false positives here would flood private daemon memory.
+export const looksLikeCommitment = (line) => typeof line === 'string' && line.length < 400 && _COMMIT_RE.test(line);
+const _looksLikeCommitment = looksLikeCommitment;
+
+export async function daemonCatchUp(db, workspaceId, userId, { onProgress } = {}) {
+  const token = await getUserToken(db, workspaceId, userId, 'slack');
+  // Scope check ties to the reconnect banner: DM-read + send-as-you must be granted.
+  const { data: ui } = await db.from('user_integrations').select('scopes')
+    .eq('workspace_id', workspaceId).eq('user_id', userId).eq('provider', 'slack').maybeSingle();
+  const granted = new Set(ui?.scopes || []);
+  const needs = ['im:history', 'chat:write'];
+  if (!token || needs.some(s => !granted.has(s))) {
+    return { status: 'needs_reconnect', reason: 'Reconnect Slack to grant DM access + send-as-you so your daemon can act for you.' };
+  }
+  onProgress?.({ stage: 'wiring Slack tools', done: 0, total: 0 });
+  const recent = await pullRecentForUser(token, { perChannel: 20, maxChannels: 30 }).catch((e) => ({ error: e.message, channels: [] }));
+  if (recent.error && !(recent.channels || []).length) {
+    return { status: 'error', reason: recent.message || recent.error };
+  }
+  const chans = recent.channels || [];
+  const total = chans.length;
+  let done = 0, commitments = 0;
+  const CAP = 12; // don't flood the daemon's private memory on a first sync
+  for (const ch of chans) {
+    if (ch.is_dm && commitments < CAP) {
+      for (const line of ch.messages) {
+        if (commitments >= CAP) break;
+        if (_looksLikeCommitment(line)) {
+          await db.from('daemon_memory').upsert({
+            user_id: userId, workspace_id: workspaceId,
+            key: `commitment-slackseed-${ch.id}-${commitments}`,
+            value: `[${ch.label}] ${line}`.slice(0, 1000),
+            memory_type: 'commitment', updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id,key' });
+          commitments++;
+        }
+      }
+    }
+    done++;
+    onProgress?.({ stage: 'catching up on your DMs', done, total });
+  }
+  // One private summary memory so the daemon knows it's caught up (not per-thread
+  // digests — the live slack_recent_activity tool fetches detail on demand).
+  await db.from('daemon_memory').upsert({
+    user_id: userId, workspace_id: workspaceId, key: 'slack-catchup-summary',
+    value: `Daemon caught up on Slack: scanned ${total} recent conversation(s), logged ${commitments} open commitment(s). Use slack_recent_activity for live detail.`,
+    memory_type: 'context', updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,key' });
+  return { status: 'ready', threads: total, commitments };
 }

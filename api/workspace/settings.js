@@ -3,6 +3,8 @@ import { assertSafeUrl, encryptSecret, decryptSecret, enforceRateLimit, fail } f
 import {
   PROVIDERS, providerConfigured, getRedirectUri, signState, buildAuthorizeUrl, handleOAuthCallback,
 } from '../_lib/oauth.js';
+import { startSeed, seedIntegration, getSeed, getSeeds } from '../_lib/seed.js';
+import { waitUntil } from '@vercel/functions';
 
 // Fetch models from a provider's API (server-side to avoid CORS)
 async function fetchProviderModels(provider, apiKey, endpoint) {
@@ -138,6 +140,9 @@ export default async function handler(req, res) {
       ]);
       const byProvider = Object.fromEntries((rows || []).map(r => [r.provider, r]));
       const userGrant = Object.fromEntries((userRows || []).map(r => [r.provider, new Set(r.scopes || [])]));
+      // This user's seed/readiness rows (brain + daemon tracks per provider).
+      const seeds = await getSeeds(db, { workspaceId, userId: user.id });
+      const seedByProvider = Object.fromEntries(seeds.map(s => [s.provider, s]));
       const providers = Object.entries(PROVIDERS).map(([id, cfg]) => {
         const conn = byProvider[id] || null;
         // Nudge a reconnect when this user connected BEFORE a userScope was added
@@ -150,6 +155,7 @@ export default async function handler(req, res) {
         return {
           id, label: cfg.label, configured: providerConfigured(id),
           connection: conn ? { ...conn, needsReconnect } : null, // {status, external_account, scopes, updated_at, needsReconnect} or null
+          seed: seedByProvider[id] || null,                       // {brain_*, daemon_*, doc_count, ...} or null
         };
       });
       return res.status(200).json({ providers });
@@ -245,6 +251,22 @@ export default async function handler(req, res) {
       }
       const state = signState({ workspace_id: workspaceId, user_id: user.id, provider: p });
       return res.status(200).json({ url: buildAuthorizeUrl(p, { state, redirectUri: getRedirectUri(req) }) });
+    }
+
+    // ── Seed a freshly connected integration — kick off Brain ingest + Daemon
+    // catch-up in the BACKGROUND (waitUntil), return the initial row immediately.
+    // The page polls ?integrations=true for live brain/daemon progress. Idempotent
+    // and per-staff (the daemon track seeds THIS user's own slice).
+    if (action === 'seed_integration') {
+      const p = (req.body?.provider || '').toString();
+      if (!PROVIDERS[p]) return res.status(400).json({ error: 'Unknown integration provider' });
+      const { data: conn } = await db.from('workspace_integrations')
+        .select('status').eq('workspace_id', workspaceId).eq('provider', p).maybeSingle();
+      if (conn?.status !== 'connected') return res.status(400).json({ error: 'Connect the integration first' });
+      await startSeed(db, { workspaceId, userId: user.id, provider: p });
+      waitUntil(seedIntegration(db, { workspaceId, userId: user.id, provider: p }));
+      const seed = await getSeed(db, { workspaceId, userId: user.id, provider: p });
+      return res.status(200).json({ ok: true, seed });
     }
 
     // Type + length validation on every supplied field (reject malformed input early).

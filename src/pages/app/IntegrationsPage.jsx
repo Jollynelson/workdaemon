@@ -10,6 +10,18 @@ export const INTEGRATION_ROADMAP = [
   'Outlook', 'OneDrive', 'GitHub', 'Jira', 'HubSpot', 'Salesforce',
 ];
 
+// ── Seed/readiness helpers (brain + daemon tracks) ───────────────────────────
+const SEEDING = ['pending', 'seeding'];
+const seedActive = (s) => !!s && (SEEDING.includes(s.brain_status) || SEEDING.includes(s.daemon_status));
+const seedIssue  = (s) => !!s && (s.brain_status === 'error' || ['needs_reconnect', 'error'].includes(s.daemon_status));
+const seedShow   = (s) => seedActive(s) || seedIssue(s);
+const trackPct = (status, done, total) =>
+  (status === 'ready' || status === 'needs_reconnect' || status === 'error') ? 100
+  : total > 0 ? Math.min(98, Math.round((done / total) * 100))
+  : status === 'seeding' ? 6 : 0;
+const trackColor = (status) =>
+  status === 'ready' ? '#10b981' : status === 'needs_reconnect' ? '#f59e0b' : status === 'error' ? '#ef4444' : '#3b6ef7';
+
 export function IntegrationsPage() {
   const c = useC();
   const { isMobile } = useViewport();
@@ -18,6 +30,7 @@ export function IntegrationsPage() {
   const [loading, setLoading]     = useState(true);
   const [busy, setBusy]           = useState(null);
   const [banner, setBanner]       = useState(null);
+  const [pendingSeed, setPendingSeed] = useState(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -31,13 +44,39 @@ export function IntegrationsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // One-time banner from the OAuth redirect (?connected= / ?error=).
+  // Kick off Brain ingest + Daemon catch-up for a freshly connected provider.
+  const seedProvider = useCallback(async (id) => {
+    try {
+      await fetch('/api/workspace/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'seed_integration', provider: id }),
+      });
+    } catch {}
+    load();
+  }, [token, load]);
+
+  // One-time banner from the OAuth redirect (?connected= / ?error=). On a fresh
+  // connect, queue a seed so the Brain + Daemon start filling immediately.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    if (q.get('connected')) setBanner({ ok: true, text: `Connected ${q.get('connected')}.` });
+    const connected = q.get('connected');
+    if (connected) { setBanner({ ok: true, text: `Connected ${connected} — getting your daemon ready.` }); setPendingSeed(connected); }
     else if (q.get('error')) setBanner({ ok: false, text: `Couldn't connect (${q.get('error')}).` });
-    if (q.get('connected') || q.get('error')) window.history.replaceState({}, '', '/app/integrations');
+    if (connected || q.get('error')) window.history.replaceState({}, '', '/app/integrations');
   }, []);
+
+  // Fire the queued seed once the auth token is available.
+  useEffect(() => {
+    if (pendingSeed && token) { seedProvider(pendingSeed); setPendingSeed(null); }
+  }, [pendingSeed, token, seedProvider]);
+
+  // Poll while any integration is mid-seed, so the progress bars advance live.
+  useEffect(() => {
+    const seeding = providers.some(p => seedActive(p.seed));
+    if (!seeding) return;
+    const t = setTimeout(load, 2500);
+    return () => clearTimeout(t);
+  }, [providers, load]);
 
   const connect = async (id) => {
     setBusy(id);
@@ -118,27 +157,72 @@ export function IntegrationsPage() {
             providers.map(p => {
               const conn = p.connection;
               const connected = conn?.status === 'connected';
+              const seed = p.seed;
               return (
-                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 11 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 9, background: connected ? 'rgba(16,185,129,0.12)' : c.subtle, border: `1px solid ${connected ? 'rgba(16,185,129,0.3)' : c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 13, fontWeight: 700, color: connected ? '#10b981' : c.text3, flexShrink: 0 }}>{p.label[0]}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{p.label}</div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: connected ? (conn.needsReconnect ? '#f59e0b' : '#10b981') : c.text4, marginTop: 3 }}>
-                      {connected ? `CONNECTED${conn.external_account ? ` · ${conn.external_account}` : ''}${conn.needsReconnect ? ' · RECONNECT NEEDED' : ''}` : p.configured ? 'NOT CONNECTED' : 'AWAITING SETUP'}
+                <div key={p.id} style={{ display: 'flex', flexDirection: 'column', padding: '14px 16px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 11 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 9, background: connected ? 'rgba(16,185,129,0.12)' : c.subtle, border: `1px solid ${connected ? 'rgba(16,185,129,0.3)' : c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 13, fontWeight: 700, color: connected ? '#10b981' : c.text3, flexShrink: 0 }}>{p.label[0]}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{p.label}</div>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: connected ? (conn.needsReconnect ? '#f59e0b' : '#10b981') : c.text4, marginTop: 3 }}>
+                        {connected
+                          ? `CONNECTED${conn.external_account ? ` · ${conn.external_account}` : ''}${conn.needsReconnect ? ' · RECONNECT NEEDED' : (seed?.brain_status === 'ready' && seed.doc_count ? ` · ${seed.doc_count} synced` : '')}`
+                          : p.configured ? 'NOT CONNECTED' : 'AWAITING SETUP'}
+                      </div>
                     </div>
+                    {connected ? (
+                      <button type="button" onClick={() => disconnect(p.id)} disabled={busy === p.id}
+                        style={{ ...mkGhostBtn(c, { color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }), padding: '7px 14px', fontSize: 12 }}>
+                        {busy === p.id ? '…' : 'Disconnect'}
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => connect(p.id)} disabled={!p.configured || busy === p.id} title={p.configured ? '' : 'Add app credentials to enable'}
+                        style={{ padding: '7px 16px', borderRadius: 8, cursor: p.configured ? 'pointer' : 'not-allowed',
+                          background: p.configured ? 'rgba(59,110,247,0.1)' : c.subtle, border: `1px solid ${p.configured ? 'rgba(59,110,247,0.3)' : c.subtleBorder}`,
+                          fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: p.configured ? '#3b6ef7' : c.text4, opacity: busy === p.id ? 0.6 : 1 }}>
+                        {busy === p.id ? '…' : 'Connect'}
+                      </button>
+                    )}
                   </div>
-                  {connected ? (
-                    <button type="button" onClick={() => disconnect(p.id)} disabled={busy === p.id}
-                      style={{ ...mkGhostBtn(c, { color: '#ef4444', borderColor: 'rgba(239,68,68,0.25)' }), padding: '7px 14px', fontSize: 12 }}>
-                      {busy === p.id ? '…' : 'Disconnect'}
-                    </button>
-                  ) : (
-                    <button type="button" onClick={() => connect(p.id)} disabled={!p.configured || busy === p.id} title={p.configured ? '' : 'Add app credentials to enable'}
-                      style={{ padding: '7px 16px', borderRadius: 8, cursor: p.configured ? 'pointer' : 'not-allowed',
-                        background: p.configured ? 'rgba(59,110,247,0.1)' : c.subtle, border: `1px solid ${p.configured ? 'rgba(59,110,247,0.3)' : c.subtleBorder}`,
-                        fontFamily: 'var(--dmsans)', fontSize: 13, fontWeight: 600, color: p.configured ? '#3b6ef7' : c.text4, opacity: busy === p.id ? 0.6 : 1 }}>
-                      {busy === p.id ? '…' : 'Connect'}
-                    </button>
+
+                  {connected && seedShow(seed) && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${c.cardBorder}`, display: 'flex', flexDirection: 'column', gap: 9 }}>
+                      {[
+                        { icon: '🧠', name: 'Brain', status: seed.brain_status, stage: seed.brain_stage, done: seed.brain_done, total: seed.brain_total, doneText: seed.doc_count ? `${seed.doc_count} synced` : 'synced' },
+                        { icon: '🤖', name: 'Daemon', status: seed.daemon_status, stage: seed.daemon_stage, done: seed.daemon_done, total: seed.daemon_total, doneText: 'ready · acts as you' },
+                      ].map((tr, i) => {
+                        const pct = trackPct(tr.status, tr.done, tr.total);
+                        const col = trackColor(tr.status);
+                        const right = tr.status === 'ready' ? '✓' : tr.status === 'needs_reconnect' ? 'reconnect' : tr.status === 'error' ? 'failed' : `${pct}%`;
+                        const sub = tr.status === 'ready' ? tr.doneText
+                          : tr.status === 'needs_reconnect' ? (tr.stage || 'reconnect to finish')
+                          : tr.status === 'error' ? (tr.stage || 'something went wrong')
+                          : tr.status === 'seeding' ? `${tr.stage || 'working'}${tr.total > 0 ? ` · ${tr.done}/${tr.total}` : ''}`
+                          : 'queued';
+                        return (
+                          <div key={i}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, gap: 8 }}>
+                              <span style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ marginRight: 6 }}>{tr.icon}</span>{tr.name}
+                                <span style={{ color: c.text4, marginLeft: 7, fontSize: 11 }}>{sub}</span>
+                              </span>
+                              <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: col, flexShrink: 0 }}>{right}</span>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 3, background: c.subtle, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: 3, transition: 'width 0.4s ease' }} />
+                            </div>
+                            {tr.status === 'needs_reconnect' && (
+                              <button type="button" onClick={() => connect(p.id)} disabled={busy === p.id}
+                                style={{ marginTop: 6, padding: '4px 11px', borderRadius: 6, cursor: 'pointer',
+                                  background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)',
+                                  fontFamily: 'var(--dmsans)', fontSize: 11, fontWeight: 600, color: '#f59e0b' }}>
+                                {busy === p.id ? '…' : 'Reconnect to finish'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               );
