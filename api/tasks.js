@@ -4,6 +4,7 @@ import { assessCapacity, suggestAlternatives } from './_lib/capacity.js';
 import { recordTaskAction } from './_lib/calibration.js';
 import { ACTIONS, meetsLevel } from './_lib/actions.js';
 import { getAccessToken, getFreshAccessToken, getUserToken } from './_lib/oauth.js';
+import { gateToolWrite, divertToApprovalQueue } from './_lib/verification_gate.js';
 
 // Fire-and-forget: record a My Daemon tool execution to the admin Audit Log
 // (IA §6.4). Best-effort — never let an audit-write failure break the action.
@@ -298,11 +299,38 @@ export default async function handler(req, res) {
 
     // Per-staff: act with THIS user's own connected token; fall back to the
     // workspace token if they haven't connected the tool individually.
-    const token = (await getUserToken(db, workspaceId, user.id, spec.provider))
-      || (await getFreshAccessToken(db, workspaceId, spec.provider));
-    if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
+    const tokenP = (async () => (await getUserToken(db, workspaceId, user.id, spec.provider))
+      || (await getFreshAccessToken(db, workspaceId, spec.provider)))();
 
-    if (body.dry_run) return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
+    if (body.dry_run) {
+      if (!(await tokenP)) return res.status(400).json({ error: `${spec.provider} is not connected` });
+      return res.status(200).json({ ok: true, dry_run: true, would: spec.describe(body.params || {}) });
+    }
+
+    // PRE-MUTATION GATE: cross-reference connected-tool context for the entities
+    // this write touches. Contradictory sources (e.g. a closed GitHub issue a
+    // newer Slack thread says is still broken) hold the action in the approval
+    // queue instead of letting it mutate the real system. Token resolution and
+    // the gate are independent, so they run concurrently — but the write still
+    // waits for the gate to CLEAR before spec.run (the pre-mutation invariant).
+    const [token, verification] = await Promise.all([
+      tokenP,
+      gateToolWrite(db, { workspaceId, name: body.name, spec, params: body.params || {} }),
+    ]);
+    if (!token) return res.status(400).json({ error: `${spec.provider} is not connected` });
+    if (!verification.proceed) {
+      const held = await divertToApprovalQueue(db, {
+        workspaceId, userId: user.id,
+        action: { kind: 'tool_write', name: body.name, title: spec.describe(body.params || {}), params: body.params || {} },
+        verification,
+      });
+      logDaemonAction(db, { workspaceId, userId: user.id, spec, name: body.name, params: body.params, result: 'held', detail: verification.conflicts?.[0]?.detail || 'low-confidence context' });
+      return res.status(409).json({
+        error: `Held for review: ${verification.conflicts?.[0]?.detail || verification.critique?.reason || 'connected tools disagree about this context'}`,
+        held: true, verification, queued_action_id: held?.id || null,
+      });
+    }
+
     const t0 = Date.now();
     try {
       const result = await spec.run(token, body.params || {});
@@ -343,6 +371,19 @@ export default async function handler(req, res) {
         || (await getFreshAccessToken(db, workspaceId, spec.provider));
       const token = tokenCache[spec.provider];
       if (!token) { results.push({ name, label: spec.label, ok: false, error: `${spec.provider} is not connected` }); continue; }
+      // PRE-MUTATION GATE (per step): a held step diverts to the approval queue
+      // and fails individually — the rest of the plan still runs.
+      const verification = await gateToolWrite(db, { workspaceId, name, spec, params });
+      if (!verification.proceed) {
+        await divertToApprovalQueue(db, {
+          workspaceId, userId: user.id,
+          action: { kind: 'tool_write', name, title: spec.describe(params), params },
+          verification,
+        });
+        logDaemonAction(db, { workspaceId, userId: user.id, spec, name, params, result: 'held', detail: verification.conflicts?.[0]?.detail || 'low-confidence context' });
+        results.push({ name, label: spec.label, ok: false, held: true, error: `held for review: ${verification.conflicts?.[0]?.detail || 'connected tools disagree'}` });
+        continue;
+      }
       const t0 = Date.now();
       try {
         const result = await spec.run(token, params);

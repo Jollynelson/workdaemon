@@ -6,6 +6,7 @@ import { braveSearch, resolveLLM, callLLM, extractJson } from './research.js';
 import { CHANNELS, getChannel, isSuppressed, normAddress, complianceFooter } from './channels/index.js';
 import { recordSignal, distillAgentInsights, pickVariant } from './learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage, learnSkillFromAction, learnTargetedSkill } from './skills.js';
+import { gateProposedActions } from './verification_gate.js';
 
 const DEFAULTS = { cadenceHours: 24, maxTargetsPerRun: 10, maxDraftsPerRun: 5 };
 
@@ -171,19 +172,36 @@ Only propose what the context actually supports. Fewer, sharper actions beat fil
     const gap = parsed?.skill_gap && typeof parsed.skill_gap === 'string' && parsed.skill_gap.toLowerCase() !== 'null' ? parsed.skill_gap.trim() : null;
     if (gap) { logLines.push(`Self-extension: learning "${gap}"`); learnTargetedSkill(db, { workspaceId: agent.workspace_id, need: gap, llm }).catch(() => {}); }
     const VALID = new Set(['task', 'note', 'draft', 'alert', 'message']);
+    const kept = actions.slice(0, cfg.maxActionsPerRun)
+      .map(a => ({ ...a, type: VALID.has(a.type) ? a.type : 'task', title: String(a.title || '').trim().slice(0, 200) }))
+      .filter(a => a.title);
 
-    for (const a of actions.slice(0, cfg.maxActionsPerRun)) {
-      const type = VALID.has(a.type) ? a.type : 'task';
-      const title = String(a.title || '').trim().slice(0, 200);
-      if (!title) continue;
+    // PRE-MUTATION GATE: cross-check each proposal against connected-tool
+    // context (slack/github/notion/jira/drive ingests). Proposals stay queue-
+    // bound either way — the gate's output is the conflict report the approver
+    // sees, plus a requires_human flag when sources disagree below threshold.
+    const verifications = await gateProposedActions(db, { workspaceId: agent.workspace_id, llm, actions: kept });
+    let flagged = 0;
+    for (let i = 0; i < kept.length; i++) {
+      const a = kept[i];
+      const v = verifications[i] || { proceed: true, skipped: true };
+      if (!v.proceed) {
+        flagged++;
+        logLines.push(`Gate: flagged "${a.title}" (confidence ${v.confidence} — ${v.conflicts?.[0]?.detail || 'context disagrees'})`);
+      }
       await db.from('daemon_actions').insert({
         agent_id: agent.id, workspace_id: agent.workspace_id, run_id: run.id,
-        type, title, body: String(a.body || '').slice(0, 4000),
+        type: a.type, title: a.title, body: String(a.body || '').slice(0, 4000),
         rationale: a.rationale ? String(a.rationale).slice(0, 500) : null,
-        payload: { assignee_role: a.assignee_role || null }, status: 'proposed',
+        payload: {
+          assignee_role: a.assignee_role || null,
+          ...(v.skipped ? {} : { verification: { confidence: v.confidence, conflicts: v.conflicts, critique: v.critique, requires_human: !v.proceed } }),
+        },
+        status: 'proposed',
       });
       metrics.proposed++;
     }
+    if (flagged) metrics.flagged = flagged;
     logLines.push(`Proposed ${metrics.proposed} actions grounded in ${findings.length} findings`);
 
     const cadenceHours = cfg.cadenceHours || 24;
