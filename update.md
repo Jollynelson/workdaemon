@@ -473,3 +473,35 @@ Marathon session. Everything below is on `main`, deployed to workdaemon-prod, an
 - First-token latency on Hermes workspaces is the remaining speed lever (gateway agent loop ~20s); DeepSeek-direct workspaces feel dramatically faster on the same pipeline.
 - Social connect path for PRIVATE data (posting, analytics): connect-card pattern is in place; a unified social API (Ayrshare-style) is the candidate connector when wanted.
 - Browser sessions drop on deploys (re-login needed when verifying via agent-browser).
+
+## 2026-06-11 → 06-12 · Flow-spec alignment, real token metering, eager seeding, reasoning scaffold + Activity view
+
+Owner directives this session: (1) make the live app follow `workdaemon_full_ia_spec.html` exactly; (2) token usage = **real provider counts, no estimates**; (3) kill the empty-promise regression for good; (4) seed the Brain **the moment they type a work email** (domain → site + socials + web), so name/location are confirmation; (5) make the daemon **and** Brain "dangerously intelligent" — owner chose **sharpen the self-hosted stack** (Hermes/DeepSeek), no new model key; (6) give users **visibility into what their daemons are doing / have done / will do**.
+
+### 1. Flow-spec alignment (IA §1/§4/§9/§13)
+- **Onboarding** rebuilt to the 4-step founder flow (Company → Daemon → first integration → invite team); team-size buckets fixed to spec (1–10 / 10–50 / 50–200 / 200+); captures **work-email domain** → `context.email_domain` and structured **location** (Photon typeahead + server-side geocode on save) → `context.location`.
+- **Overview** (§9): fixed latent `data.stats` vs `data.metrics` bug + fragile `workspace_members→profiles` embed (read 0 members) → direct `profiles` source. Added Active Daemons / Tasks Done Today / Brain Queries Today / Pending Approvals, integration health, system alerts, quick actions.
+- **Crew page** (§4, new): team directory — member grid (level badge, online/away, current activity), search + status/level filters, slide-out detail, Daemon→Daemon **Send request** via `/api/tasks assign`. Rides on `/api/overview?view=crew` (no new function — the 12-fn cap forced the rewrites pattern). Verified live: all 7 Cobalt members.
+
+### 2. Real token metering (migrations 036/037)
+- `token_usage` table + `recordUsage()` — **fire-and-forget**, own admin client, never blocks a turn. Exact provider counts threaded via a `meter={}` out-param through every provider: OpenAI-compatible `stream_options.include_usage`, Anthropic SSE `message_start`/`message_delta`, Google `usageMetadata`; `estimated=false` when the provider reported usage, chars/4 only as labelled fallback.
+- Overview "Token Usage" widget = real sum this month + per-user top-5, honest "metered/estimated" note. Verified live: a streaming Hermes turn recorded **prompt 26,582 + completion 21 = 26,603 exact**, widget showed "27K · June 2026".
+
+### 3. Empty-promise regression — killed (the gerund form)
+- The daemon found a new phrasing the guard missed — **"Checking Beta Tenant's social footprint directly."** (a gerund stub). Broadened `PROMISE_RE` + added a precise gerund-stub detector (gerund-at-start + promise tail `directly/now/…` + short reply) that won't false-trip a real short answer; system prompt now **explicitly bans gerund stubs**. Verified: guard catches it, "Reviewing the data, I found three issues:" passes clean.
+
+### 4. Eager Brain seeding from the work-email domain (migration 038)
+- **`company_prefetch`** + `prefetchCompanyIntel()`: the instant onboarding knows the work-email domain, it reads the company's **own site + live SOCIAL profiles + the open web**, synthesises intel, and stashes it keyed by the user — exposed at `/api/brain {action:'prefetch_company'}` **above** the workspace guard (runs before any workspace exists). `setup.js` merges it into the new workspace's Brain on create (description, competitors, market_intel, socials, website) and clears the row.
+- Verified e2e: prefetched `stripe.com`, then onboarded with a deliberately generic name **"My Co"** → the Brain came back seeded from the **domain** (real Stripe description, competitors Square/PayPal/Adyen…, 3 LinkedIn profiles read). Name/location are now confirmation, not the trigger. Free emails (gmail) skipped.
+
+### 5. Daemon reasoning scaffold — sharpen the instruct stack (no new model)
+- The envelope may now open with a **private `"think"` field** (JOB / EVIDENCE / EDGE) the model writes **before** composing blocks, so Hermes/DeepSeek plan→answer instead of free-associating. **Stripped server-side** — never shown, streamed, or stored (logged off-band for quality auditing); the streaming parser already seeks `"blocks":[` so a leading field is ignored. Ties into the no-fake-promise rule (if EVIDENCE says look it up, emit the `brain_query` now).
+- Verified live: asked a loaded hypothetical ("6 weeks runway, board Friday") → the daemon **corrected the premise** from Cobalt's real data ("22 months runway, board meets Sep 18 — not this Friday") then gave a specific week plan. No `think` leak to the client.
+
+### 6. Activity view — the daemon-visibility layer (IA §9)
+- New **`/app/activity`** page + `/api/overview?view=activity` (no new function): buckets real autonomous signals into **Doing now / Upcoming / Done** from the action queue, scheduled outbox, agent runs, and cross-daemon events. Sidebar nav item added (Daemons → **Activity** → Crew). Distinct from the admin Audit Log (company-wide table).
+- Browser-verified on Cobalt (Maya): clean three-column layout, honest "Doing now" empty state, Upcoming shows real coordination (Aisha's parental-leave broadcast, Maya's Q4 assignment, Priya's capacity flag, the Brain's SOC 2 assignment), Done shows the delivered Northwind case-study draft. Graphite design held.
+
+### Open items / notes
+- Pending coordination events show "raised Nd ago" inside **Upcoming** (they're awaiting action, timestamped at creation) — accurate but mixes past/future timestamps in one column; relabel candidate.
+- Owner deferred the Opus-4.8 path (would need `ANTHROPIC_API_KEY` + premium cost) in favour of sharpening the self-hosted stack — `think` scaffold is the first lever; **Brain nightly-synthesis** reasoning scaffold is the natural next step.
