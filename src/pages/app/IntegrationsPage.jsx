@@ -4,6 +4,7 @@ import { useViewport } from '../../context/ThemeContext.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useC, mkGhostBtn } from '../../lib/theme.jsx';
 import { SkeletonRow } from '../../components/ui.jsx';
+import { ProviderIcon } from '../../components/brand/ProviderIcons.jsx';
 
 export const INTEGRATION_ROADMAP = [
   'Gmail', 'Google Drive', 'Google Calendar', 'Notion', 'Microsoft Teams',
@@ -161,7 +162,9 @@ export function IntegrationsPage() {
               return (
                 <div key={p.id} style={{ display: 'flex', flexDirection: 'column', padding: '14px 16px', background: c.card, border: `1px solid ${c.cardBorder}`, borderRadius: 11 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <div style={{ width: 34, height: 34, borderRadius: 9, background: connected ? 'rgba(16,185,129,0.12)' : c.subtle, border: `1px solid ${connected ? 'rgba(16,185,129,0.3)' : c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 13, fontWeight: 700, color: connected ? '#10b981' : c.text3, flexShrink: 0 }}>{p.label[0]}</div>
+                    <div style={{ width: 36, height: 36, borderRadius: 9, background: c.subtle, border: `1px solid ${c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                      <ProviderIcon id={p.id} label={p.label} size={22} fallbackColor={c.text3} />
+                    </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{p.label}</div>
                       <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: connected ? (conn.needsReconnect ? '#f59e0b' : '#10b981') : c.text4, marginTop: 3 }}>
