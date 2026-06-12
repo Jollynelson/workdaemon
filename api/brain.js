@@ -906,20 +906,26 @@ export default async function handler(req, res) {
   }
 
   // ── Deep-history backfill worker (service-token; self-chaining) ───────────────
-  // Runs one ~45s resumable slice for the token's workspace, then chains the next
-  // run on the same host while work remains. First run discovers the channels.
+  // ACK immediately, then run one ~40s resumable slice in the BACKGROUND (so the
+  // HTTP request never blocks → no 504), and chain the next run on the same host
+  // while work remains. First run discovers the channels. Progress is checkpointed
+  // per page, so a cut-off slice resumes cleanly (chain, else the cron backstop).
   if (req.method === 'POST' && req.query?.action === 'run_backfill') {
     const claims = verifyServiceToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
     if (!claims || claims.scope !== 'backfill' || !claims.workspace_id) return res.status(401).json({ error: 'Unauthorized' });
     const ws = claims.workspace_id;
-    const mdb = adminClient();
-    const { count } = await mdb.from('backfill_channels').select('id', { count: 'exact', head: true }).eq('workspace_id', ws).eq('provider', 'slack');
-    if (!count) { try { await startSlackBackfill(mdb, ws); } catch (e) { console.error('[brain] backfill discover ws=%s:', ws, e.message); } }
-    let remaining = 0;
-    try { ({ remaining } = await runBackfillSlice(mdb, ws, { budgetMs: 45000 })); }
-    catch (e) { console.error('[brain] backfill slice ws=%s:', ws, e.message); }
-    if (remaining > 0) waitUntil(kickBackfillWorker(`https://${req.headers.host}`, ws)); // chain the next slice
-    return res.status(200).json({ ok: true, remaining });
+    const base = `https://${req.headers.host}`;
+    res.status(202).json({ ok: true, started: true });
+    waitUntil((async () => {
+      const mdb = adminClient();
+      try {
+        const { count } = await mdb.from('backfill_channels').select('id', { count: 'exact', head: true }).eq('workspace_id', ws).eq('provider', 'slack');
+        if (!count) await startSlackBackfill(mdb, ws);
+        const { remaining } = await runBackfillSlice(mdb, ws, { budgetMs: 40000 });
+        if (remaining > 0) await kickBackfillWorker(base, ws); // chain the next slice
+      } catch (e) { console.error('[brain] backfill ws=%s:', ws, e.message); }
+    })());
+    return;
   }
 
   // ── Cron backstop: resume any workspace whose backfill chain stalled ─────────
