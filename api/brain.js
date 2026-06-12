@@ -9,6 +9,7 @@ import { listSkills, getSkill, growSkills, anticipateForEvent, importSkillFromUr
 import { ensureGoals, reviewGoals, generateCompanyGoals, generateStaffGoals } from './_lib/goals.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
+import { runUserSlackTool } from './_lib/connectors/slack.js';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
 import { scrubDaemonMessages } from './_lib/scrub.js';
@@ -854,6 +855,51 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error('[brain] mcp tool=%s error:', tool, e.message);
       return res.status(500).json({ error: 'Brain MCP read failed' });
+    }
+  }
+
+  // ── Per-staff daemon ACT surface — the daemon acts AS the requesting staff ────
+  // Sibling to the read-only Brain MCP above, but for one INDIVIDUAL. The signed
+  // token's scope='daemon_act' and carries BOTH workspace_id and user_id — both
+  // come from the HMAC signature, never the caller, so a staff member can only
+  // ever act as THEMSELVES. The staff's real tool token is resolved server-side
+  // (getUserToken) and never leaves the building. Reads may touch the user's OWN
+  // DMs (unlike the shared-Brain ingest, which excludes them); `log_commitment`
+  // records DM-derived commitments to that user's PRIVATE daemon_memory — those
+  // never roll up into the shared company Brain. Worst-case token leak = ~15 min
+  // of action scoped to the one staff member who was already chatting.
+  if (req.query?.action === 'daemon_act') {
+    const presented = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const claims = verifyServiceToken(presented);
+    if (!claims || claims.scope !== 'daemon_act' || !claims.workspace_id || !claims.user_id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const wsId = claims.workspace_id, uid = claims.user_id;
+    const mdb = adminClient();
+    const fromBody = req.method === 'POST';
+    const tool = String((fromBody ? req.body?.tool : req.query?.tool) || '');
+    const args = (fromBody ? req.body?.args : null) || {};
+    try {
+      // Phase 3: DM → private commitment log (deadlines/asks the daemon noticed).
+      if (tool === 'log_commitment') {
+        const text = String(args.text || args.value || '').trim().slice(0, 1000);
+        if (!text) return res.status(400).json({ error: 'text required' });
+        const key = `commitment-${String(args.source || 'dm').replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || 'dm'}-${Date.now().toString(36)}`;
+        await mdb.from('daemon_memory').upsert({
+          user_id: uid, workspace_id: wsId, key, value: text,
+          memory_type: 'commitment', updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,key' });
+        return res.status(200).json({ ok: true, logged: key });
+      }
+      // Slack tools (read + act), executed AS this staff member.
+      if (tool.startsWith('slack_')) {
+        const out = await runUserSlackTool(mdb, wsId, uid, tool.slice('slack_'.length), args);
+        return res.status(200).json(out);
+      }
+      return res.status(400).json({ error: 'unknown tool' });
+    } catch (e) {
+      console.error('[brain] daemon_act tool=%s error:', tool, e.message);
+      return res.status(500).json({ error: 'daemon act failed' });
     }
   }
 
