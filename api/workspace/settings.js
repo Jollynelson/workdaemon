@@ -127,15 +127,31 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     // ?integrations=true — list available providers + this workspace's connections
     if (req.query.integrations === 'true') {
-      const { data: rows } = await db
-        .from('workspace_integrations')
-        .select('provider, status, external_account, scopes, updated_at')
-        .eq('workspace_id', workspaceId);
+      const [{ data: rows }, { data: userRows }] = await Promise.all([
+        db.from('workspace_integrations')
+          .select('provider, status, external_account, scopes, updated_at')
+          .eq('workspace_id', workspaceId),
+        // This user's OWN grants — the daemon acts as them via these scopes.
+        db.from('user_integrations')
+          .select('provider, scopes')
+          .eq('workspace_id', workspaceId).eq('user_id', user.id),
+      ]);
       const byProvider = Object.fromEntries((rows || []).map(r => [r.provider, r]));
-      const providers = Object.entries(PROVIDERS).map(([id, cfg]) => ({
-        id, label: cfg.label, configured: providerConfigured(id),
-        connection: byProvider[id] || null, // {status, external_account, scopes, updated_at} or null
-      }));
+      const userGrant = Object.fromEntries((userRows || []).map(r => [r.provider, new Set(r.scopes || [])]));
+      const providers = Object.entries(PROVIDERS).map(([id, cfg]) => {
+        const conn = byProvider[id] || null;
+        // Nudge a reconnect when this user connected BEFORE a userScope was added
+        // (e.g. Slack DM read / send-as-you): their grant is missing scopes the
+        // daemon now needs to act as them. Generic — covers any future scope bump.
+        let needsReconnect = false;
+        if (conn?.status === 'connected' && cfg.userScopes?.length && userGrant[id]) {
+          needsReconnect = cfg.userScopes.some(s => !userGrant[id].has(s));
+        }
+        return {
+          id, label: cfg.label, configured: providerConfigured(id),
+          connection: conn ? { ...conn, needsReconnect } : null, // {status, external_account, scopes, updated_at, needsReconnect} or null
+        };
+      });
       return res.status(200).json({ providers });
     }
 

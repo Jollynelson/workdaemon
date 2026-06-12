@@ -65,6 +65,7 @@ export function IntegrationsPage() {
 
   const liveLabels = new Set(providers.map(p => p.label));
   const roadmap = INTEGRATION_ROADMAP.filter(l => !liveLabels.has(l));
+  const reconnectNeeded = providers.filter(p => p.connection?.needsReconnect);
 
   return (
     <div style={{ padding: isMobile ? '20px 16px' : '28px 32px', overflowY: 'auto', height: '100%', background: c.bg, transition: 'background 0.2s' }}>
@@ -84,6 +85,32 @@ export function IntegrationsPage() {
           </div>
         )}
 
+        {reconnectNeeded.length > 0 && (
+          <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 9, fontFamily: 'var(--dmsans)',
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.32)',
+            display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ color: '#f59e0b', fontSize: 14, lineHeight: '20px', flexShrink: 0 }}>⚠</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: c.text }}>
+                {reconnectNeeded.length === 1 ? `${reconnectNeeded[0].label} needs a quick reconnect` : 'Some tools need a quick reconnect'}
+              </div>
+              <div style={{ fontSize: 13, color: c.text3, lineHeight: 1.55, marginTop: 2 }}>
+                New permissions are ready so your daemon can act as you — read your DMs and send on your behalf. Reconnecting just re-grants access; nothing else changes.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {reconnectNeeded.map(p => (
+                <button key={p.id} type="button" onClick={() => connect(p.id)} disabled={busy === p.id}
+                  style={{ padding: '6px 13px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap',
+                    background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)',
+                    fontFamily: 'var(--dmsans)', fontSize: 12, fontWeight: 600, color: '#f59e0b', opacity: busy === p.id ? 0.6 : 1 }}>
+                  {busy === p.id ? '…' : (reconnectNeeded.length > 1 ? `Reconnect ${p.label}` : 'Reconnect')}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {loading ? (
             Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} height={64} />)
@@ -96,8 +123,8 @@ export function IntegrationsPage() {
                   <div style={{ width: 34, height: 34, borderRadius: 9, background: connected ? 'rgba(16,185,129,0.12)' : c.subtle, border: `1px solid ${connected ? 'rgba(16,185,129,0.3)' : c.subtleBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--orbitron)', fontSize: 13, fontWeight: 700, color: connected ? '#10b981' : c.text3, flexShrink: 0 }}>{p.label[0]}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: 'var(--dmsans)', fontSize: 14, fontWeight: 600, color: c.text }}>{p.label}</div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: connected ? '#10b981' : c.text4, marginTop: 3 }}>
-                      {connected ? `CONNECTED${conn.external_account ? ` · ${conn.external_account}` : ''}` : p.configured ? 'NOT CONNECTED' : 'AWAITING SETUP'}
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.04em', color: connected ? (conn.needsReconnect ? '#f59e0b' : '#10b981') : c.text4, marginTop: 3 }}>
+                      {connected ? `CONNECTED${conn.external_account ? ` · ${conn.external_account}` : ''}${conn.needsReconnect ? ' · RECONNECT NEEDED' : ''}` : p.configured ? 'NOT CONNECTED' : 'AWAITING SETUP'}
                     </div>
                   </div>
                   {connected ? (
