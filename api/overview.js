@@ -76,6 +76,62 @@ export default async function handler(req, res) {
     return res.status(200).json({ crew, me: user.id });
   }
 
+  // ── Activity (§9) — what the workspace's daemons are DOING NOW / have DONE /
+  // will DO next. Open to all members. Grounds purely on real autonomous signals
+  // (no chat replies): action queue, scheduled outbox, agent runs, cross-daemon
+  // events. Empty buckets are honest — they fill as daemons act. ───────────────
+  if (req.query.view === 'activity') {
+    const nowISO = new Date().toISOString();
+    const [actRes, outRes, runRes, agentRes, evRes, profRes] = await Promise.all([
+      db.from('daemon_actions').select('id, title, type, status, rationale, created_at, acted_at, agent_id').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(40),
+      db.from('daemon_outbox').select('id, kind, title, message, deliver_at, status, delivered_at, user_id, created_at').eq('workspace_id', ws).order('deliver_at', { ascending: false }).limit(40),
+      db.from('agent_runs').select('id, agent_id, status, phase, started_at, finished_at, error').eq('workspace_id', ws).order('started_at', { ascending: false }).limit(20),
+      db.from('agents').select('id, name, role, status, next_run_at').eq('workspace_id', ws),
+      db.from('daemon_events').select('id, type, payload, from_user_id, status, created_at, resolved_at').eq('workspace_id', ws).order('created_at', { ascending: false }).limit(25),
+      db.from('profiles').select('id, name, title').eq('workspace_id', ws),
+    ]);
+    const nameOf = Object.fromEntries((profRes.data ?? []).map(p => [p.id, p.name || p.title || 'A teammate']));
+    const agentName = Object.fromEntries((agentRes.data ?? []).map(a => [a.id, a.name || a.role || 'Daemon']));
+    const now = [], upcoming = [], done = [];
+
+    for (const r of (runRes.data ?? [])) {
+      const who = agentName[r.agent_id] || 'A daemon';
+      if (!r.finished_at) now.push({ id: 'run-' + r.id, kind: 'agent', title: `${who} is running`, detail: r.phase ? `Phase: ${r.phase}` : 'In progress', at: r.started_at, status: 'running' });
+      else done.push({ id: 'run-' + r.id, kind: 'agent', title: `${who} ${r.status === 'error' ? 'hit an error' : 'finished a run'}`, detail: r.error || r.phase || '', at: r.finished_at, status: r.status === 'error' ? 'failed' : 'done' });
+    }
+    for (const a of (actRes.data ?? [])) {
+      const base = { id: 'act-' + a.id, kind: 'action', detail: a.rationale || '' };
+      const label = a.title || a.type || 'Daemon action';
+      if (a.status === 'pending') upcoming.push({ ...base, title: `Needs your approval: ${label}`, at: a.created_at, status: 'pending' });
+      else if (a.status === 'running') now.push({ ...base, title: label, at: a.created_at, status: 'running' });
+      else done.push({ ...base, title: label, at: a.acted_at || a.created_at, status: a.status || 'done' });
+    }
+    for (const o of (outRes.data ?? [])) {
+      const t = o.title || (o.message ? o.message.slice(0, 60) : 'Scheduled message');
+      if (o.status === 'delivered' || o.delivered_at) done.push({ id: 'out-' + o.id, kind: 'scheduled', title: `Delivered: ${t}`, detail: '', at: o.delivered_at || o.created_at, status: 'done' });
+      else if (o.deliver_at && o.deliver_at > nowISO) upcoming.push({ id: 'out-' + o.id, kind: 'scheduled', title: `Will deliver: ${t}`, detail: `to ${nameOf[o.user_id] || 'you'}`, at: o.deliver_at, status: 'scheduled' });
+    }
+    for (const a of (agentRes.data ?? [])) {
+      if (a.status === 'active' && a.next_run_at && a.next_run_at > nowISO) upcoming.push({ id: 'agent-' + a.id, kind: 'agent', title: `${a.name || a.role || 'Daemon'} runs next`, detail: a.role || '', at: a.next_run_at, status: 'scheduled' });
+    }
+    for (const e of (evRes.data ?? [])) {
+      const who = e.payload?.source === 'brain' ? 'The Company Brain' : (nameOf[e.from_user_id] || 'A daemon');
+      const p = e.payload || {};
+      const label = e.type === 'assignment' ? `${who} assigned “${p.title || 'a task'}”`
+        : e.type === 'flag' ? `${who} flagged a capacity risk on “${p.title || 'a task'}”`
+        : e.type === 'accepted' ? `${who} accepted “${p.title || 'a task'}”`
+        : e.type === 'broadcast' ? `${who} broadcast to the company`
+        : `${who}: ${e.type}`;
+      const item = { id: 'ev-' + e.id, kind: 'coordination', title: label, detail: p.reason || p.brief || p.message || '', at: e.created_at, status: e.status === 'pending' ? 'pending' : 'done' };
+      (e.status === 'pending' ? upcoming : done).push(item);
+    }
+
+    now.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+    upcoming.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));   // soonest first
+    done.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));        // newest first
+    return res.status(200).json({ now: now.slice(0, 20), upcoming: upcoming.slice(0, 25), done: done.slice(0, 40), me: user.id });
+  }
+
   // All independent — fan out, and never let one failed table sink the page.
   const [membersRes, tasksRes, brainCountRes, pendingRes, integRes, actRes, activeRes, tokenRes] = await Promise.all([
     // profiles is the reliable membership source (a fragile workspace_members→profiles

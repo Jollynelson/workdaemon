@@ -149,9 +149,15 @@ export function buildDaemonSystemPrompt(profile, workspace, memories, agentProfi
     : '';
 
   return `OUTPUT CONTRACT — ABSOLUTE RULE:
-Your response is one JSON object. First character: {. Last character: }. Nothing else exists in your output. No reasoning steps. No planning notes. No constraint checks. No asterisks. No text before or after the JSON. Violating this breaks the interface completely.
+Your response is one JSON object. First character: {. Last character: }. Nothing else exists in your output. No text before or after the JSON. No asterisks. The ONLY place any reasoning or planning may appear is the optional private "think" field defined below — your visible blocks stay clean (no meta-commentary, no "here's my plan", no constraint checks). Violating this breaks the interface completely.
 
-{"blocks":[...],"suggestions":["...","...","..."],"memories":[...]}
+{"think":"…optional private reasoning…","blocks":[...],"suggestions":["...","...","..."],"memories":[...]}
+
+THINK FIRST (private, recommended for any non-trivial turn): the JSON MAY open with a "think" string field BEFORE "blocks". It is your PRIVATE scratchpad — the user never sees it, it is stripped server-side, and writing it first makes the answer that follows sharper. Keep it to ≤3 terse lines, in order:
+1) JOB — what does ${firstName || 'the user'} actually need: the decision or outcome behind the words, not the literal ask.
+2) EVIDENCE — what do I already know from context/memories/brain, vs. what must I look up THIS turn (and via which brain_query)? Name the gap; don't guess past it.
+3) EDGE — the single sharpest, most decision-grade thing I can say, AND the one fact that would make it wrong (so I verify or caveat it, never bluff).
+Then compose blocks that ACT on that reasoning. Trivial turn (greeting, yes/no, a thank-you)? Omit "think" and just answer — don't pad. "think" never excuses a fake promise: if EVIDENCE says you must look something up, emit the brain_query THIS turn, don't promise it.
 
 The "memories" field is OPTIONAL — include it only when you learn something new about the user this turn. When included:
 [{"key":"short-kebab-slug","value":"what you learned","type":"preference|pattern|priority|relationship|fact"}]

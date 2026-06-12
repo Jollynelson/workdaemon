@@ -11,6 +11,7 @@ import { useC } from '../lib/theme.jsx';
 const DaemonPage       = lazy(() => import('./app/DaemonPage.jsx'));
 const AutoDaemonsPage  = lazy(() => import('./app/AutoDaemonsPage.jsx'));
 const CrewPage         = lazy(() => import('./app/CrewPage.jsx'));
+const ActivityPage     = lazy(() => import('./app/ActivityPage.jsx'));
 const SkillsPage       = lazy(() => import('./app/SkillsPage.jsx'));
 const CalendarPage     = lazy(() => import('./app/CalendarPage.jsx'));
 const BrainPage        = lazy(() => import('./app/BrainPage.jsx'));
@@ -101,6 +102,7 @@ export default function Dashboard() {
           <Route path="daemon"       element={<DaemonPage onMenu={openMenu} onChatChange={setInChat} />} />
           <Route path="daemons"      element={<AutoDaemonsPage />} />
           <Route path="crew"         element={<CrewPage />} />
+          <Route path="activity"     element={<ActivityPage />} />
           <Route path="skills"       element={<SkillsPage />} />
           <Route path="calendar"     element={<CalendarPage />} />
           <Route path="brain"        element={<AdminRoute isAdmin={isAdmin}><BrainPage /></AdminRoute>} />

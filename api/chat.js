@@ -1036,6 +1036,13 @@ export default async function handler(req, res) {
       }
     };
 
+    // Strip the private reasoning scratchpad — it is never shown, streamed, or
+    // stored. Log a short trace so daemon reasoning quality is auditable off-band.
+    if (parsed && typeof parsed.think === 'string') {
+      console.log('[chat] think: %s', parsed.think.replace(/\s+/g, ' ').slice(0, 240));
+      delete parsed.think;
+    }
+
     // Run persistence in the background WITHOUT delaying the response, but keep
     // the serverless function alive until the writes finish — a bare fire-and-
     // forget gets frozen/dropped after res returns (esp. on slow LLM turns), so
