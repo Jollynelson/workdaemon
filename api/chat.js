@@ -820,14 +820,22 @@ export default async function handler(req, res) {
     if (!Array.isArray(parsed.suggestions) || !parsed.suggestions.some(s => typeof s === 'string' && s.trim())) {
       const clip = (s, n) => { s = String(s).replace(/\s+/g, ' ').trim(); if (s.length <= n) return s; const cut = s.slice(0, n); return cut.slice(0, cut.lastIndexOf(' ') > n - 20 ? cut.lastIndexOf(' ') : n) + '…'; };
       const fb = [];
-      const lastQ = isUserTurn && !/^\[SESSION_(START|RESUME)\]$/.test(newMsgNormalized.content)
-        ? clip(newMsgNormalized.content, 56) : '';
-      if (lastQ) fb.push(`Go deeper on: ${lastQ}`, `What should I do about ${lastQ.replace(/\?+$/, '')}?`);
+      // Prefer the concrete next-actions the DAEMON just OFFERED ("I can draft the
+      // board narrative…", "want me to set up X") → tap-to-continue chips that
+      // ADVANCE the thread, instead of echoing the user's own words back.
+      const replyText = (parsed.blocks || []).map(b => b.md || b.content || '').join('  ');
+      const offerRe = /\b(?:I can|I could|I'?ll|I would|want me to|shall I|should I|happy to)\s+([a-z][^.?!\n]{6,64})/gi;
+      let m2;
+      while ((m2 = offerRe.exec(replyText)) && fb.length < 2) {
+        const a = m2[1].trim().replace(/\s+/g, ' ').replace(/\s+(?:and I\b|—|,?\s*or\b|if you\b|for you\b).*$/i, '').replace(/[,;:]+$/, '');
+        if (a.length >= 6) fb.push(a.charAt(0).toUpperCase() + a.slice(1));
+      }
+      // Then the goal book + genuinely useful asks — none of which echo the user.
       const g = goalBook?.staff?.[0] || goalBook?.company?.[0];
       if (g?.title) fb.push(`What's the fastest next step on "${clip(g.title, 60)}"?`);
       if (connectedTools.includes('slack')) fb.push("What's happening in Slack today?");
       fb.push('What needs my attention today?', 'Show our goal progress');
-      parsed.suggestions = [...new Set(fb)].slice(0, 3);
+      parsed.suggestions = [...new Set(fb.filter(s => s && s.trim()))].slice(0, 3);
     }
 
     // Fire-and-forget: persist messages + run learning pipeline
