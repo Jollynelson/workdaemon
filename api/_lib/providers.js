@@ -25,6 +25,29 @@ export const LLM_CALL_TIMEOUT_MS = Number(process.env.CHAT_LLM_TIMEOUT_MS) || 24
 // still leaving room inside the 50s phase budget for the DeepSeek fallback.
 const HERMES_CALL_TIMEOUT_MS = Number(process.env.HERMES_LLM_TIMEOUT_MS) || 35000;
 
+// Cold-start guard (the ~90s-latency fix). A WARM Hermes gateway streams its
+// first token in ~1–3s; a scaled-to-zero gateway takes 30–180s to boot and load
+// a ~32B model — far past any sane wait. So the FIRST-token budget for streaming
+// Hermes is short: a cold gateway aborts fast, the caller routes THIS turn to the
+// cloud fallback (and prewarms Hermes for next turn) instead of burning the full
+// timeout, then falling back anyway. After the first token, STREAM_IDLE_MS governs,
+// so a warm-but-talking model is never cut off mid-generation.
+const HERMES_COLD_CUTOFF_MS = Number(process.env.HERMES_COLD_CUTOFF_MS) || 9000;
+
+// First-token wall-clock budget for the streaming path, by provider. Exported so
+// the timeout policy is unit-testable (chat.js relies on Hermes failing fast).
+export function firstTokenBudget(provider) {
+  return provider === 'hermes' ? HERMES_COLD_CUTOFF_MS : LLM_CALL_TIMEOUT_MS;
+}
+
+// Gate for an OPTIONAL extra LLM hop (escalation / fake-promise / brain-pull).
+// A hop only runs when the phase budget can still absorb its realistic cost AND
+// the per-turn hop allowance isn't spent — so stacked hops can't push a turn past
+// the 60s function cap into a 504. Pure + exported for tests.
+export function canRunExtraHop({ budgetLeftMs, costMs, hopsLeft }) {
+  return hopsLeft > 0 && budgetLeftMs > costMs;
+}
+
 export function withTimeout(promise, ms, label) {
   let t;
   const timeout = new Promise((_, reject) => {
@@ -65,7 +88,7 @@ const STREAM_IDLE_MS = Number(process.env.CHAT_STREAM_IDLE_MS) || 15000;
 
 export async function callProviderStream(cfg, sys, messages, identity = {}, onDelta = () => {}, meter = {}) {
   const { provider, api_key, endpoint, model } = cfg;
-  const firstTokenMs = provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
+  const firstTokenMs = firstTokenBudget(provider);
 
   // OpenAI-compatible streaming (openrouter/openai/deepseek/mistral/ollama/hermes/azure).
   // stream_options.include_usage asks the server to emit a final usage chunk with

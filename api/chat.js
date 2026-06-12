@@ -1,7 +1,7 @@
 import { requireAuth, adminClient } from './_lib/supabase.js';
 import { decryptSecret, enforceRateLimit, delimitUntrusted, parseBody, signServiceToken } from './_lib/security.js';
 import { webResearch, fetchPageText, extractUrls } from './_lib/research.js';
-import { callProvider, callProviderStream, LLM_CALL_TIMEOUT_MS } from './_lib/providers.js';
+import { callProvider, callProviderStream, LLM_CALL_TIMEOUT_MS, canRunExtraHop } from './_lib/providers.js';
 import { recordUsage } from './_lib/metering.js';
 import { createEnvelopeStream } from './_lib/stream_envelope.js';
 import { buildDaemonSystemPrompt } from './_lib/prompt.js';
@@ -134,20 +134,27 @@ async function runBrainQuery(db, workspaceId, userId, q) {
   return { tool, error: 'unknown tool' };
 }
 
-// Fire-and-forget: warm this user's company Hermes gateway so the first real
-// message doesn't pay the scale-to-zero cold start. Best-effort; the cloud
-// fallback still covers any miss. Triggered on chat open (history GET).
+// Fire-and-forget GET that nudges a Hermes gateway (Modal) to scale up, so the
+// first real completion doesn't pay the scale-to-zero cold start. Never blocks
+// the turn; the cloud fallback covers any miss. Hitting the web_server endpoint
+// is enough to trigger Modal's container boot even though we don't await it.
+function prewarmGateway(endpoint) {
+  const ep = (endpoint || '').replace(/\/$/, '');
+  if (!ep) return;
+  try { fetch(ep, { method: 'GET', signal: AbortSignal.timeout(2500) }).catch(() => {}); }
+  catch { /* best-effort */ }
+}
+
+// Resolve this user's gateway (their own hermes key, else the shared gateway) and
+// prewarm it. Triggered on chat open (history GET) — covers own-key workspaces;
+// the POST handler also prewarms the shared gateway directly with no DB round-trip.
 async function prewarmHermes(db, userId) {
   try {
     const { data: profile } = await db.from('profiles').select('workspace_id').eq('id', userId).single();
     if (!profile?.workspace_id) return;
     const { data: keys } = await db.from('workspace_api_keys')
       .select('endpoint').eq('workspace_id', profile.workspace_id).eq('provider', 'hermes').limit(1);
-    // Keyless workspaces run on the SHARED Hermes gateway (the platform
-    // default daemon) — prewarm that one for them.
-    const ep = keys?.[0]?.endpoint || process.env.HERMES_SHARED_GATEWAY_URL;
-    if (!ep) return;
-    fetch(ep.replace(/\/$/, ''), { method: 'GET', signal: AbortSignal.timeout(3000) }).catch(() => {});
+    prewarmGateway(keys?.[0]?.endpoint || process.env.HERMES_SHARED_GATEWAY_URL);
   } catch { /* prewarm is best-effort */ }
 }
 
@@ -266,6 +273,13 @@ export default async function handler(req, res) {
   };
 
   const db = adminClient();
+
+  // #3 PREWARM: nudge the shared Hermes gateway (the platform default daemon for
+  // keyless workspaces) to scale up NOW, so its Modal cold start overlaps the
+  // context fan-out below instead of being hit cold at model-call time. Fire-and-
+  // forget, no DB round-trip on the hot path; own-key gateways are prewarmed on
+  // the chat-open GET.
+  prewarmGateway(process.env.HERMES_SHARED_GATEWAY_URL);
 
   // Deliver any due daemon-initiated messages BEFORE building context, so a
   // just-fired reminder is already part of the history this very turn.
@@ -657,6 +671,16 @@ export default async function handler(req, res) {
         text = await callProviderStream(cfg, sys, msgs, identity, (d) => env.feed(d), meter);
         env.end();
       } catch (e) {
+        // #2 COLD-DETECT: a cold Hermes gateway never first-tokens within the
+        // short cutoff. Re-trying it non-streamed just re-pays the cold wait, so
+        // rethrow → the caller routes THIS turn to the cloud fallback, and we fire
+        // a prewarm so the NEXT turn is warm. Non-Hermes stream hiccups keep the
+        // safe non-stream retry (no behavior change for cloud providers).
+        if (cfg.provider === 'hermes') {
+          console.warn('[chat] hermes stream cold/failed (%s) → cloud fallback + prewarm', e.message);
+          prewarmGateway(cfg.endpoint);
+          throw e;
+        }
         console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
         emit({ type: 'reset' });
         text = await callProvider(cfg, sys, msgs, identity, meter);
@@ -706,11 +730,17 @@ export default async function handler(req, res) {
     let usedModel = goDeep ? tiers.deep : tiers.fast;
     let escalated = false;
     let parsed;
+    // #4 HOP BUDGET: cap the OPTIONAL extra LLM hops (escalation / fake-promise /
+    // brain-pull) a turn may stack, so they can't push it past the 60s function cap
+    // into a 504. Each hop runs only when canRunExtraHop() says the phase budget can
+    // absorb its realistic cost AND the per-turn allowance isn't spent, then spends one.
+    let hopsLeft = Number(process.env.BRAIN_MAX_EXTRA_HOPS || 2);
     try {
       parsed = parseJsonResponse(await runModel({ ...resolvedKey, model: usedModel }, trimmed));
       // Escalation gate: a fast-tier answer that came back thin → retry on deep.
-      // Skip when the time budget is too tight to afford another full call.
-      if (tiers.twoTier && !goDeep && responseIsThin(parsed) && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
+      if (tiers.twoTier && !goDeep && responseIsThin(parsed)
+          && canRunExtraHop({ budgetLeftMs: budgetLeft(), costMs: LLM_CALL_TIMEOUT_MS, hopsLeft })) {
+        hopsLeft--;
         try {
           emit({ type: 'status', label: 'GOING DEEPER…' });
           const deepParsed = parseJsonResponse(await runModel({ ...resolvedKey, model: tiers.deep }, trimmed));
@@ -718,9 +748,13 @@ export default async function handler(req, res) {
         } catch { /* keep the fast result */ }
       }
     } catch (e) {
-      // Routed model failed → fall back to the workspace's configured model once,
-      // then to a cloud provider (so a hermes outage never breaks the daemon).
-      if (usedModel !== resolvedKey.model) {
+      // Routed model failed → fall back. For Hermes the "configured model" is the
+      // SAME (cold/down) gateway, so retrying it just re-pays the wait — go straight
+      // to the cloud fallback. For cloud providers, retry the configured model once
+      // (a transient tier/model error), then the cloud provider.
+      if (resolvedKey.provider === 'hermes') {
+        parsed = await cloudFallback(e); usedModel = 'cloud-fallback';
+      } else if (usedModel !== resolvedKey.model) {
         try {
           parsed = parseJsonResponse(await runModel(resolvedKey, trimmed));
           usedModel = resolvedKey.model;
@@ -752,7 +786,9 @@ export default async function handler(req, res) {
     const promised = PROMISE_RE.test(promiseText)
       || (promiseIsStub && GERUND_RE.test(promiseText) && GERUND_TAIL_RE.test(promiseText));
     if (isUserTurn && !Array.isArray(parsed?.brain_queries) && (parsed?.blocks || []).length <= 2
-        && promised && budgetLeft() > 15000) {
+        && promised
+        && canRunExtraHop({ budgetLeftMs: budgetLeft(), costMs: LLM_CALL_TIMEOUT_MS, hopsLeft })) {
+      hopsLeft--;
       try {
         emit({ type: 'status', label: 'ACTUALLY CHECKING…' });
         // Do the promised lookup OURSELVES — the question defines the query.
@@ -788,7 +824,9 @@ export default async function handler(req, res) {
     // again with the results. This gives every company — including the shared-
     // gateway fleet — active brain pull, without per-company gateways or tokens in
     // the prompt. Bounded to one hop to cap latency.
-    if (Array.isArray(parsed?.brain_queries) && parsed.brain_queries.length && usedModel !== 'cloud-fallback' && budgetLeft() > LLM_CALL_TIMEOUT_MS) {
+    if (Array.isArray(parsed?.brain_queries) && parsed.brain_queries.length && usedModel !== 'cloud-fallback'
+        && canRunExtraHop({ budgetLeftMs: budgetLeft(), costMs: LLM_CALL_TIMEOUT_MS, hopsLeft })) {
+      hopsLeft--;
       try {
         const qs = parsed.brain_queries.slice(0, 3);
         const results = [];
