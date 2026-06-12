@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeCommitment } from '../connectors/slack.js';
+import { looksLikeCommitment, chunkLines } from '../connectors/slack.js';
 
 // The daemon catch-up logs DM lines that look like commitments into the user's
 // PRIVATE memory. This heuristic gates that — over-matching floods memory, under-
@@ -33,5 +33,31 @@ describe('looksLikeCommitment (daemon catch-up gate)', () => {
     expect(looksLikeCommitment(null)).toBe(false);
     expect(looksLikeCommitment(undefined)).toBe(false);
     expect(looksLikeCommitment('can you ' + 'x'.repeat(500))).toBe(false); // > 400 chars
+  });
+});
+
+// Deep history is stored as multiple ≤maxChars chunks per channel. chunkLines must
+// split without exceeding the cap and without dropping any line.
+describe('chunkLines (deep-history chunking)', () => {
+  it('keeps small input in a single chunk', () => {
+    expect(chunkLines(['a', 'b', 'c'], 5500)).toEqual(['a\nb\nc']);
+  });
+
+  it('splits past the cap, each chunk within the limit', () => {
+    const lines = Array.from({ length: 100 }, (_, i) => `U${i}: ` + 'x'.repeat(80)); // ~85 chars each
+    const chunks = chunkLines(lines, 500);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(500);
+  });
+
+  it('never drops a line (all content preserved across chunks)', () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `line-${i}`);
+    const chunks = chunkLines(lines, 40);
+    const rejoined = chunks.join('\n').split('\n');
+    expect(rejoined).toEqual(lines);
+  });
+
+  it('returns [""] for empty input', () => {
+    expect(chunkLines([], 5500)).toEqual(['']);
   });
 });

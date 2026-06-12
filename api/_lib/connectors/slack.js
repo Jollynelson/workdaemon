@@ -6,54 +6,89 @@ import { upsertDocuments } from '../ingestion.js';
 // the demo). This folds them into per-channel documents so the daemon can ground
 // answers on conversations via unified retrieval. Reads the local store — no live
 // API token needed (works even when only the webhook feed is configured).
+// Deep history: how far back the backfill paginates per channel (messages). The
+// real-time webhook fold captures everything going FORWARD unbounded, so this
+// only bounds the initial backfill — tune up for deeper history (cost: more API
+// calls + time, against Slack rate limits + the serverless window).
+const HISTORY_DEPTH = Number(process.env.SLACK_HISTORY_DEPTH || 2000);
+const HISTORY_PAGES = Math.ceil(HISTORY_DEPTH / 200) + 2; // hard page ceiling
+const CHUNK_CHARS = 5500; // per-doc content target (embed-friendly; < the 6000 cap)
+
+// Cursor-paginate a channel's FULL history (deep), oldest→newest. conversations.
+// history returns newest-first per page; we collect across pages then reverse.
+async function deepHistory(token, channel, maxMessages = HISTORY_DEPTH) {
+  let cursor = '', all = [];
+  for (let page = 0; page < HISTORY_PAGES; page++) {
+    const d = await slackApi(token, 'conversations.history', { channel, limit: 200, ...(cursor ? { cursor } : {}) });
+    for (const m of (d.messages || [])) if (m.type === 'message' && m.text) all.push(m);
+    cursor = d.response_metadata?.next_cursor || '';
+    if (!cursor || all.length >= maxMessages) break;
+  }
+  return all.slice(0, maxMessages).reverse();
+}
+
+// Split an array of lines into ≤maxChars chunks (so deep history spans multiple
+// embedded docs instead of being truncated into one).
+export function chunkLines(lines, maxChars = CHUNK_CHARS) {
+  const chunks = []; let cur = '';
+  for (const l of lines) {
+    if (cur && cur.length + l.length + 1 > maxChars) { chunks.push(cur); cur = l; }
+    else cur = cur ? cur + '\n' + l : l;
+  }
+  if (cur) chunks.push(cur);
+  return chunks.length ? chunks : [''];
+}
+
 // Pull the channels a TOKEN can see (user token → that staff's channels incl.
 // private; bot token → channels the bot is in). Private/mpim → scoped to members.
+// Returns deep per-channel line arrays (chunked into docs by the caller).
 async function _pullViaToken(token, userOf, onStart, onChannel) {
   let convos = [];
   try {
     // Channels + group DMs the token can see. 1:1 DMs ('im') are deliberately
     // EXCLUDED — personal DMs don't belong in the shared company brain.
-    convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 100 })).channels || [];
+    convos = (await slackApi(token, 'users.conversations', { types: 'public_channel,private_channel,mpim', exclude_archived: 'true', limit: 200 })).channels || [];
   } catch { return []; }
   onStart?.(convos.length);
   const out = [];
   for (const ch of convos) {
     try {
-      const msgs = await channelHistory(token, ch.id, { limit: 100 });
-      if (!msgs.length) continue;
-      const lines = msgs.slice().reverse().map(m => `${m.user || 'user'}: ${m.text}`);
+      const msgs = await deepHistory(token, ch.id);   // chronological, DEEP
+      if (msgs.length) {
+        const lines = msgs.map(m => `${m.user || 'user'}: ${m.text}`);
 
-      // Thread replies — pull the top few threaded messages so decisions buried in
-      // threads are captured (same visibility as the channel).
-      try {
-        const threaded = msgs.filter(m => m.reply_count || m.thread_ts).slice(0, 5);
-        for (const t of threaded) {
-          const replies = await slackApi(token, 'conversations.replies', { channel: ch.id, ts: t.thread_ts || t.ts, limit: 20 })
-            .then(d => d.messages || []).catch(() => []);
-          for (const rm of replies.slice(1)) if (rm.text) lines.push(`  ↳ ${rm.user || 'user'}: ${rm.text}`);
+        // Thread replies — pull replies for recent threaded messages so decisions
+        // buried in threads are captured (same visibility as the channel).
+        try {
+          const threaded = msgs.filter(m => m.reply_count || m.thread_ts).slice(-30);
+          for (const t of threaded) {
+            const replies = await slackApi(token, 'conversations.replies', { channel: ch.id, ts: t.thread_ts || t.ts, limit: 50 })
+              .then(d => d.messages || []).catch(() => []);
+            for (const rm of replies.slice(1)) if (rm.text) lines.push(`  ↳ ${rm.user || 'user'}: ${rm.text}`);
+          }
+        } catch {}
+        // Pinned messages.
+        try {
+          const pins = await slackApi(token, 'pins.list', { channel: ch.id }).then(d => d.items || []).catch(() => []);
+          for (const p of pins) if (p.message?.text) lines.push(`📌 pinned: ${p.message.text}`);
+        } catch {}
+        // File titles shared in the channel.
+        try {
+          const files = await slackApi(token, 'files.list', { channel: ch.id, count: 50 }).then(d => d.files || []).catch(() => []);
+          const names = files.map(f => f.title || f.name).filter(Boolean);
+          if (names.length) lines.push(`Files: ${names.join(', ')}`);
+        } catch {}
+
+        let visibility = 'public', allowed = [], memberNames = [];
+        if (ch.is_private || ch.is_mpim) {
+          visibility = 'restricted';
+          const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 500 }).then(d => d.members).catch(() => [])) || [];
+          const mapped = members.map(sid => userOf[sid]).filter(Boolean);
+          allowed = mapped.map(m => m.user_id);
+          memberNames = mapped.map(m => m.real_name).filter(Boolean);
         }
-      } catch {}
-      // Pinned messages.
-      try {
-        const pins = await slackApi(token, 'pins.list', { channel: ch.id }).then(d => d.items || []).catch(() => []);
-        for (const p of pins) if (p.message?.text) lines.push(`📌 pinned: ${p.message.text}`);
-      } catch {}
-      // File titles shared in the channel.
-      try {
-        const files = await slackApi(token, 'files.list', { channel: ch.id, count: 20 }).then(d => d.files || []).catch(() => []);
-        const names = files.map(f => f.title || f.name).filter(Boolean);
-        if (names.length) lines.push(`Files: ${names.join(', ')}`);
-      } catch {}
-
-      let visibility = 'public', allowed = [], memberNames = [];
-      if (ch.is_private || ch.is_mpim) {
-        visibility = 'restricted';
-        const members = (await slackApi(token, 'conversations.members', { channel: ch.id, limit: 200 }).then(d => d.members).catch(() => [])) || [];
-        const mapped = members.map(sid => userOf[sid]).filter(Boolean);
-        allowed = mapped.map(m => m.user_id);
-        memberNames = mapped.map(m => m.real_name).filter(Boolean);
+        out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names: memberNames });
       }
-      out.push({ id: ch.id, name: ch.name || ch.id, visibility, lines, allowed, names: memberNames });
     } catch { /* not_in_channel etc. */ }
     onChannel?.();
   }
@@ -71,13 +106,13 @@ export async function ingest(db, workspaceId, botToken, { onProgress } = {}) {
   const onStart = (n) => { total += n; onProgress?.({ stage: 'reading shared channels', done, total }); };
   const onChannel = () => { done++; onProgress?.({ stage: 'reading shared channels', done, total }); };
 
-  // Merge channel docs by stable channel id; union member access across whoever read it.
+  // Collect deep per-channel history by stable channel id; the first token to read
+  // a channel provides its (deep) content, later tokens only union member access.
   const byId = {};
   const merge = (parts) => {
     for (const p of parts) {
-      const k = `channel-${p.id}`;
-      const e = byId[k] ||= { title: `#${p.name} (Slack)`, content: '', visibility: 'public', allowed: new Set(), names: new Set() };
-      if (!e.content) e.content = p.lines.join('\n');
+      const e = byId[p.id] ||= { name: p.name, lines: null, visibility: 'public', allowed: new Set(), names: new Set() };
+      if (!e.lines) { e.lines = p.lines; e.name = p.name; }
       if (p.visibility === 'restricted') { e.visibility = 'restricted'; p.allowed.forEach(a => e.allowed.add(a)); p.names.forEach(n => e.names.add(n)); }
     }
   };
@@ -90,21 +125,105 @@ export async function ingest(db, workspaceId, botToken, { onProgress } = {}) {
 
   // 3. Fallback: webhook-fed / seeded local store (public), keyed by name.
   if (!Object.keys(byId).length) {
-    const { data: stored } = await db.from('slack_messages').select('channel_name, slack_user, text').eq('workspace_id', workspaceId).order('created_at', { ascending: true }).limit(400);
+    const { data: stored } = await db.from('slack_messages').select('channel_name, slack_user, text').eq('workspace_id', workspaceId).order('created_at', { ascending: true }).limit(4000);
     const byName = {};
     for (const m of (stored || [])) (byName[m.channel_name || 'channel'] ||= []).push(`${m.slack_user || 'user'}: ${m.text}`);
-    for (const [name, lines] of Object.entries(byName)) byId[`channel-${name}`] = { title: `#${name} (Slack)`, content: lines.join('\n'), visibility: 'public', allowed: new Set(), names: new Set() };
+    for (const [name, lines] of Object.entries(byName)) byId[name] = { name, lines, visibility: 'public', allowed: new Set(), names: new Set() };
   }
 
-  const docs = Object.entries(byId).map(([eid, e]) => ({
-    external_id: eid, doc_type: 'channel', title: e.title, content: e.content,
-    visibility: e.visibility, allowed_users: [...e.allowed],
-    metadata: { channel: e.title.replace(/^#| \(Slack\)$/g, ''), member_names: [...e.names] },
-  }));
+  // Chunk each channel's DEEP history into multiple embedded docs (chunk 0 keeps
+  // the legacy `channel-<id>` id so old single docs are overwritten in place).
+  const docs = [];
+  for (const [chId, e] of Object.entries(byId)) {
+    const chunks = chunkLines(e.lines || [], CHUNK_CHARS);
+    chunks.forEach((content, i) => docs.push({
+      external_id: i === 0 ? `channel-${chId}` : `channel-${chId}-${i}`,
+      doc_type: 'channel', title: `#${e.name} (Slack)`, content,
+      visibility: e.visibility, allowed_users: [...e.allowed],
+      metadata: { channel: e.name, member_names: [...e.names], chunk: i, chunks: chunks.length },
+    }));
+  }
+
   onProgress?.({ stage: 'indexing', done: total, total, doc_count: docs.length });
   const result = await upsertDocuments(db, workspaceId, 'slack', docs);
+
+  // Reconcile: drop slack docs no longer in the rebuilt set (channels left, or deep
+  // history shrank to fewer chunks) so stale chunks don't linger.
+  if (docs.length) {
+    const want = new Set(docs.map(d => d.external_id));
+    const { data: have } = await db.from('workspace_documents')
+      .select('external_id').eq('workspace_id', workspaceId).eq('source', 'slack');
+    const stale = (have || []).map(r => r.external_id).filter(id => !want.has(id));
+    if (stale.length) await db.from('workspace_documents').delete()
+      .eq('workspace_id', workspaceId).eq('source', 'slack').in('external_id', stale);
+  }
+
   onProgress?.({ stage: 'indexed', done: total, total, doc_count: result?.upserted ?? docs.length });
   return result;
+}
+
+// ── Real-time fold: index ONE new message into its channel's Brain doc NOW ─────
+// Called from the Slack Events webhook so new activity is searchable immediately,
+// instead of waiting for the nightly cron. Keeps the SAME one-doc-per-channel
+// shape `ingest()` produces (external_id `channel-<id>`), appends the line, keeps
+// the most-recent ~6000 chars, and re-embeds. SECURITY: an existing doc's
+// visibility/allowed_users are PRESERVED (never downgrade a restricted channel);
+// a brand-new channel's visibility is resolved from Slack before indexing, and if
+// it can't be determined safely (no bot token) the fold is skipped — the cron
+// will pick it up. Best-effort: callers wrap in try/catch.
+export async function foldSlackMessageIntoBrain(db, workspaceId, { channelId, line }, botToken) {
+  if (!channelId || !line) return { skipped: 'empty' };
+  const idxOf = (id) => id === `channel-${channelId}` ? 0 : (Number(id.slice(`channel-${channelId}-`.length)) || 0);
+  // All existing chunk docs for this channel (legacy single = chunk 0).
+  const { data: rows } = await db.from('workspace_documents')
+    .select('external_id, content, title, visibility, allowed_users, metadata')
+    .eq('workspace_id', workspaceId).eq('source', 'slack')
+    .or(`external_id.eq.channel-${channelId},external_id.like.channel-${channelId}-%`);
+  let latest = null;
+  for (const r of (rows || [])) if (!latest || idxOf(r.external_id) > idxOf(latest.external_id)) latest = r;
+
+  let title, visibility, allowed_users, metadata;
+  if (latest) {
+    title = latest.title;
+    visibility = latest.visibility || 'public';
+    allowed_users = latest.allowed_users || [];
+    metadata = latest.metadata || {};
+  } else {
+    // New channel — determine visibility from Slack BEFORE indexing, so we never
+    // expose a private channel as workspace-visible. No token → can't verify → skip.
+    if (!botToken) return { skipped: 'no-token-new-channel' };
+    let ch = null;
+    try { ch = await getConversation(botToken, channelId); } catch { return { skipped: 'channel-info-failed' }; }
+    const channelName = ch?.name || channelId;
+    title = `#${channelName} (Slack)`;
+    metadata = { channel: channelName };
+    if (ch?.is_private || ch?.is_mpim) {
+      visibility = 'restricted';
+      const members = await getConversationMembers(botToken, channelId).catch(() => []);
+      const { data: umap } = await db.from('slack_user_map').select('slack_user_id, user_id').eq('workspace_id', workspaceId);
+      const bySid = Object.fromEntries((umap || []).map(u => [u.slack_user_id, u.user_id]).filter(([, v]) => v));
+      allowed_users = (members || []).map(sid => bySid[sid]).filter(Boolean);
+    } else {
+      visibility = 'public';
+      allowed_users = [];
+    }
+  }
+
+  // Append to the latest chunk; ROLL to a new chunk when full — deep history is
+  // never overwritten, so forward history grows unbounded.
+  const curIdx = latest ? idxOf(latest.external_id) : 0;
+  const prev = latest?.content || '';
+  let targetIdx = curIdx, content;
+  if (prev && prev.length + line.length + 1 > CHUNK_CHARS) {
+    targetIdx = curIdx + 1; content = line;
+  } else {
+    content = prev ? prev + '\n' + line : line;
+  }
+  const external_id = targetIdx === 0 ? `channel-${channelId}` : `channel-${channelId}-${targetIdx}`;
+  return upsertDocuments(db, workspaceId, 'slack', [{
+    external_id, doc_type: 'channel', title, content,
+    visibility, allowed_users, metadata: { ...metadata, chunk: targetIdx },
+  }]);
 }
 
 // ── Slack connector — full read + action toolset (parity with Zapier's Slack) ──

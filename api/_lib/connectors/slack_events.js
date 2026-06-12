@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getAccessToken } from '../oauth.js';
-import { findUserById, sendChannelMessage, channelHistory } from './slack.js';
+import { findUserById, sendChannelMessage, channelHistory, foldSlackMessageIntoBrain } from './slack.js';
 import { resolveLLM, callLLM } from '../research.js';
 import { delimitUntrusted } from '../security.js';
 
@@ -103,6 +103,15 @@ async function handleMessage(db, workspaceId, ev, eventId) {
     mentions,
     event_id:     eventId,
   }, { onConflict: 'workspace_id,channel_id,ts', ignoreDuplicates: true });
+
+  // REAL-TIME Brain sync: fold this message into the channel's Brain doc NOW,
+  // instead of waiting for the nightly cron. Best-effort — never breaks the
+  // webhook (we've already acked Slack; this runs in the background task).
+  if (process.env.REALTIME_BRAIN_SYNC !== 'off') {
+    const prefix = ev.thread_ts && ev.thread_ts !== ev.ts ? '  ↳ ' : '';
+    await foldSlackMessageIntoBrain(db, workspaceId, { channelId: ev.channel, line: `${prefix}${ev.user || 'user'}: ${text}` }, botToken)
+      .catch(e => console.error('[slack_events] brain fold:', e.message));
+  }
 
   // Real-time @mention alerts → the mentioned member's inbox.
   if (mentions.length && botToken) {
