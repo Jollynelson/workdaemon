@@ -14,16 +14,24 @@ const STATUS_COLOR = {
 };
 const KIND_ICON = { agent: '◇', action: '⚡', scheduled: '◷', coordination: '⇄', message: '✉' };
 
-function relTime(iso) {
+// Bare span like "3h" / "9d" / "just now" — no tense.
+function span(iso) {
   if (!iso) return '';
   const d = new Date(iso).getTime();
   if (Number.isNaN(d)) return '';
-  const diff = d - Date.now();
-  const abs = Math.abs(diff);
+  const abs = Math.abs(d - Date.now());
   const m = Math.round(abs / 60000), h = Math.round(abs / 3600000), day = Math.round(abs / 86400000);
-  const span = abs < 60000 ? 'just now' : abs < 3600000 ? `${m}m` : abs < 86400000 ? `${h}h` : `${day}d`;
-  if (span === 'just now') return span;
-  return diff > 0 ? `in ${span}` : `${span} ago`;
+  return abs < 60000 ? 'just now' : abs < 3600000 ? `${m}m` : abs < 86400000 ? `${h}h` : `${day}d`;
+}
+
+// When `age` is set the timestamp is "how long it's been waiting" (raised in the
+// past) — say so explicitly. Otherwise it's a real schedule: "in 3h" / "9d ago".
+function timeLabel(item) {
+  const s = span(item.at);
+  if (!s) return '';
+  if (s === 'just now') return s;
+  if (item.age) return `raised ${s} ago`;
+  return new Date(item.at).getTime() > Date.now() ? `in ${s}` : `${s} ago`;
 }
 
 function Card({ item, c }) {
@@ -36,9 +44,10 @@ function Card({ item, c }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13.5, fontWeight: 600, color: c.text, lineHeight: 1.35 }}>{item.title}</div>
-          <span style={{ flexShrink: 0, fontFamily: 'var(--mono)', fontSize: 10.5, color: c.text4, whiteSpace: 'nowrap' }}>{relTime(item.at)}</span>
+          <span style={{ flexShrink: 0, fontFamily: 'var(--mono)', fontSize: 10.5, color: c.text4, whiteSpace: 'nowrap' }}>{timeLabel(item)}</span>
         </div>
         {item.detail ? <div style={{ fontFamily: 'var(--dmsans)', fontSize: 12, color: c.text3, marginTop: 3, lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{item.detail}</div> : null}
+        {item.age ? <span style={{ display: 'inline-block', marginTop: 7, fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.04em', color: dot, background: `${dot}14`, border: `1px solid ${dot}33`, borderRadius: 5, padding: '2px 7px' }}>AWAITING RESPONSE</span> : null}
       </div>
     </div>
   );

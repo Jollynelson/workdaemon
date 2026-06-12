@@ -102,7 +102,7 @@ export default async function handler(req, res) {
     for (const a of (actRes.data ?? [])) {
       const base = { id: 'act-' + a.id, kind: 'action', detail: a.rationale || '' };
       const label = a.title || a.type || 'Daemon action';
-      if (a.status === 'pending') upcoming.push({ ...base, title: `Needs your approval: ${label}`, at: a.created_at, status: 'pending' });
+      if (a.status === 'pending') upcoming.push({ ...base, title: `Needs your approval: ${label}`, at: a.created_at, status: 'pending', age: true });
       else if (a.status === 'running') now.push({ ...base, title: label, at: a.created_at, status: 'running' });
       else done.push({ ...base, title: label, at: a.acted_at || a.created_at, status: a.status || 'done' });
     }
@@ -122,8 +122,12 @@ export default async function handler(req, res) {
         : e.type === 'accepted' ? `${who} accepted “${p.title || 'a task'}”`
         : e.type === 'broadcast' ? `${who} broadcast to the company`
         : `${who}: ${e.type}`;
-      const item = { id: 'ev-' + e.id, kind: 'coordination', title: label, detail: p.reason || p.brief || p.message || '', at: e.created_at, status: e.status === 'pending' ? 'pending' : 'done' };
-      (e.status === 'pending' ? upcoming : done).push(item);
+      const isPending = e.status === 'pending';
+      // Pending events sit in Upcoming but their timestamp is when they were
+      // RAISED (past) — flag age:true so the UI labels it "raised Nd ago", not a
+      // schedule. Resolved events go to Done where a plain "ago" reads correctly.
+      const item = { id: 'ev-' + e.id, kind: 'coordination', title: label, detail: p.reason || p.brief || p.message || '', at: e.created_at, status: isPending ? 'pending' : 'done', age: isPending };
+      (isPending ? upcoming : done).push(item);
     }
 
     now.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
