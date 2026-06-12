@@ -19,9 +19,15 @@ import modal
 COMPANY = os.environ.get("HERMES_COMPANY", "default")
 app = modal.App(f"workdaemon-hermes-{COMPANY}")
 
-# Warm pool: HERMES_MIN_CONTAINERS=1 keeps the gateway always-on (no cold-start
-# timeout) — used for the SHARED gateway that serves many companies' daemons.
-GATEWAY_MIN = int(os.environ.get("HERMES_MIN_CONTAINERS", "0"))
+# Warm pool. The SHARED gateway (HERMES_COMPANY unset → "default") is the platform
+# default daemon for every keyless workspace, so it MUST stay warm: a scale-to-zero
+# cold start boots a container and loads a ~32B model — far longer than the chat-side
+# 35s Hermes timeout — so every first-message-after-idle times out and falls to the
+# cloud, which is the ~90s latency. Default the shared gateway to a warm pool of 1;
+# dedicated per-company gateways keep $0-idle scale-to-zero. Override either with
+# HERMES_MIN_CONTAINERS=<n>.
+_DEFAULT_MIN = 1 if COMPANY == "default" else 0
+GATEWAY_MIN = int(os.environ.get("HERMES_MIN_CONTAINERS", str(_DEFAULT_MIN)))
 
 HERMES_BIN = "/usr/local/bin/hermes"  # install.sh links it here
 
