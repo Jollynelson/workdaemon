@@ -33,13 +33,19 @@ export const PROVIDERS = {
       'canvases:write', 'app_mentions:read',
       'pins:read', 'files:read',
     ],
-    // User scopes — a staff member's own token, so the Brain reads what THEY can
-    // see (incl. private channels) without a bot invite. Read-scoped + search.
+    // User scopes — a staff member's OWN token. Two jobs: (1) the Brain reads what
+    // THEY can see (incl. private channels) without a bot invite; (2) their own
+    // daemon ACTS AS THEM — reads their 1:1 DMs (im:history) and posts as them
+    // (chat:write). Personal DMs stay with the individual's daemon; the shared
+    // Brain ingest still excludes `im` (see connectors/slack.js ingest()).
     userScopes: [
       'search:read', 'users.profile:write',
       'channels:read', 'channels:history',
       'groups:read', 'groups:history',          // private channels the user is in
       'mpim:read', 'mpim:history',
+      'im:read', 'im:history',                  // their own 1:1 DMs (daemon acts as them)
+      'chat:write',                             // post AS the user (Phase 2 actions)
+      'users:read',                             // resolve DM-partner / mention names
       'pins:read', 'files:read',
     ],
     parseToken: (d) => {

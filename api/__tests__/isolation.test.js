@@ -166,3 +166,60 @@ describe('brain MCP surface isolation (api/brain.js ?action=mcp)', () => {
     expect(res.code).toBe(401);
   });
 });
+
+describe('per-staff daemon_act surface isolation (api/brain.js ?action=daemon_act)', () => {
+  const actToken = (ws, uid) =>
+    import('../_lib/security.js').then(({ signServiceToken }) =>
+      signServiceToken({ scope: 'daemon_act', workspace_id: ws, user_id: uid }));
+
+  it('logs a commitment to the TOKEN’s user (never a caller-supplied one)', async () => {
+    const { default: handler } = await import('../brain.js');
+    const res = mockRes();
+    await handler({
+      method: 'POST', query: { action: 'daemon_act' },
+      headers: { authorization: `Bearer ${await actToken(WS_A, USER_A.id)}` },
+      // caller tries to smuggle a foreign user_id in args — it must be ignored.
+      body: { tool: 'log_commitment', args: { text: 'I asked Sam for Q3 by Friday', user_id: USER_B.id } },
+    }, res);
+    expect(res.code).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const logged = (ctx.store.daemon_memory || []);
+    expect(logged).toHaveLength(1);
+    expect(logged[0].user_id).toBe(USER_A.id);      // bound to the signed token
+    expect(logged[0].workspace_id).toBe(WS_A);
+    expect(logged[0].memory_type).toBe('commitment');
+  });
+
+  it('rejects a brain_mcp-scoped token (wrong scope) on the act surface', async () => {
+    const { default: handler } = await import('../brain.js');
+    const { signServiceToken } = await import('../_lib/security.js');
+    const brainTok = signServiceToken({ scope: 'brain_mcp', workspace_id: WS_A });
+    const res = mockRes();
+    await handler({ method: 'POST', query: { action: 'daemon_act' }, headers: { authorization: `Bearer ${brainTok}` }, body: { tool: 'slack_list_channels' } }, res);
+    expect(res.code).toBe(401);
+  });
+
+  it('rejects a daemon_act token that is missing user_id', async () => {
+    const { default: handler } = await import('../brain.js');
+    const { signServiceToken } = await import('../_lib/security.js');
+    const noUser = signServiceToken({ scope: 'daemon_act', workspace_id: WS_A });
+    const res = mockRes();
+    await handler({ method: 'POST', query: { action: 'daemon_act' }, headers: { authorization: `Bearer ${noUser}` }, body: { tool: 'slack_list_channels' } }, res);
+    expect(res.code).toBe(401);
+  });
+
+  it('rejects a daemon_act token on the read-only brain MCP surface', async () => {
+    const { default: handler } = await import('../brain.js');
+    const res = mockRes();
+    await handler({ method: 'GET', query: { action: 'mcp', tool: 'hunt' }, headers: { authorization: `Bearer ${await actToken(WS_A, USER_A.id)}` } }, res);
+    expect(res.code).toBe(401);
+  });
+
+  it('a slack tool with no connected user token returns a graceful reconnect, not a crash', async () => {
+    const { default: handler } = await import('../brain.js');
+    const res = mockRes();
+    await handler({ method: 'POST', query: { action: 'daemon_act' }, headers: { authorization: `Bearer ${await actToken(WS_A, USER_A.id)}` }, body: { tool: 'slack_recent_activity' } }, res);
+    expect(res.code).toBe(200);
+    expect(res.body.error).toBe('no_user_token');
+  });
+});

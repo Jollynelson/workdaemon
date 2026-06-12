@@ -1,4 +1,4 @@
-import { getAccessToken, getUserTokens } from '../oauth.js';
+import { getAccessToken, getUserToken, getUserTokens } from '../oauth.js';
 import { upsertDocuments } from '../ingestion.js';
 
 // ── Ingestion: fold Slack activity into the document store ────────────────────
@@ -250,4 +250,75 @@ export async function withSlack(db, workspaceId, fn) {
   const token = await getAccessToken(db, workspaceId, 'slack', 'bot');
   if (!token) return null;
   return fn(token);
+}
+
+// ── Per-staff daemon surface — acts AS one staff member via THEIR OWN token ───
+// The SHARED Brain never ingests personal DMs (see ingest() above — `im` is
+// excluded on purpose). But a staff member's OWN daemon legitimately can: these
+// run with that staff's connected user token, so they act AS them and CAN see
+// their 1:1 DMs. The raw token is loaded server-side and never leaves the
+// building — the gateway only ever holds a short-lived signed capability.
+
+// Pull recent activity across the user's channels + group DMs + 1:1 DMs, acting
+// as them. This is what answers "pull my recent Slack activity" — DMs included,
+// because it's the user looking at their own Slack through their own daemon.
+export async function pullRecentForUser(userToken, { perChannel = 15, maxChannels = 25 } = {}) {
+  let convos;
+  try {
+    convos = (await slackApi(userToken, 'users.conversations', {
+      types: 'public_channel,private_channel,mpim,im', exclude_archived: 'true', limit: 100,
+    })).channels || [];
+  } catch (e) { return { error: 'slack_error', message: e.message, channels: [] }; }
+  const out = [];
+  for (const ch of convos.slice(0, maxChannels)) {
+    try {
+      const msgs = await channelHistory(userToken, ch.id, { limit: perChannel });
+      if (!msgs.length) continue;
+      let label;
+      if (ch.is_im) {
+        const u = await findUserById(userToken, ch.user).catch(() => null);
+        label = `DM with ${u?.real_name || u?.name || ch.user}`;
+      } else {
+        label = `#${ch.name || ch.id}${ch.is_private ? ' (private)' : ''}${ch.is_mpim ? ' (group DM)' : ''}`;
+      }
+      out.push({
+        id: ch.id, label, is_dm: !!(ch.is_im || ch.is_mpim),
+        messages: msgs.slice().reverse().map(m => `${m.user || 'user'}: ${m.text}`),
+      });
+    } catch { /* not_in_channel / cant_dm_bot etc. */ }
+  }
+  return { channels: out };
+}
+
+// Tools the per-staff daemon may call — ALL executed with the staff's USER
+// token, so reads include their DMs and actions post AS them. (`runSlackTool`
+// above stays the workspace-token path; this is the per-user "act as them" path.)
+export const USER_SLACK_TOOLS = {
+  recent_activity:      { type: 'read',   run: (t, a) => pullRecentForUser(t, a || {}) },
+  channel_history:      { type: 'read',   run: (t, a) => channelHistory(t, a.channel, { limit: a.limit || 30 }) },
+  list_channels:        { type: 'read',   run: (t)    => listChannels(t) },
+  find_message:         { type: 'read',   run: (t, a) => findMessage(t, a.query, a.count || 20) },
+  find_user_by_name:    { type: 'read',   run: (t, a) => findUserByName(t, a.name) },
+  send_channel_message: { type: 'action', run: (t, a) => sendChannelMessage(t, a) },
+  send_direct_message:  { type: 'action', run: (t, a) => sendDirectMessage(t, a) },
+};
+
+// Run a per-staff Slack tool with the requesting staff's OWN token. Returns a
+// shaped result the daemon can read; a missing/under-scoped token is a graceful
+// "reconnect" message, never a thrown 500.
+export async function runUserSlackTool(db, workspaceId, userId, tool, args = {}) {
+  const def = USER_SLACK_TOOLS[tool];
+  if (!def) return { error: 'unknown_tool', message: `unknown slack tool: ${tool}` };
+  const token = await getUserToken(db, workspaceId, userId, 'slack');
+  if (!token) return {
+    error: 'no_user_token',
+    message: 'You haven’t connected your own Slack (or it lacks user scopes). Open Integrations → Connect Slack and grant message-history + chat scopes so your daemon can act as you.',
+  };
+  try {
+    return { ok: true, result: await def.run(token, args) };
+  } catch (e) {
+    // invalid_auth here means the user token is revoked/expired → prompt reconnect.
+    const reconnect = /invalid_auth|token_revoked|account_inactive/.test(e.message);
+    return { error: reconnect ? 'reconnect_slack' : 'slack_error', message: e.message };
+  }
 }

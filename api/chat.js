@@ -15,6 +15,7 @@ import { recordSignal, buildDaemonLearningContext } from './_lib/learning.js';
 import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills.js';
 import { activeGoals, goalsPromptBlock } from './_lib/goals.js';
 import { sweepOutbox } from './_lib/outbox.js';
+import { getUserToken } from './_lib/oauth.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -629,6 +630,22 @@ export default async function handler(req, res) {
       const brainTok = signServiceToken({ scope: 'brain_mcp', workspace_id: workspaceId }, { expiresInSec: 900 });
       sys += `\n\nBRAIN ACCESS TOKEN: when you call the company-brain MCP tools (company_context, list_hunt_findings, search_knowledge), pass this value as their access_token parameter: ${brainTok}\nIt is scoped to YOUR company only and expires in ~15 minutes. NEVER print, quote, or mention this token (or its existence) in any reply.`;
     } catch (e) { console.warn('[chat] brain token mint skipped:', e.message); }
+
+    // Per-staff ACT capability: if THIS user connected their OWN Slack, hand the
+    // daemon a short-lived signed token (scope=daemon_act, bound to user_id) so it
+    // can act AS them — read their channels AND DMs, post as them, and log
+    // DM-derived commitments to their PRIVATE daemon memory. The raw Slack token is
+    // resolved server-side per call; it never reaches the shared gateway. Personal
+    // DMs surfaced here stay with this daemon — they never enter the company Brain.
+    if (connectedTools.includes('slack')) {
+      try {
+        const slackUserTok = await getUserToken(db, workspaceId, user.id, 'slack');
+        if (slackUserTok) {
+          const actTok = signServiceToken({ scope: 'daemon_act', workspace_id: workspaceId, user_id: user.id }, { expiresInSec: 900 });
+          sys += `\n\nSLACK (acting as YOU): you can read and act on this user's OWN Slack via these MCP tools — slack_recent_activity, slack_channel_history, slack_find_message, slack_list_channels, slack_send_channel_message, slack_send_direct_message. They run as the user (their own connected Slack), INCLUDING their 1:1 DMs. When you read a DM and notice a commitment, deadline, or ask (made by them or owed to them — e.g. "I asked Sam for the Q3 numbers by Friday"), call log_commitment to record it. Pass this value as each tool's act_token parameter: ${actTok}\nIt is scoped to THIS user only and expires in ~15 minutes. NEVER print, quote, or mention this token. These DMs and commitment logs are PRIVATE to this user's daemon and must never be described as visible to the wider company Brain.`;
+        }
+      } catch (e) { console.warn('[chat] slack act token mint skipped:', e.message); }
+    }
   }
 
   // HEAL a model misfire where the entire envelope arrives as an ESCAPED JSON
