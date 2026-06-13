@@ -35,6 +35,7 @@ The brain ingests from every connected source into one company memory.
 - ✅ **Onboarding fast-path.** A data-rich company that connects its tools can have a model trained within ~an hour instead of waiting for the weekly cycle.
 - ✅ **Continuous self-teaching.** Beyond the company's own data, the brain proactively researches each role's *current* best practices, new tools, and better ways to work — and distills them into the skill library on its own (recording knowledge is a safe, self-executing action). Round-robin across roles, interval-gated so it's never spammy.
   - *Scenario:* The brain reads what top RevOps leaders are doing this quarter and adds a "signal-based outreach" skill to the Sales Lead's daemon — so the daemon keeps getting sharper at its craft without anyone teaching it.
+- ✅ **Auto-equips daemons with what it learns (self-executing).** When the brain self-teaches a role a new skill, it *attaches* that skill to that role's daemons on its own (additive + reversible, so it's safe to do without approval) — the brain literally upgrading its own workforce. The next autonomy step up the dial after the digest.
 - ✅ **Learns only what matters.** Two gates keep the model sharp:
   - **Source-trust:** the brain confirms a source is genuinely company-wide before learning from it (e.g. a real company Slack — multiple members/channels — vs a personal one; a corporate email domain vs personal mail). Untrusted sources are still *remembered* for search, just not *learned* from.
   - **Relevance:** even within a trusted source, off-topic content (#random banter, spam, personal chatter) is ingested for memory but never becomes training data.
@@ -48,6 +49,8 @@ The brain ingests from every connected source into one company memory.
 - ✅ **Deal-going-cold & thread-going-quiet detectors.** Flags tracked deals/opportunities or important threads that were active but have gone silent — without nagging a dormant source.
   - *Scenario:* The Acme renewal had weekly activity, then nothing for two weeks while other deals kept moving. The brain flags it: "Acme renewal has gone quiet."
 - ✅ **Auto-posted daily digest (first self-executing action).** Each cycle the brain posts an internal summary of what it noticed — "2 teammates need attention, 3 deadlines slipping, 1 deal cold" — *without* asking, because it's safe and informational. This is the first step up the autonomy dial; consequential actions stay approve-first.
+- ✅ **Goals-at-risk detector.** Ties the goals engine into the loop — flags company/staff goals trending to miss (overdue, due-soon-and-behind, or off the expected pace).
+  - *Scenario:* "Hit 100 signups" is at 10% with the deadline tomorrow → the brain flags it: "1 goal trending to miss."
 
 ### 1.5 Proactive intelligence
 - ✅ **External scanner.** A daily pass scans the outside world for what's relevant to each role and drafts findings to the inbox.
@@ -119,10 +122,12 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 - ✅ **Continuous self-teaching** — research each role's best practices into the skill library (§1.3).
 - ✅ **Deal-cold & thread-quiet detectors** — flag tracked work that's gone silent (§1.4).
 - ✅ **Auto-posted daily digest** — the first self-executing action (§1.4).
+- ✅ **Goals-at-risk detector** — flags goals trending to miss (§1.4).
+- ✅ **Continuous self-teaching + auto-equip** — learns each role's best practices and attaches them to that role's daemons on its own (§1.3).
 
 **Coming next:**
-- 🔭 **Goals-at-risk signals:** tie staff/deadline signals to the goals engine — flag goals trending to miss.
 - 🔭 **Wider auto-execution:** more proven-safe actions self-execute as each earns trust (consequential stays approve-first).
+- 🔭 **Google/Drive & Gmail scopes:** the Google *tool* connect needs Drive/Gmail read consent (today's sign-in token has no Drive scope, so Drive ingested 0 docs) — then Drive/Gmail flow into the brain like Slack/GitHub.
 - 🔭 **Live model routing:** route real daemon chats to the company's own model once it beats the shared brain per company.
 - 🔭 **Deeper ingestion:** richer connectors (more sources fully ingested) so the brain sees even more.
 - 🔭 **Prediction & positioning:** the pattern-layer the first two pillars unlock — forecasting and recommendations from everything the brain remembers.

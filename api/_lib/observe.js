@@ -74,6 +74,46 @@ export async function detectGoneQuiet(db, workspaceId, { docTypes, days = 14, ki
   return { quiet: stale.length, proposed };
 }
 
+// Pure: is a goal at risk? Uses progress vs. time-to-due and pace vs. the horizon.
+export function goalRisk(goal, now = Date.now()) {
+  const progress = Number(goal.progress) || 0;
+  if (progress >= 100) return { risk: 'done', reason: 'complete' };
+  if (!goal.due_at) return { risk: 'unknown', reason: 'no due date' };
+  const daysLeft = Math.round((Date.parse(goal.due_at) - now) / 864e5);
+  if (Number.isNaN(daysLeft)) return { risk: 'unknown', reason: 'no due date' };
+  if (daysLeft < 0) return { risk: 'overdue', reason: `${-daysLeft}d overdue at ${progress}%` };
+  if (daysLeft <= 7 && progress < 75) return { risk: 'at_risk', reason: `due in ${daysLeft}d at ${progress}%` };
+  const horizon = Number(goal.horizon_days) || 30;
+  const expected = Math.round(Math.min(1, Math.max(0, (horizon - daysLeft) / horizon)) * 100);
+  if (progress + 25 < expected) return { risk: 'behind', reason: `${progress}% vs ~${expected}% expected pace` };
+  return { risk: 'on_track', reason: `${progress}%` };
+}
+
+// Goals trending to miss — ties the goals engine into the observe loop. Auto-remembers
+// every goal's risk; proposes a deduped digest of the ones off track.
+export async function detectGoalsAtRisk(db, workspaceId) {
+  const { data: goals } = await db.from('brain_goals')
+    .select('id, title, progress, due_at, horizon_days, scope, status')
+    .eq('workspace_id', workspaceId).eq('status', 'active').limit(100);
+  const flagged = [];
+  for (const g of goals || []) {
+    const { risk, reason } = goalRisk(g);
+    await recordObservation(db, workspaceId, {
+      domain: 'goal', subjectType: 'goal', subjectId: g.id, signal: risk, value: Number(g.progress) || 0,
+    });
+    if (risk === 'overdue' || risk === 'at_risk' || risk === 'behind') flagged.push({ ...g, risk, reason });
+  }
+  if (!flagged.length) return { at_risk: 0, proposed: 0 };
+  const recipients = await adminRecipients(db, workspaceId);
+  const list = flagged.slice(0, 6).map(g => `• ${g.title} — ${g.reason}`).join('\n');
+  const proposed = await proposeToInbox(db, workspaceId, recipients, {
+    kind: 'goals_at_risk', subjectId: workspaceId,
+    title: `${flagged.length} goal${flagged.length === 1 ? '' : 's'} trending to miss`,
+    body: `Off track:\n${list}`, metadata: { count: flagged.length },
+  });
+  return { at_risk: flagged.length, proposed };
+}
+
 // AUTO-tier action (the first the brain runs WITHOUT approval): an internal digest of
 // what it observed this cycle. Informational, no outward effect. Gated by tierFor so
 // the kill-switch (BRAIN_AUTONOMY=propose_only) silences it; deduped to one at a time.
@@ -97,6 +137,7 @@ export async function observeWorkspace(db, workspaceId) {
     { docTypes: ['deal', 'opportunity'], kind: 'deal_cold', noun: 'deal' }).catch((e) => ({ error: e.message }));
   out.threads = await detectGoneQuiet(db, workspaceId,
     { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' }).catch((e) => ({ error: e.message }));
+  out.goals = await detectGoalsAtRisk(db, workspaceId).catch((e) => ({ error: e.message }));
 
   // AUTO self-teaching: research one role's current best practices into the skill
   // library — bounded per run, round-robin across roles/runs.
@@ -110,6 +151,7 @@ export async function observeWorkspace(db, workspaceId) {
   if (out.deadlines?.slipped) lines.push(`• ${out.deadlines.slipped} deadline(s) slipping`);
   if (out.deals?.quiet) lines.push(`• ${out.deals.quiet} deal(s) gone cold`);
   if (out.threads?.quiet) lines.push(`• ${out.threads.quiet} thread(s) gone quiet`);
+  if (out.goals?.at_risk) lines.push(`• ${out.goals.at_risk} goal(s) trending to miss`);
   if (out.learning?.learned) lines.push(`• taught myself ${out.learning.learned} new ${out.learning.role} skill(s)`);
   out.digest = lines.length
     ? await postDailyDigest(db, workspaceId, ['What I noticed today:', ...lines]).catch((e) => ({ error: e.message }))

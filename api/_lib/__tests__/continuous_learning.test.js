@@ -36,6 +36,21 @@ describe('learnForRole', () => {
     expect((inserts.learning_signals || []).length).toBe(1);   // AUTO: remembered it learned
   });
 
+  it('AUTO-equips the role\'s daemons with the freshly self-taught skill', async () => {
+    const inserts = {};
+    const db = fakeDb({
+      brain_skills: [],
+      learning_signals: [],
+      workspace_members: [{ user_id: 'u1' }, { user_id: 'u2' }],
+      profiles: [{ id: 'u1', role: 'Sales Lead' }, { id: 'u2', role: 'Engineer' }],
+      daemon_skills: [],   // none equipped yet
+    }, inserts);
+    const r = await learnForRole(db, 'ws', 'Sales Lead', { research: RESEARCH, distill: DISTILL });
+    expect(r.learned).toBe(1);
+    expect(r.equipped).toBe(1);   // only the Sales Lead (u1), not the Engineer
+    expect(inserts.daemon_skills[0]).toMatchObject({ user_id: 'u1', assigned_by: 'brain' });
+  });
+
   it('dedupes — skips a skill whose slug already exists', async () => {
     const inserts = {};
     const db = fakeDb({ brain_skills: [{ id: 'dupe' }], learning_signals: [] }, inserts);
