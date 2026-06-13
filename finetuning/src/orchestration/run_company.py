@@ -120,20 +120,21 @@ def run_company(company_id: str) -> None:
         new_revision=result["hf_revision"], old_revision=old_revision,
     )
     db.set_version_eval_score(mv_row["id"], gate["new_score"])
+    db.set_version_base_score(mv_row["id"], gate["base_score"])
 
     if gate["should_deploy"]:
         db.promote_version(mv_row["id"], company_id)
         logger.info(
-            "company=%s v%d DEPLOYED — gate new=%.3f >= old=%.3f (answered %d/%d). "
-            "Adapter revision=%s, served via vLLM.",
-            company_id, version, gate["new_score"], gate["old_score"],
+            "company=%s v%d DEPLOYED (routable) — gate new=%.3f >= old=%.3f, beats shared "
+            "brain %.3f (answered %d/%d). Adapter revision=%s, served via vLLM.",
+            company_id, version, gate["new_score"], gate["old_score"], gate["base_score"],
             gate["new_answered"], gate["num_eval_examples"], result["hf_revision"][:8],
         )
     else:
         logger.warning(
-            "company=%s v%d NOT deployed — gate new=%.3f < old=%.3f (answered %d/%d). "
-            "Current model stays live; candidate kept for inspection.",
-            company_id, version, gate["new_score"], gate["old_score"],
+            "company=%s v%d NOT deployed — gate new=%.3f (old=%.3f, shared-brain=%.3f, "
+            "answered %d/%d). Shared brain stays live; candidate recorded for inspection.",
+            company_id, version, gate["new_score"], gate["old_score"], gate["base_score"],
             gate["new_answered"], gate["num_eval_examples"],
         )
 

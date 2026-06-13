@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # one that beats a weak incumbent. Below it, the company stays on the shared brain
     # and retries next cycle. This is what stops live routing to a too-weak model.
     gate_min_score: float = Field(default=0.3, validation_alias="GATE_MIN_SCORE")
+    # Baseline: the company model must beat the SHARED brain (the base model the
+    # company would otherwise use) by this margin on the same eval to be routable.
+    # This is the real "is the fine-tune actually better than what they have" bar.
+    gate_baseline_margin: float = Field(default=0.05, validation_alias="GATE_BASELINE_MARGIN")
+    baseline_model: str = Field(default="deepseek-chat", validation_alias="BASELINE_MODEL")
     # LLM judge for the gate (scores generated answers vs reference). Provider-
     # configurable so it isn't tied to one vendor's key. Default DeepSeek: it's
     # cheap, strong, independent of the candidate models, and DEEPSEEK_API_KEY is
