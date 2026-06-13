@@ -11,7 +11,8 @@
   "crons": [
     { "path": "/api/brain?action=scan_external", "schedule": "0 7 * * *" },
     { "path": "/api/inbox?__agents=1&action=run_due", "schedule": "0 8 * * *" },
-    { "path": "/api/brain?action=backfill_sweep", "schedule": "30 6 * * *" }
+    { "path": "/api/brain?action=backfill_sweep", "schedule": "30 6 * * *" },
+    { "path": "/api/brain?action=worker_tick", "schedule": "0 * * * *" }
   ],
   "rewrites": [
     { "source": "/api/oauth", "destination": "/api/workspace/settings" },
