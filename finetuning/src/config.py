@@ -59,6 +59,11 @@ class Settings(BaseSettings):
 
     # ── Quality gate ───────────────────────────────────────────────────────────
     gate_epsilon: float = 0.01           # new model must score >= old - epsilon
+    # Absolute floor: a model must score at least this on the held-out eval to be
+    # deployed AT ALL — even a first model (which has no incumbent to beat) and even
+    # one that beats a weak incumbent. Below it, the company stays on the shared brain
+    # and retries next cycle. This is what stops live routing to a too-weak model.
+    gate_min_score: float = Field(default=0.3, validation_alias="GATE_MIN_SCORE")
     # LLM judge for the gate (scores generated answers vs reference). Provider-
     # configurable so it isn't tied to one vendor's key. Default DeepSeek: it's
     # cheap, strong, independent of the candidate models, and DEEPSEEK_API_KEY is
