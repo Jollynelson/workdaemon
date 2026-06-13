@@ -4,6 +4,7 @@
 // same way). Behavior is unchanged.
 import OpenAI from 'openai';
 import { assertSafeUrl } from './security.js';
+import { callCompanyModel } from './company_model.js';
 
 // SOUL §config: the daemon's output is a strict JSON contract, so keep reasoning
 // effort LOW on reasoning models — high effort makes some models emit visible
@@ -36,8 +37,10 @@ const HERMES_COLD_CUTOFF_MS = Number(process.env.HERMES_COLD_CUTOFF_MS) || 9000;
 
 // First-token wall-clock budget for the streaming path, by provider. Exported so
 // the timeout policy is unit-testable (chat.js relies on Hermes failing fast).
+// company_model is self-hosted like hermes — it can cold-start, so it gets the
+// same generous first-token budget (and the same cloud fallback in chat.js).
 export function firstTokenBudget(provider) {
-  return provider === 'hermes' ? HERMES_COLD_CUTOFF_MS : LLM_CALL_TIMEOUT_MS;
+  return (provider === 'hermes' || provider === 'company_model') ? HERMES_COLD_CUTOFF_MS : LLM_CALL_TIMEOUT_MS;
 }
 
 // Gate for an OPTIONAL extra LLM hop (escalation / fake-promise / brain-pull).
@@ -71,7 +74,7 @@ const googleUsage = (m) => m
 // `meter` is an out-param: providers set meter.usage to the EXACT token counts
 // the provider reported (no estimates). Callers read it after the call resolves.
 export function callProvider(cfg, sys, messages, identity = {}, meter = {}) {
-  const ms = cfg.provider === 'hermes' ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
+  const ms = (cfg.provider === 'hermes' || cfg.provider === 'company_model') ? HERMES_CALL_TIMEOUT_MS : LLM_CALL_TIMEOUT_MS;
   return withTimeout(callProviderInner(cfg, sys, messages, identity, meter), ms, `provider:${cfg.provider}`);
 }
 
@@ -122,6 +125,14 @@ export async function callProviderStream(cfg, sys, messages, identity = {}, onDe
   }
 
   switch (provider) {
+    // Self-hosted company model: the serve endpoint returns plain content (no
+    // token stream), so do the non-streaming call and emit it as one delta.
+    case 'company_model': {
+      const text = await callProvider(cfg, sys, messages, identity, meter);
+      if (text) onDelta(text);
+      return text;
+    }
+
     case 'openrouter':
       return oaiStream(new OpenAI({
         baseURL: 'https://openrouter.ai/api/v1', apiKey: api_key,
@@ -244,9 +255,17 @@ export async function callProviderStream(cfg, sys, messages, identity = {}, onDe
   }
 }
 
-async function callProviderInner({ provider, api_key, endpoint, model }, sys, messages, identity = {}, meter = {}) {
+async function callProviderInner({ provider, api_key, endpoint, model, company_id, token, version }, sys, messages, identity = {}, meter = {}) {
   console.log('[chat] provider=%s model=%s', provider, model || '(default)');
   switch (provider) {
+
+    // Self-hosted per-company model (finetuning serve endpoint). Returns plain
+    // content; reports no token usage (self-hosted, not metered per-token).
+    case 'company_model': {
+      const text = await callCompanyModel({ endpoint, token, company_id, version }, sys, messages);
+      meter.usage = undefined;
+      return text;
+    }
 
     case 'openrouter': {
       const client = new OpenAI({

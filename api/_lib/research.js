@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { decryptSecret, assertSafeUrl } from './security.js';
 import { recordUsage } from './metering.js';
+import { resolveCompanyModel, callCompanyModel } from './company_model.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared research engine: web search (Brave) + LLM synthesis.
@@ -230,6 +231,11 @@ async function resolveLLMInner(workspaceId, db) {
     if (ws?.openrouter_key) {
       return { provider: 'openrouter', api_key: decryptSecret(ws.openrouter_key), model: ws.openrouter_model };
     }
+
+    // Self-hosted per-company model (deployed adapter) → the company's own brain,
+    // ahead of the shared gateway. No-op until self-hosted serving is configured.
+    const cm = await resolveCompanyModel(db, workspaceId);
+    if (cm) return cm;
   }
   // Env fallbacks. HERMES FIRST: daemons run on the shared Hermes gateway by
   // default (mirrors api/chat.js auto-onboard), so the autonomous daemon engine
@@ -273,7 +279,11 @@ export async function callLLM(cfg, sys, user, opts = {}) {
   return text;
 }
 
-async function callLLMInner({ provider, api_key, model, endpoint }, sys, user, { maxTokens = 1200 } = {}, meter = {}) {
+async function callLLMInner({ provider, api_key, model, endpoint, company_id, token, version }, sys, user, { maxTokens = 1200 } = {}, meter = {}) {
+  // Self-hosted per-company model (finetuning serve endpoint) — one user turn.
+  if (provider === 'company_model') {
+    return callCompanyModel({ endpoint, token, company_id, version }, sys, [{ role: 'user', content: user }]);
+  }
   // Capture the provider's EXACT token usage (no estimates) off each response.
   const oai = (r) => {
     if (r?.usage) meter.usage = {
