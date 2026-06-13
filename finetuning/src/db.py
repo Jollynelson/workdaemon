@@ -144,11 +144,12 @@ def get_workspace_documents(company_id: str, limit: int = 200) -> list[dict]:
     """The company's brain CORPUS (Slack history + docs) — the raw material the
     Q&A synthesizer mines into training pairs (Phase 2.5). EXCLUDES restricted docs:
     a per-company model trained on staff-scoped content could surface it to anyone,
-    so only workspace-visible/public docs feed training."""
+    so only workspace-visible/public docs feed training. Also returns `metadata` so
+    the trainer can honor the source-trust flag (metadata.train_eligible)."""
     resp = (
         db()
         .table("workspace_documents")
-        .select("source, title, content, visibility")
+        .select("source, title, content, visibility, metadata")
         .eq("workspace_id", company_id)
         .or_("visibility.is.null,visibility.eq.public,visibility.eq.workspace")
         .limit(limit)

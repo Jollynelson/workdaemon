@@ -186,8 +186,18 @@ export async function ingest(db, workspaceId, botToken, { onProgress } = {}) {
     }));
   }
 
+  // SOURCE-trust: only let the model LEARN from this Slack if it's confirmably
+  // company-wide — multiple distinct members (from the user map) OR several shared
+  // channels. A 1–2-person / personal / test workspace is still ingested for RAG,
+  // but train_eligible=false keeps it out of training. (Self-selecting brain.)
+  const SLACK_MIN_MEMBERS = Number(process.env.SLACK_MIN_MEMBERS || 3);
+  const SLACK_MIN_CHANNELS = Number(process.env.SLACK_MIN_CHANNELS || 3);
+  const distinctMembers = new Set((umap || []).map(u => u.slack_user_id)).size;
+  const channelCount = Object.keys(byId).length;
+  const trainEligible = distinctMembers >= SLACK_MIN_MEMBERS || channelCount >= SLACK_MIN_CHANNELS;
+
   onProgress?.({ stage: 'indexing', done: total, total, doc_count: docs.length });
-  const result = await upsertDocuments(db, workspaceId, 'slack', docs);
+  const result = await upsertDocuments(db, workspaceId, 'slack', docs, { trainEligible });
 
   // Reconcile: drop slack docs no longer in the rebuilt set (channels left, or deep
   // history shrank to fewer chunks) so stale chunks don't linger.

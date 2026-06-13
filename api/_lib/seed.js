@@ -6,6 +6,7 @@
 // row as they progress so the Integrations page can poll a live status.
 import { ingest as slackIngest, daemonCatchUp as slackDaemonCatchUp } from './connectors/slack.js';
 import { ingest as githubIngest } from './connectors/github.js';
+import { ingest as gmailIngest } from './connectors/gmail.js';
 import { getAccessToken } from './oauth.js';
 import { companyServeToken } from './company_model.js';
 
@@ -89,6 +90,30 @@ const SEEDERS = {
       await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
     }
     // No per-user GitHub act-rail yet — the daemon track is just tool-readiness.
+    await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
+  },
+
+  gmail: async (db, { workspaceId }, patch) => {
+    // 🧠 BRAIN — mail threads (interaction-rich). SOURCE-trust in the connector
+    // (corporate domain) keeps personal mailboxes out of training; the qa_synth
+    // relevance gate then keeps only on-topic threads.
+    await patch({ brain_status: 'seeding', brain_stage: 'reading mailbox' });
+    try {
+      const token = (await getAccessToken(db, workspaceId, 'gmail', 'user').catch(() => null))
+                 || (await getAccessToken(db, workspaceId, 'google', 'user').catch(() => null))
+                 || (await getAccessToken(db, workspaceId, 'google').catch(() => null));
+      if (!token) throw new Error('no Google/Gmail token (needs gmail.readonly scope)');
+      let docs = 0;
+      const r = await gmailIngest(db, workspaceId, token, {
+        onProgress: ({ stage, done, total, doc_count }) => {
+          if (doc_count != null) docs = doc_count;
+          patch({ brain_stage: stage, brain_done: done, brain_total: total, doc_count: docs });
+        },
+      });
+      await patch({ brain_status: 'ready', brain_stage: 'indexed', doc_count: r?.upserted ?? docs });
+    } catch (e) {
+      await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
+    }
     await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
   },
 };
