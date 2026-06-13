@@ -160,6 +160,26 @@ def run_company_remote(company_id: str) -> dict:
     return {"company_id": company_id, "status": "done"}
 
 
+@app.function(image=orchestrator_image, secrets=[modal.Secret.from_name("workdaemon-secrets")])
+def verify_config() -> dict:
+    """Cheap CPU pre-flight: confirm the secret is wired for a real run — effective
+    base model + that HF_TOKEN / DB / DeepSeek are present — WITHOUT printing any
+    secret value. Run before the first GPU spend: modal run modal_app.py::verify_config"""
+    import os
+    from src.config import settings
+    info = {
+        "base_model": settings.base_model,
+        "base_is_qwen3_32b": "Qwen3-32B" in settings.base_model,
+        "hf_token_set": bool(os.environ.get("HF_TOKEN")),
+        "hf_org": os.environ.get("HF_ORG"),
+        "deepseek_key_set": bool(settings.deepseek_api_key),
+        "database_url_set": bool(settings.database_url),
+        "supabase_url_set": bool(settings.supabase_url),
+    }
+    print("VERIFY_CONFIG:", info)
+    return info
+
+
 @app.function(
     image=orchestrator_image,
     timeout=60 * 30,
