@@ -130,9 +130,11 @@ export const PROVIDERS = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GDRIVE_CLIENT_ID',
     clientSecretEnv: 'GDRIVE_CLIENT_SECRET',
+    // Read to ingest/search + drive.file so the daemon can also CREATE/manage docs it
+    // makes (acting as you). When/whether it acts is governed by approve-first autonomy.
     scopes: [
       'https://www.googleapis.com/auth/drive.readonly',
-      'https://www.googleapis.com/auth/drive.metadata.readonly',
+      'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     responseType: 'code',
@@ -149,8 +151,10 @@ export const PROVIDERS = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GMAIL_CLIENT_ID',
     clientSecretEnv: 'GMAIL_CLIENT_SECRET',
+    // Read to ingest + send so the daemon can email AS you (approve-first governs sends).
     scopes: [
       'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     responseType: 'code',
@@ -167,8 +171,10 @@ export const PROVIDERS = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GCAL_CLIENT_ID',
     clientSecretEnv: 'GCAL_CLIENT_SECRET',
+    // Read to ingest + events so the daemon can create/edit events (approve-first governs).
     scopes: [
       'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     responseType: 'code',
