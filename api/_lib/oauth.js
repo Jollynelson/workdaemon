@@ -97,7 +97,7 @@ export const PROVIDERS = {
     },
   },
   google: {
-    label: 'Google Drive',
+    label: 'Google Workspace',
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GOOGLE_CLIENT_ID',
@@ -115,6 +115,28 @@ export const PROVIDERS = {
     authExtra: { access_type: 'offline', prompt: 'consent' },
     parseToken: (d) => {
       if (d.error) throw new Error(`google: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  // Google Drive AS ITS OWN integration — a dedicated OAuth app (its own
+  // GDRIVE_CLIENT_ID/SECRET, e.g. "WorkDaemon for Google Drive"), separate from
+  // native sign-in (GOOGLE_CLIENT_ID) so the Drive consent + token are Drive-scoped
+  // and independent. Connecting it ingests Drive files into the brain.
+  gdrive: {
+    label: 'Google Drive',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    clientIdEnv: 'GDRIVE_CLIENT_ID',
+    clientSecretEnv: 'GDRIVE_CLIENT_SECRET',
+    scopes: [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.metadata.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
+    responseType: 'code',
+    authExtra: { access_type: 'offline', prompt: 'consent' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`gdrive: ${d.error_description || d.error}`);
       return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
     },
   },
