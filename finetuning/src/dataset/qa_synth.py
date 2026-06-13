@@ -117,7 +117,15 @@ def build_qa_from_corpus(
     per doc; failures/empties are skipped (never block the dataset)."""
     docs = db.get_workspace_documents(company_id, limit=max_docs)
     examples: list[dict] = []
+    skipped_untrusted = 0
     for d in docs:
+        # SOURCE-trust gate: the brain ingests everything for RAG, but a source it
+        # couldn't confirm as company-wide (metadata.train_eligible == False — e.g. a
+        # Slack with too few members, a personal Gmail) must NOT feed the model.
+        # Missing flag → eligible (legacy docs / sources without a trust signal).
+        if (d.get("metadata") or {}).get("train_eligible") is False:
+            skipped_untrusted += 1
+            continue
         content = (d.get("content") or "")[:6000]
         if len(content.split()) < _MIN_DOC_WORDS:
             continue
@@ -137,7 +145,7 @@ def build_qa_from_corpus(
                 system=formatters.SYSTEM_PROMPT(company_name), user=q, assistant=a,
             ))
     logger.info(
-        "company=%s synthesized %d Q&A examples from %d corpus docs",
-        company_id, len(examples), len(docs),
+        "company=%s synthesized %d Q&A examples from %d corpus docs (%d skipped: untrusted source)",
+        company_id, len(examples), len(docs), skipped_untrusted,
     )
     return examples

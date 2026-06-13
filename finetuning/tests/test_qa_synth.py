@@ -60,6 +60,34 @@ def test_relevance_gate_drops_off_topic_docs(mock_docs, mock_complete):
     assert build_qa_from_corpus(COMPANY_ID, COMPANY) == []
 
 
+@patch("src.dataset.qa_synth._complete")
+@patch("src.dataset.qa_synth.db.get_workspace_documents")
+def test_source_trust_gate_skips_untrusted_source(mock_docs, mock_complete):
+    # A doc from a source the brain couldn't confirm as company-wide
+    # (metadata.train_eligible == False) is NOT learned — skipped before any LLM call.
+    mock_docs.return_value = [{
+        "title": "#general (Slack)",
+        "content": "Real-looking company content about our product roadmap and customers. " * 6,
+        "visibility": "public",
+        "metadata": {"train_eligible": False},
+    }]
+    assert build_qa_from_corpus(COMPANY_ID, COMPANY) == []
+    mock_complete.assert_not_called()
+
+
+@patch("src.dataset.qa_synth._complete", return_value='[{"q":"Q","a":"A real grounded answer here."}]')
+@patch("src.dataset.qa_synth.db.get_workspace_documents")
+def test_trusted_source_still_learns(mock_docs, mock_complete):
+    # Trusted source (train_eligible True) is mined normally.
+    mock_docs.return_value = [{
+        "title": "#general (Slack)",
+        "content": "Real company content about our product roadmap and key customers. " * 6,
+        "visibility": "public",
+        "metadata": {"train_eligible": True},
+    }]
+    assert len(build_qa_from_corpus(COMPANY_ID, COMPANY)) == 1
+
+
 def test_qa_prompt_carries_relevance_gate():
     from src.dataset.qa_synth import _QA_PROMPT
     p = " ".join(_QA_PROMPT.lower().split())   # normalize line wraps

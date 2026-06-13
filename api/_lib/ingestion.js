@@ -77,7 +77,11 @@ export function keywords(text, max = 10) {
 
 // Normalize + upsert a batch of documents for a workspace+source.
 // docs: [{ external_id, doc_type, title, content, url, author, metadata }]
-export async function upsertDocuments(db, workspaceId, source, docs) {
+// opts.trainEligible (default true): SOURCE-level trust — false means "ingest for
+// RAG/all-seeing but do NOT let the per-company model learn from this source"
+// (e.g. a Slack that isn't confirmably company-wide, a personal Gmail). Stamped
+// into each doc's metadata.train_eligible; the trainer (qa_synth) honors it.
+export async function upsertDocuments(db, workspaceId, source, docs, { trainEligible = true } = {}) {
   const rows = (docs || []).filter(d => d.external_id && (d.title || d.content)).map(d => ({
     workspace_id: workspaceId,
     source,
@@ -87,7 +91,7 @@ export async function upsertDocuments(db, workspaceId, source, docs) {
     content: (d.content || '').replace(/\s+/g, ' ').trim().slice(0, 8000),
     url: d.url || null,
     author: d.author || null,
-    metadata: d.metadata || {},
+    metadata: { ...(d.metadata || {}), train_eligible: trainEligible },
     visibility: d.visibility || 'public',
     allowed_users: d.allowed_users || [],
     updated_at: new Date().toISOString(),
