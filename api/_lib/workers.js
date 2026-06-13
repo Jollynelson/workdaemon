@@ -7,6 +7,8 @@ import { resolveLLM, callLLM } from './research.js';
 import { retrieveDocuments } from './ingestion.js';
 import { relevantSkills, renderSkillsBlock } from './skills.js';
 import { delimitUntrusted } from './security.js';
+import { parseJsonResponse } from './envelope.js';
+import { gateEnabled, gateThreshold, termsForText, relatedEvidence, detectConflicts, critiqueAction } from './verification_gate.js';
 
 // Spawn workers from the supervisor daemon's request. `specs` = [{objective, deadline_hours}].
 export async function spawnWorkers(db, { workspaceId, ownerId, specs = [] }) {
@@ -44,23 +46,57 @@ export async function runWorker(db, worker) {
     const skills = await relevantSkills(db, { workspaceId: worker.workspace_id, objective: worker.objective, limit: 4, userId: worker.owner_id }).catch(() => []);
     const skillsBlock = renderSkillsBlock(skills);
 
+    // REASONING SCAFFOLD (same think-first discipline as the main daemon): the
+    // worker reasons privately, THEN produces the deliverable. Output is one JSON
+    // object {think, result}; think is stripped/logged, never delivered.
     const sys = `You are a WORKER DAEMON for ${company} — a focused sub-daemon spun up by a colleague's daemon to complete ONE delegated task and report back.\n`
-      + `Deliver the ACTUAL result (the draft / plan / analysis / answer itself), not a description of what you would do. Be complete, tight, and high-signal.\n`
+      + `Return ONLY a JSON object: {"think":"…","result":"…"}. First character {, last character }. Nothing else.\n`
+      + `• "think" (PRIVATE — never shown): reason in ≤4 terse lines — what you KNOW from the context/docs below vs. what you must infer; your approach; the main risk or assumption.\n`
+      + `• "result": the ACTUAL deliverable (the draft / plan / analysis / answer itself), complete, tight, high-signal — NOT a description of what you'd do.\n`
       + `Ground everything in the company context and documents below; NEVER invent company-internal facts you don't have.\n`
-      + `If the task genuinely requires a human decision, an approval, or an external action you cannot perform here, begin your reply with the exact token "NEEDS REVIEW:" and then state precisely what is blocking and what you need.\n`
+      + `If the task genuinely requires a human decision, an approval, or an external action you cannot perform here, make "result" BEGIN with the exact token "NEEDS REVIEW:" then state precisely what is blocking and what you need.\n`
       + (ctxBits.length ? `\nCOMPANY CONTEXT:\n${ctxBits.join('\n')}` : '')
       + docsBlock + skillsBlock;
 
-    const result = (await callLLM(llm, sys, `TASK: ${worker.objective}`, { maxTokens: 1200 })).trim();
-    if (!result) { await fail(db, worker, 'empty result'); return; }
+    const raw = (await callLLM(llm, sys, `TASK: ${worker.objective}`, { maxTokens: 1500 })).trim();
+    if (!raw) { await fail(db, worker, 'empty result'); return; }
+    const env = parseJsonResponse(raw);
+    let result = (env && typeof env.result === 'string' && env.result.trim()) ? env.result.trim() : raw;
+    if (env && typeof env.think === 'string' && env.think) console.log('[worker %s] think: %s', worker.id, env.think.replace(/\s+/g, ' ').slice(0, 220));
 
-    const needsReview = /^NEEDS REVIEW:/i.test(result);
+    let needsReview = /^NEEDS REVIEW:/i.test(result);
+    let note = '';
+
+    // VERIFICATION GATE: before delivering, audit the deliverable against the
+    // Brain's cross-source evidence (deterministic conflict detector + adversarial
+    // critique). Low confidence or a real disagreement → escalate to needs_review.
+    if (!needsReview && gateEnabled()) {
+      try {
+        const evidence = await relatedEvidence(db, worker.workspace_id, termsForText(`${worker.objective}\n${result}`));
+        if (evidence.length) {
+          const { conflicts, confidence } = detectConflicts(evidence);
+          const critique = (conflicts.length || confidence < gateThreshold())
+            ? await critiqueAction(llm, { action: { kind: 'worker deliverable', title: worker.objective, body: result }, evidence, conflicts }, { callLLM })
+            : null;
+          const conf = critique ? Math.min(confidence, critique.confidence) : confidence;
+          if (conf < gateThreshold() || critique?.verdict === 'halt') {
+            needsReview = true;
+            const why = critique?.reason || conflicts[0]?.detail || 'cross-source evidence disagrees';
+            note = `\n\n⚠ VERIFICATION (confidence ${conf.toFixed(2)} < ${gateThreshold()}): ${why}`
+              + (conflicts.length ? `\nConflicts: ${conflicts.map(c => c.detail).slice(0, 3).join('; ')}` : '')
+              + `\nReview before relying on this.`;
+          }
+        }
+      } catch (e) { console.error('[worker %s] verify:', worker.id, e.message); }
+    }
+
+    const finalResult = (result + note).slice(0, 8000);
     await db.from('worker_daemons').update({
-      status: needsReview ? 'needs_review' : 'done', result: result.slice(0, 8000),
+      status: needsReview ? 'needs_review' : 'done', result: finalResult,
       last_checked_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('id', worker.id);
 
-    await notifyOwner(db, worker, needsReview ? 'needs_review' : 'done', result);
+    await notifyOwner(db, worker, needsReview ? 'needs_review' : 'done', finalResult);
   } catch (e) {
     await fail(db, worker, e.message);
   }
