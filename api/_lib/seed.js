@@ -7,6 +7,7 @@
 import { ingest as slackIngest, daemonCatchUp as slackDaemonCatchUp } from './connectors/slack.js';
 import { ingest as githubIngest } from './connectors/github.js';
 import { ingest as gmailIngest } from './connectors/gmail.js';
+import { ingest as gdriveIngest } from './connectors/gdrive.js';
 import { getAccessToken } from './oauth.js';
 import { companyServeToken } from './company_model.js';
 
@@ -90,6 +91,22 @@ const SEEDERS = {
       await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
     }
     // No per-user GitHub act-rail yet — the daemon track is just tool-readiness.
+    await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
+  },
+
+  google: async (db, { workspaceId }, patch) => {
+    // 🧠 BRAIN — Google Workspace (Drive files, Gmail, Calendar — the gdrive connector
+    // covers all three). Without this, connecting Google ingested NOTHING.
+    await patch({ brain_status: 'seeding', brain_stage: 'reading Google Workspace' });
+    try {
+      const token = (await getAccessToken(db, workspaceId, 'google', 'user').catch(() => null))
+                 || (await getAccessToken(db, workspaceId, 'google').catch(() => null));
+      if (!token) throw new Error('no Google access token for this workspace');
+      const r = await gdriveIngest(db, workspaceId, token);
+      await patch({ brain_status: 'ready', brain_stage: 'indexed', doc_count: r?.upserted ?? 0 });
+    } catch (e) {
+      await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
+    }
     await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
   },
 
