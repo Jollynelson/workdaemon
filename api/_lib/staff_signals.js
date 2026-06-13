@@ -6,6 +6,8 @@
 // (observeStaffAndPropose) — the brain SEES a signal and PUTS something in place,
 // approve-first: it drafts an inbox alert for the admins, it does not act unilaterally.
 
+import { recordObservation, proposeToInbox, adminRecipients } from './autonomy.js';
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 // Pure decision: status + human reason from a staffer's aggregates. Order matters —
@@ -63,39 +65,36 @@ export async function computeStaffSignals(db, workspaceId) {
   return out;
 }
 
-// Autonomy (approve-first): the brain observes the signals and, for anyone who looks
-// at_risk / overloaded, drafts an inbox alert to the workspace admins with a concrete
-// suggestion. Deduped against existing UNREAD staff_signal alerts so it never nags.
+// Observe → act. AUTO (safe): the brain durably remembers EVERY staffer's signal
+// (pattern history) — no human, no outward effect. PROPOSE (approve-first): for
+// anyone at_risk/overloaded, draft an inbox alert to the admins with a concrete
+// suggestion. It proposes; the human decides.
 export async function observeStaffAndPropose(db, workspaceId) {
   const signals = await computeStaffSignals(db, workspaceId);
+
+  // AUTO: remember the observation for everyone (builds the pattern over time).
+  for (const s of signals) {
+    await recordObservation(db, workspaceId, {
+      domain: 'staff', subjectType: 'user', subjectId: s.user_id, signal: s.status,
+      value: s.overdueCount, meta: { open: s.openCount, done: s.doneCount },
+    });
+  }
+
   const flagged = signals.filter(s => s.status === 'at_risk' || s.status === 'overloaded');
   if (!flagged.length) return { flagged: 0, proposed: 0 };
 
-  const { data: members } = await db.from('workspace_members')
-    .select('user_id, role').eq('workspace_id', workspaceId);
-  let recipients = (members || []).filter(m => /admin|owner/i.test(m.role || '')).map(m => m.user_id);
-  if (!recipients.length) recipients = (members || []).map(m => m.user_id).slice(0, 1);
-
+  const recipients = await adminRecipients(db, workspaceId);
   let proposed = 0;
   for (const s of flagged) {
-    // Dedupe: an unread staff_signal alert for this person already exists → skip.
-    const { data: existing } = await db.from('inbox_items')
-      .select('id').eq('workspace_id', workspaceId).eq('read', false)
-      .contains('metadata', { kind: 'staff_signal', subject_user_id: s.user_id }).limit(1);
-    if (existing && existing.length) continue;
-
     const verb = s.status === 'at_risk' ? 'may be falling behind' : 'looks overloaded';
     const suggestion = s.status === 'at_risk'
       ? `Consider a check-in with ${s.name}, or reprioritizing their ${s.overdueCount} overdue item(s).`
       : `Consider reassigning some of ${s.name}'s ${s.openCount} open items.`;
-    for (const rid of recipients) {
-      await db.from('inbox_items').insert({
-        workspace_id: workspaceId, user_id: rid, type: 'alert', source: 'daemon',
-        title: `${s.name} ${verb}`, body: `${s.reason}. ${suggestion}`,
-        metadata: { kind: 'staff_signal', subject_user_id: s.user_id, status: s.status }, read: false,
-      });
-    }
-    proposed++;
+    proposed += await proposeToInbox(db, workspaceId, recipients, {
+      kind: 'staff_signal', subjectId: s.user_id,
+      title: `${s.name} ${verb}`, body: `${s.reason}. ${suggestion}`,
+      metadata: { status: s.status },
+    });
   }
   return { flagged: flagged.length, proposed };
 }

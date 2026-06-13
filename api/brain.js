@@ -16,7 +16,8 @@ import { waitUntil } from '@vercel/functions';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
 import { scrubDaemonMessages } from './_lib/scrub.js';
-import { computeStaffSignals, observeStaffAndPropose } from './_lib/staff_signals.js';
+import { computeStaffSignals } from './_lib/staff_signals.js';
+import { observeWorkspace } from './_lib/observe.js';
 import { provisionStaff } from './_lib/hermes_admin.js';
 import { extractTopicTags } from './_lib/topics.js';
 
@@ -669,10 +670,10 @@ export default async function handler(req, res) {
         // still rotates to the back — never a poison pill that retries and 504s forever.
         await advance(w.id);
         processed++;
-        // SEE → PUT IN PLACE: the brain reads each active workspace's per-staff signal
-        // and, for anyone at-risk/overloaded, drafts an approve-first inbox alert.
-        // Best-effort — never let staff observation block the scan.
-        await observeStaffAndPropose(cronDb, w.id).catch(() => {});
+        // SEE → PUT IN PLACE: the brain's autonomous observe loop for this workspace —
+        // staff signals, slipping deadlines, … — AUTO-remembers each observation and
+        // drafts approve-first alerts for what needs a human. Best-effort.
+        await observeWorkspace(cronDb, w.id).catch(() => {});
         // Each pass is budget-gated; the deep pass (the dominant cost) is also capped
         // per run and only started with enough headroom for its own timeout, so no
         // single workspace can breach the function's maxDuration.
