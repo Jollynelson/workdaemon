@@ -362,6 +362,16 @@ def run_serve_gate(
             company_id, len(eval_pairs),
         )
         should_deploy = False
+    elif mean_new < settings.gate_min_score:
+        # Absolute floor — too weak to put real user traffic on, regardless of whether
+        # it beats the incumbent (or is the first model with nothing to beat). The
+        # company keeps the shared brain and retries once it has more/better data.
+        logger.warning(
+            "company=%s serve-gate BELOW FLOOR: new=%.3f < min %.2f — NOT deploying "
+            "(too weak for live routing); staying on the shared brain.",
+            company_id, mean_new, settings.gate_min_score,
+        )
+        should_deploy = False
     else:
         should_deploy = mean_new >= mean_old - settings.gate_epsilon
 
