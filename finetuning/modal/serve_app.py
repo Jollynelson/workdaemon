@@ -1,16 +1,17 @@
 """
-Modal GPU serving endpoint — on-demand inference for per-company wd-{company_id} models.
+Modal GPU serving — vLLM multi-LoRA inference for per-company wd-{company_id} models.
 
-Architecture:
-  - One Modal Function per serve request; Modal manages GPU lifecycle.
-  - Warm pool during business hours (keep_warm=1 per active company).
-  - Scale to zero off-hours to save cost.
-  - Cold-start gap is covered by the Claude fallback in router.py — the user
-    never waits 60s for a first token.
+Path B (MULTI_LORA_PLAN): ONE base (Qwen3-32B) resident in VRAM + per-company LoRA
+adapters hot-swapped per request via vLLM `LoRARequest`. One GPU serves many
+companies; each still gets its own brain. Adapters are pulled from each company's
+private HF repo (resolved via model_versions → hf_revision) and cached on a Volume.
 
-Usage (from router.py):
-    from modal.serve_app import chat_completion
-    result = chat_completion.remote(company_id=..., messages=..., system_prompt=...)
+  - Base loaded once at container @enter; adapters loaded lazily per request + cached.
+  - Scale to zero off-hours; cold-start (base load) is covered by the Claude
+    fallback in router.py — the user never waits.
+  - Contract unchanged: chat_completion(company_id, messages, system_prompt, ...).
+
+Usage (from router.py via modal_bridge): chat_completion.remote(...).
 """
 
 from __future__ import annotations
@@ -19,173 +20,109 @@ import os
 
 import modal
 
-# ── Image ─────────────────────────────────────────────────────────────────────
-# Ollama is installed via the official install script inside the container.
-# vLLM is an alternative for higher-throughput deployments.
+# fp16 base — the LoRA was QLoRA-trained against Qwen3-32B; serve on the fp16 model
+# (A100-80GB). Override with SERVE_BASE_MODEL.
+BASE_MODEL = os.environ.get("SERVE_BASE_MODEL", "Qwen/Qwen3-32B")
+MAX_LORA_RANK = 16  # == HYPERPARAMS["lora_r"]; raise if the trained rank grows.
+
+# Volumes so the ~64GB base + per-company adapters persist across cold starts.
+hf_cache = modal.Volume.from_name("workdaemon-hf-cache", create_if_missing=True)
+adapter_cache = modal.Volume.from_name("workdaemon-adapters", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("curl", "git", "zstd")  # zstd: required by the Ollama installer
-    .run_commands(
-        # Install Ollama (includes the binary + service setup)
-        "curl -fsSL https://ollama.com/install.sh | sh",
-    )
     .pip_install(
-        "httpx>=0.27.0",
+        "vllm",                      # multi-LoRA serving (Qwen3-capable build)
         "huggingface_hub>=0.22.0",
+        "supabase>=2.4.0",
         "pydantic-settings>=2.2.0",
         "python-dotenv>=1.0.0",
-        "supabase>=2.4.0",   # _latest_version / _get_company_name query Supabase
+        "httpx>=0.27.0",
     )
+    .env({"HF_HOME": "/hf", "VLLM_USE_V1": "1"})
     .add_local_python_source("src")
 )
 
 app = modal.App("workdaemon-serving")
 
-# Persistent volume for Ollama model storage (survives container restarts)
-model_volume = modal.Volume.from_name("workdaemon-models", create_if_missing=True)
 
-
-def _ollama_up(base_url: str) -> bool:
-    import httpx
-    try:
-        httpx.get(f"{base_url}/api/tags", timeout=2.0)
-        return True
-    except Exception:
-        return False
-
-
-def _ensure_ollama(base_url: str) -> None:
-    """Start Ollama if it isn't already running (no-op on a warm container)."""
-    import subprocess
-    import time
-    if _ollama_up(base_url):
-        return
-    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(60):
-        if _ollama_up(base_url):
-            return
-        time.sleep(1)
-
-
-def _ensure_model_loaded(company_id: str, model_version: int | None) -> None:
-    """Load a company's GGUF into Ollama if not already loaded (cached in Volume)."""
-    import os
+def _adapter_for_company(company_id: str, model_version: int | None = None) -> str | None:
+    """Resolve + cache the deployed LoRA adapter directory for a company. Returns
+    the local path, or None when there's no deployed model (caller falls back)."""
     import shutil
 
-    from src.registry.hf_registry import pull_gguf
-    from src.serving.ollama_loader import is_loaded, load_into_ollama
-
-    if is_loaded(company_id):
-        return
-    gguf_cache = f"/models/{company_id}-v{model_version or 'latest'}.gguf"
-    if os.path.exists(gguf_cache):
-        gguf_path = gguf_cache
-    else:
-        gguf_path = pull_gguf(company_id, model_version or _latest_version(company_id))
-        shutil.copy(gguf_path, gguf_cache)
-        model_volume.commit()
-    load_into_ollama(company_id, gguf_path, _get_company_name(company_id))
-
-
-def _warm_inference(company_id: str) -> None:
-    """Pull a loaded model into VRAM and pin it (1-token generate, keep_alive=-1)."""
-    import httpx
-
-    from src.config import settings
-    from src.model.naming import wd_model
-    httpx.post(
-        f"{settings.ollama_base_url}/api/generate",
-        json={
-            "model": wd_model(company_id),
-            "prompt": "ok",
-            "stream": False,
-            "keep_alive": -1,
-            "options": {"num_predict": 1},
-        },
-        timeout=120.0,
-    )
-
-
-def _deployed_companies(limit: int = 4) -> list[tuple[str, int]]:
-    """Most-recently-trained deployed companies, deduped by company_id."""
     from supabase import create_client
 
     from src.config import settings
+    from src.registry.hf_registry import pull
+
     client = create_client(settings.supabase_url, settings.supabase_service_key)
-    resp = (
+    q = (
         client.table("model_versions")
-        .select("company_id,version")
-        .eq("deployed", True)
-        .order("trained_at", desc=True)
-        .limit(limit * 4)
-        .execute()
+        .select("version, hf_revision")
+        .eq("company_id", company_id).eq("deployed", True)
+        .order("version", desc=True).limit(1).execute()
     )
-    out: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for row in resp.data or []:
-        cid = row["company_id"]
-        if cid not in seen:
-            seen.add(cid)
-            out.append((cid, row["version"]))
-        if len(out) >= limit:
-            break
-    return out
+    if not q.data:
+        return None
+    rev = q.data[0]["hf_revision"]
+    cache_dir = f"/adapters/{company_id}-{(rev or 'latest')[:12]}"
+    if os.path.exists(os.path.join(cache_dir, "adapter_config.json")):
+        return cache_dir
+    local = pull(company_id, rev)  # downloads the adapter (safetensors), skips GGUF
+    os.makedirs(cache_dir, exist_ok=True)
+    shutil.copytree(local, cache_dir, dirs_exist_ok=True)
+    adapter_cache.commit()
+    return cache_dir
+
+
+def _lora_int_id(company_id: str) -> int:
+    """Stable positive int id vLLM needs per adapter."""
+    import hashlib
+    return int(hashlib.sha1(company_id.encode()).hexdigest()[:8], 16)
 
 
 @app.cls(
     image=image,
-    gpu="T4",
-    timeout=60 * 5,        # 5min per request (long agentic chains)
-    min_containers=0,       # scale to ZERO when idle — no GPU bill with no traffic.
-                            # First request after idle pays a cold start (~1-2 min);
-                            # scaledown_window keeps it warm 10 min after activity, so
-                            # active chat stays fast. Flip to 1 (or a business-hours
-                            # cron) only once a company has steady live traffic.
-    scaledown_window=600,   # stay warm 10 min after the last request
-    max_containers=4,       # autoscale up to 4 GPUs under concurrent load, then queue
-    volumes={"/models": model_volume},
+    gpu="A100-80GB",          # Qwen3-32B fp16 (~64GB) + KV + LoRA; the reliable vLLM path
+    timeout=60 * 10,
+    min_containers=0,          # scale to ZERO when idle — no GPU bill with no traffic.
+    scaledown_window=600,      # stay warm 10 min after the last request
+    max_containers=2,
+    volumes={"/hf": hf_cache, "/adapters": adapter_cache},
     secrets=[modal.Secret.from_name("workdaemon-secrets")],
 )
 class HermesServer:
-    """Warm GPU inference server. Ollama starts and the most-recent company
-    models preload at container startup (@enter), so the first request finds the
-    model already resident — no per-request cold start, no Modal 303 redirect."""
+    """vLLM server: one base resident + per-company LoRA per request. The first
+    cold start downloads/loads the 32B base (slow, cached on the Volume after);
+    the Claude fallback in router.chat covers that gap."""
 
     @modal.enter()
     def _startup(self) -> None:
         import logging
 
-        from src.config import settings
-        from src.serving.warm_state import mark_warm
+        from vllm import LLM
         log = logging.getLogger("HermesServer")
-        _ensure_ollama(settings.ollama_base_url)
-        limit = int(os.environ.get("WARM_PRELOAD_LIMIT", "4"))
-        try:
-            for cid, ver in _deployed_companies(limit=limit):
-                try:
-                    _ensure_model_loaded(cid, ver)
-                    _warm_inference(cid)  # into VRAM + pinned
-                    mark_warm(cid)        # heartbeat: readiness gate sees it as warm
-                    log.info("preloaded model company=%s v%s", cid, ver)
-                except Exception as exc:
-                    log.warning("preload failed company=%s: %s", cid, exc)
-        except Exception as exc:
-            log.warning("preload listing failed: %s", exc)
+        log.info("loading vLLM base=%s (enable_lora, rank<=%d) ...", BASE_MODEL, MAX_LORA_RANK)
+        self.llm = LLM(
+            model=BASE_MODEL,
+            enable_lora=True,
+            max_loras=4,
+            max_lora_rank=MAX_LORA_RANK,
+            max_model_len=8192,
+            gpu_memory_utilization=0.92,
+            enforce_eager=True,        # skip CUDA-graph compile — faster start, less VRAM
+            dtype="bfloat16",
+            trust_remote_code=True,
+        )
+        log.info("vLLM base loaded; ready to serve adapters.")
 
     @modal.method()
     def warm(self, company_id: str, model_version: int | None = None) -> dict:
-        """Boot this company's model into VRAM and record the heartbeat.
-
-        Called via .spawn() from /api/serve/warm — runs in a background container
-        so the caller returns instantly while the GPU cold-starts. Subsequent
-        readiness probes read the heartbeat (not the GPU) and route to Hermes."""
-        from src.config import settings
+        """Pre-pull the company's adapter + record the readiness heartbeat. The base
+        is already resident from @enter, so this just primes the adapter cache."""
         from src.serving.warm_state import mark_warm
-
-        _ensure_ollama(settings.ollama_base_url)
-        _ensure_model_loaded(company_id, model_version)
-        _warm_inference(company_id)
+        _adapter_for_company(company_id, model_version)
         mark_warm(company_id)
         return {"warmed": True, "company_id": company_id}
 
@@ -199,47 +136,32 @@ class HermesServer:
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> dict:
-        """Run inference for a company's wd-{company_id} model.
+        """One chat turn through the company's LoRA on the shared base.
+        Returns: {"content": str, "tool_calls": list[dict], "model": str}"""
+        from vllm import SamplingParams
+        from vllm.lora.request import LoRARequest
 
-        Returns: {"content": str, "tool_calls": list[dict], "model": str}
-        """
-        import httpx
+        adapter_dir = _adapter_for_company(company_id, model_version)
+        if not adapter_dir:
+            raise RuntimeError(f"no deployed adapter for company {company_id}")
 
-        from src.config import settings
-        from src.model.naming import wd_model
+        conversation = [{"role": "system", "content": system_prompt}, *messages]
+        sampling = SamplingParams(temperature=temperature, max_tokens=max_tokens)
+        lora = LoRARequest(company_id, _lora_int_id(company_id), adapter_dir)
+        outputs = self.llm.chat(conversation, sampling, lora_request=lora)
+        content = outputs[0].outputs[0].text if outputs and outputs[0].outputs else ""
 
-        _ensure_ollama(settings.ollama_base_url)
-        _ensure_model_loaded(company_id, model_version)  # no-op if preloaded
-
-        ollama_name = wd_model(company_id)
-        full_messages = [{"role": "system", "content": system_prompt}, *messages]
-        resp = httpx.post(
-            f"{settings.ollama_base_url}/api/chat",
-            json={
-                "model": ollama_name,
-                "messages": full_messages,
-                "stream": False,
-                "keep_alive": -1,  # pin in VRAM (no idle eviction → no reload latency)
-                "options": {"temperature": temperature, "num_predict": max_tokens},
-            },
-            timeout=120.0,
-        )
-        resp.raise_for_status()
-        content = resp.json()["message"]["content"]
-
-        # Live traffic keeps the readiness heartbeat fresh (so the gate stays "warm").
         from src.serving.warm_state import mark_warm
         mark_warm(company_id)
-
         return {
             "content": content,
             "tool_calls": _parse_tool_calls(content),
-            "model": ollama_name,
+            "model": f"wd-{company_id}",
         }
 
 
 def _parse_tool_calls(content: str) -> list[dict]:
-    """Extract <tool_call>{...}</tool_call> blocks from Hermes-3 output."""
+    """Extract <tool_call>{...}</tool_call> blocks from the model output."""
     import json
     import re
     tool_calls = []
@@ -249,30 +171,6 @@ def _parse_tool_calls(content: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
     return tool_calls
-
-
-def _get_company_name(company_id: str) -> str:
-    from supabase import create_client
-    from src.config import settings
-    client = create_client(settings.supabase_url, settings.supabase_service_key)
-    resp = client.table("companies").select("name").eq("id", company_id).single().execute()
-    return resp.data["name"] if resp.data else company_id
-
-
-def _latest_version(company_id: str) -> int:
-    from supabase import create_client
-    from src.config import settings
-    client = create_client(settings.supabase_url, settings.supabase_service_key)
-    resp = (
-        client.table("model_versions")
-        .select("version")
-        .eq("company_id", company_id)
-        .eq("deployed", True)
-        .order("version", desc=True)
-        .limit(1)
-        .execute()
-    )
-    return resp.data[0]["version"] if resp.data else 1
 
 
 # ── Web endpoint ────────────────────────────────────────────────────────────────
@@ -315,8 +213,6 @@ def fastapi_app():
     # the local `modal/` package shadow).
     from src.serving.modal_bridge import set_gpu_serving, set_gpu_warm
 
-    # Bind the warm GPU class methods; router.chat calls .remote() on chat_completion,
-    # and /api/serve/warm calls .spawn() on warm to boot a cold container in the bg.
     server = HermesServer()
     set_gpu_serving(server.chat_completion)
     set_gpu_warm(server.warm)
