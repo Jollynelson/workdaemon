@@ -227,7 +227,10 @@ def training_cycle() -> dict:
         if cid in ready:
             continue
         last = db.get_deployed_version(cid)
-        since = last.get("created_at") if last else None
+        # model_versions stamps the train time as `trained_at` (NOT created_at) —
+        # using the wrong key silently counted all-time messages, so a company would
+        # look "ready" forever. None (no prior version) → first-timer, counts all.
+        since = last.get("trained_at") if last else None
         new_msgs = db.count_daemon_messages_since(cid, since)
         first_time = last is None
         if (first_time and new_msgs >= 1) or (not first_time and new_msgs >= new_msg_threshold):

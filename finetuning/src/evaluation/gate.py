@@ -328,6 +328,7 @@ def run_serve_gate(
     new_scores: list[float] = []
     old_scores: list[float] = []
     new_answered = 0
+    old_answered = 0
 
     for query, reference in eval_pairs:
         new_answer = _serve_eval_generate(company_id, new_revision, query, system_prompt)
@@ -337,6 +338,8 @@ def run_serve_gate(
 
         if old_revision:
             old_answer = _serve_eval_generate(company_id, old_revision, query, system_prompt)
+            if old_answer:
+                old_answered += 1
             old_scores.append(_score_answer(query, old_answer, reference))
 
     mean_new = _mean(new_scores)
@@ -348,12 +351,24 @@ def run_serve_gate(
             company_id, len(eval_pairs),
         )
         should_deploy = False
+    elif old_revision and old_answered == 0:
+        # The INCUMBENT couldn't be evaluated (serve/engine error on its revision),
+        # so mean_old is a meaningless 0 — the candidate would "beat" it for free.
+        # That's inconclusive, not a win: keep what's live rather than promote on a
+        # phantom baseline. (A genuine first model has old_revision=None and skips this.)
+        logger.warning(
+            "company=%s serve-gate INCONCLUSIVE: incumbent answered 0/%d (unservable) — "
+            "cannot prove the candidate beats it; NOT deploying.",
+            company_id, len(eval_pairs),
+        )
+        should_deploy = False
     else:
         should_deploy = mean_new >= mean_old - settings.gate_epsilon
 
     logger.info(
-        "company=%s serve-gate: new=%.3f old=%.3f answered=%d/%d epsilon=%.3f → deploy=%s",
-        company_id, mean_new, mean_old, new_answered, len(eval_pairs),
+        "company=%s serve-gate: new=%.3f old=%.3f new_answered=%d old_answered=%d /%d "
+        "epsilon=%.3f → deploy=%s",
+        company_id, mean_new, mean_old, new_answered, old_answered, len(eval_pairs),
         settings.gate_epsilon, should_deploy,
     )
     return GateResult(
