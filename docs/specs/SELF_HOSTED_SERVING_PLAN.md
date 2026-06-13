@@ -82,6 +82,15 @@ learns to ANSWER; the serving layer re-wraps the envelope (a Phase-3 detail).
 `workspace_documents` (raw corpus) is intentionally NOT direct SFT — it's RAG
 grounding; turning docs into Q→A pairs would need an LLM pass (later).
 
+## Phase 2.5 — Corpus → Q&A training data ✅ (shipped + validated)
+
+Conversational data per company is thin, but the deep corpus is rich. `qa_synth.py`
+`build_qa_from_corpus` mines `workspace_documents` (excluding restricted docs) into
+GROUNDED Q&A pairs — one cheap LLM call/doc (DeepSeek), answers supported ONLY by
+the doc. `run_company` merges them: `merge_examples(brain, corpus-Q&A, signals)`.
+**Validated live on Beta Tenant: 11 conversations + 65 corpus-Q&A = 76 examples →
+clears MIN_EXAMPLES_TO_TRAIN. Phase 3 is now data-viable.** Tests: tests/test_qa_synth.py.
+
 ## Phase 3 — Close the loop once, for real (base model DECIDED: Qwen3-32B)
 
 Run training on Beta Tenant end-to-end (`modal run modal_app.py::run_company_remote
