@@ -5,6 +5,7 @@
 // Rows live in `integration_seeds` (per workspace+user+provider); seeders patch the
 // row as they progress so the Integrations page can poll a live status.
 import { ingest as slackIngest, daemonCatchUp as slackDaemonCatchUp } from './connectors/slack.js';
+import { ingest as githubIngest } from './connectors/github.js';
 import { getAccessToken } from './oauth.js';
 import { companyServeToken } from './company_model.js';
 
@@ -66,6 +67,29 @@ const SEEDERS = {
     } catch (e) {
       await patch({ daemon_status: 'error', error: `daemon: ${e.message}`.slice(0, 300) });
     }
+  },
+
+  github: async (db, { workspaceId }, patch) => {
+    // 🧠 BRAIN — issues + PRs + their discussion (real dev work). The relevance gate
+    // in the trainer (qa_synth) keeps only what concerns the company before learning.
+    await patch({ brain_status: 'seeding', brain_stage: 'reading issues & pull requests' });
+    try {
+      const token = (await getAccessToken(db, workspaceId, 'github', 'user').catch(() => null))
+                 || (await getAccessToken(db, workspaceId, 'github').catch(() => null));
+      if (!token) throw new Error('no GitHub access token for this workspace');
+      let docs = 0;
+      const r = await githubIngest(db, workspaceId, token, {
+        onProgress: ({ stage, done, total, doc_count }) => {
+          if (doc_count != null) docs = doc_count;
+          patch({ brain_stage: stage, brain_done: done, brain_total: total, doc_count: docs });
+        },
+      });
+      await patch({ brain_status: 'ready', brain_stage: 'indexed', doc_count: r?.upserted ?? docs });
+    } catch (e) {
+      await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
+    }
+    // No per-user GitHub act-rail yet — the daemon track is just tool-readiness.
+    await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
   },
 };
 

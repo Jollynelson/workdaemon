@@ -46,6 +46,27 @@ def test_build_qa_skips_thin_docs_without_llm_call(mock_docs, mock_complete):
     mock_complete.assert_not_called()  # thin doc skipped before spending an LLM call
 
 
+@patch("src.dataset.qa_synth._complete")
+@patch("src.dataset.qa_synth.db.get_workspace_documents")
+def test_relevance_gate_drops_off_topic_docs(mock_docs, mock_complete):
+    # An off-topic doc (#random banter) → the relevance gate makes the LLM return []
+    # → it contributes NO training examples (the model never learns it).
+    mock_docs.return_value = [{
+        "title": "#random (Slack)",
+        "content": "anyone watch the game last night lol that final play. who is getting lunch today? " * 4,
+        "visibility": "public",
+    }]
+    mock_complete.return_value = "[]"   # relevance-gate verdict: not about the company
+    assert build_qa_from_corpus(COMPANY_ID, COMPANY) == []
+
+
+def test_qa_prompt_carries_relevance_gate():
+    from src.dataset.qa_synth import _QA_PROMPT
+    p = " ".join(_QA_PROMPT.lower().split())   # normalize line wraps
+    assert "relevance gate" in p
+    assert "only learn what concerns the company" in p
+
+
 @patch("src.dataset.qa_synth._complete", side_effect=RuntimeError("LLM down"))
 @patch("src.dataset.qa_synth.db.get_workspace_documents")
 def test_build_qa_survives_llm_failure(mock_docs, _complete):
