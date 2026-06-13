@@ -67,6 +67,87 @@ def build_from_signals(
     return examples, consumed_ids
 
 
+def build_from_brain(
+    company_id: str,
+    company_name: str,
+    window_hours: int | None = None,
+) -> list[dict]:
+    """Phase 2: build training examples from the LIVE WorkDaemon brain — real
+    daemon conversations, human-accepted actions, and learned skills. This is what
+    turns the company's own accumulated data into its model's training set (the
+    deep Slack/brain corpus + the approve/edit/reject reward signal we built).
+
+    Behaviour, not volatile facts: every example is a prompt→target the daemon
+    actually produced or a human accepted. Returns deduped examples.
+    """
+    if window_hours is None:
+        window_hours = settings.training_window_hours
+
+    candidates: list[tuple[str, dict, float, str]] = []
+
+    # 1. Real conversations → user→assistant SFT pairs (the daemon's good answers,
+    #    in this company's voice + grounded in its knowledge).
+    msgs = db.get_daemon_conversations(company_id, window_hours)
+    for user_text, assistant_text in _pair_turns(msgs):
+        if not user_text.strip() or not formatters.is_valid_answer(assistant_text):
+            continue
+        ex = formatters._make_example(  # type: ignore[attr-defined]
+            system=formatters.SYSTEM_PROMPT(company_name),
+            user=user_text,
+            assistant=assistant_text,
+        )
+        candidates.append((_norm(user_text), ex, 0.8, ""))
+
+    # 2. Human-ACCEPTED actions → the reward signal (approved/applied = good output).
+    for act in db.get_accepted_actions(company_id, window_hours):
+        ex = formatters.format_action(act, company_name)
+        if not formatters.is_valid_answer(ex["messages"][-1]["content"]):
+            continue
+        candidates.append((_norm(ex["messages"][1]["content"]), ex, 1.0, ""))
+
+    # 3. Learned skills → how this company operates.
+    for sk in db.get_brain_skills(company_id):
+        ex = formatters.format_skill(sk, company_name)
+        if not formatters.is_valid_answer(ex["messages"][-1]["content"]):
+            continue
+        candidates.append((_norm(ex["messages"][1]["content"]), ex, 0.9, ""))
+
+    examples, _ = _deduplicate_with_ids(candidates)
+    logger.info(
+        "company=%s built %d examples from the live brain (conversations=%d, window=%dh)",
+        company_id, len(examples), len(msgs), window_hours,
+    )
+    return examples
+
+
+def merge_examples(*example_lists: list[dict]) -> list[dict]:
+    """Combine example sets, one per normalised user message (earlier lists win
+    ties — pass brain examples first so they beat legacy signals)."""
+    best: dict[str, dict] = {}
+    for examples in example_lists:
+        for ex in examples:
+            user = next((m["content"] for m in ex["messages"] if m["role"] == "user"), "")
+            key = _norm(user)
+            if key and key not in best:
+                best[key] = ex
+    return list(best.values())
+
+
+def _pair_turns(msgs: list[dict]) -> list[tuple[str, str]]:
+    """Pair each user message with the assistant reply that immediately follows it.
+    Assistant content is cleaned from its stored envelope to prose."""
+    pairs: list[tuple[str, str]] = []
+    pending_user: str | None = None
+    for m in msgs:
+        role, content = m.get("role"), m.get("content") or ""
+        if role == "user":
+            pending_user = content
+        elif role == "assistant" and pending_user is not None:
+            pairs.append((pending_user, formatters.clean_assistant(content)))
+            pending_user = None
+    return pairs
+
+
 def write_jsonl(examples: list[dict], company_id: str) -> str:
     """Write examples to a named temp file and return the path."""
     fd, path = tempfile.mkstemp(prefix=f"{company_id}-", suffix=".jsonl")

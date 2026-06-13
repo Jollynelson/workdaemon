@@ -88,14 +88,66 @@ def get_company_terminology(company_id: str) -> list[dict]:
     return resp.data
 
 
-# ── Company / model-version helpers (canonical companies schema) ───────────────
+# ── Live WorkDaemon brain (Phase 2) ────────────────────────────────────────────
+# The trainer reads the SAME tables the live app fills, so a company's real data
+# becomes its model's training set. company_id == the live workspace_id.
+
+
+def get_daemon_conversations(company_id: str, window_hours: int, limit: int = 600) -> list[dict]:
+    """Recent daemon chat turns for this workspace (role + content), chronological.
+    Paired user→assistant by the dataset builder."""
+    resp = (
+        db()
+        .table("daemon_messages")
+        .select("role, content, created_at")
+        .eq("workspace_id", company_id)
+        .gte("created_at", _since(window_hours))
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    return resp.data or []
+
+
+def get_accepted_actions(company_id: str, window_hours: int, limit: int = 200) -> list[dict]:
+    """Human-ACCEPTED daemon actions — the reward signal. Approved/applied/done
+    outputs are what the user kept, so they're positive training targets."""
+    resp = (
+        db()
+        .table("daemon_actions")
+        .select("type, title, body, result, status, created_at")
+        .eq("workspace_id", company_id)
+        .in_("status", ["approved", "applied", "done", "executed", "completed"])
+        .gte("created_at", _since(window_hours))
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    return resp.data or []
+
+
+def get_brain_skills(company_id: str, limit: int = 60) -> list[dict]:
+    """This workspace's LEARNED skills (how the company operates)."""
+    resp = (
+        db()
+        .table("brain_skills")
+        .select("name, trigger_description, body, status")
+        .eq("workspace_id", company_id)
+        .eq("status", "active")
+        .limit(limit)
+        .execute()
+    )
+    return resp.data or []
+
+
+# ── Company / model-version helpers (live `workspaces` schema) ──────────────────
 
 
 def get_company_name(company_id: str) -> str:
-    """Company name from the canonical `companies` table."""
+    """Company name from the live `workspaces` table (== the app's workspace)."""
     resp = (
         db()
-        .table("companies")
+        .table("workspaces")
         .select("name")
         .eq("id", company_id)
         .single()
@@ -105,8 +157,9 @@ def get_company_name(company_id: str) -> str:
 
 
 def get_active_companies() -> list[str]:
-    """All companies — every company gets a fine-tune + hunt run each cycle."""
-    resp = db().table("companies").select("id").execute()
+    """All live workspaces — each gets a fine-tune cycle once it has enough data
+    (run_company gates on MIN_EXAMPLES_TO_TRAIN)."""
+    resp = db().table("workspaces").select("id").execute()
     return [row["id"] for row in resp.data]
 
 

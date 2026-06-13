@@ -61,16 +61,26 @@ Tests: `api/_lib/__tests__/company_model.test.js` (token parity + gating).
 
 ---
 
-## Phase 2 — Feed the live brain into the trainer (NEXT — the core gap)
+## Phase 2 — Feed the live brain into the trainer ✅ (shipped)
 
-Repoint the dataset builder (or add a JS-side logger) so training data = the brain
-we actually fill:
-- `daemon_messages` (interactions), `daemon_actions` **approved/edited/rejected**
-  (the reward signal), `brain_skills` + `workspace_documents` (corpus),
-  `company_terminology`.
-- Either (a) write the finetuning signal tables from `api/` as interactions happen,
-  or (b) repoint `finetuning/src/dataset/builder.py` at the live tables. (b) is less
-  invasive and keeps one source of truth.
+The trainer now reads the brain we actually fill (chose path (b) — repoint the
+builder at the live tables; one source of truth):
+- **`finetuning/src/db.py`** — `get_daemon_conversations` (daemon_messages by
+  workspace_id), `get_accepted_actions` (daemon_actions approved/applied/done = the
+  reward signal), `get_brain_skills` (workspace-learned skills). `get_company_name`
+  / `get_active_companies` repointed from the pipeline's `companies` table to the
+  live **`workspaces`** table.
+- **`formatters.py`** — `clean_assistant` (stored reply envelope → prose target),
+  `format_action`, `format_skill`.
+- **`builder.py`** — `build_from_brain` (conversations + accepted actions + skills,
+  deduped) + `merge_examples` (brain wins ties over legacy signals) + `_pair_turns`.
+- **`run_company.py`** — the dataset is now `merge_examples(build_from_brain, build_from_signals)`,
+  brain primary. Tests: `finetuning/tests/test_brain_dataset.py` (10).
+
+Note: SFT target = the daemon's prose answer (not the JSON envelope) — the model
+learns to ANSWER; the serving layer re-wraps the envelope (a Phase-3 detail).
+`workspace_documents` (raw corpus) is intentionally NOT direct SFT — it's RAG
+grounding; turning docs into Q→A pairs would need an LLM pass (later).
 
 ## Phase 3 — Close the loop once, for real
 

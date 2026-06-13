@@ -15,7 +15,7 @@ from pathlib import Path
 
 import src.db as db
 from src.config import settings
-from src.dataset.builder import build_from_signals, write_jsonl
+from src.dataset.builder import build_from_brain, build_from_signals, merge_examples, write_jsonl
 from src.evaluation.gate import run_gate
 from src.registry.hf_registry import pull_gguf, repo_name
 from src.serving.ollama_loader import (
@@ -38,9 +38,17 @@ def run_company(company_id: str) -> None:
     company_name = db.get_company_name(company_id)
     logger.info("company=%s (%s) fine-tuning run started.", company_id, company_name)
 
-    # ── 2. Build dataset from training_signals (spec 6.2 canonical source) ──────
-    examples, consumed_signal_ids = build_from_signals(company_id, company_name)
+    # ── 2. Build dataset — the LIVE brain is the primary source (Phase 2): real
+    # daemon conversations + human-accepted actions + learned skills. Legacy
+    # training_signals are merged in behind it (brain wins ties). ───────────────
+    brain_examples = build_from_brain(company_id, company_name)
+    signal_examples, consumed_signal_ids = build_from_signals(company_id, company_name)
+    examples = merge_examples(brain_examples, signal_examples)
     count = len(examples)
+    logger.info(
+        "company=%s dataset: %d examples (%d brain + %d signal, deduped).",
+        company_id, count, len(brain_examples), len(signal_examples),
+    )
 
     if count < settings.min_examples_to_train:
         logger.info(
