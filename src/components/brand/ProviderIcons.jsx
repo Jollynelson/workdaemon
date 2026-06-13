@@ -73,7 +73,7 @@ const HubSpot = (s) => (
 );
 
 const ICONS = {
-  slack: Slack, github: GitHub, notion: Notion, google: GoogleDrive, gdrive: GoogleDrive,
+  slack: Slack, github: GitHub, notion: Notion, google: GoogleDrive, gdrive: GoogleDrive, gmail: GoogleDrive, gcal: GoogleDrive,
   microsoft: Microsoft, atlassian: Atlassian, salesforce: Salesforce, hubspot: HubSpot,
 };
 

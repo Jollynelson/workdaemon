@@ -98,6 +98,8 @@ export const PROVIDERS = {
   },
   google: {
     label: 'Google Workspace',
+    // Umbrella: one connect grants all Google apps; covered sub-apps show connected.
+    covers: ['gdrive', 'gmail', 'gcal'],
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientIdEnv: 'GOOGLE_CLIENT_ID',
@@ -137,6 +139,42 @@ export const PROVIDERS = {
     authExtra: { access_type: 'offline', prompt: 'consent' },
     parseToken: (d) => {
       if (d.error) throw new Error(`gdrive: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  // Gmail as its own integration (dedicated OAuth app, Gmail-scoped).
+  gmail: {
+    label: 'Gmail',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    clientIdEnv: 'GMAIL_CLIENT_ID',
+    clientSecretEnv: 'GMAIL_CLIENT_SECRET',
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
+    responseType: 'code',
+    authExtra: { access_type: 'offline', prompt: 'consent' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`gmail: ${d.error_description || d.error}`);
+      return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
+    },
+  },
+  // Google Calendar as its own integration (dedicated OAuth app, Calendar-scoped).
+  gcal: {
+    label: 'Google Calendar',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    clientIdEnv: 'GCAL_CLIENT_ID',
+    clientSecretEnv: 'GCAL_CLIENT_SECRET',
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
+    responseType: 'code',
+    authExtra: { access_type: 'offline', prompt: 'consent' },
+    parseToken: (d) => {
+      if (d.error) throw new Error(`gcal: ${d.error_description || d.error}`);
       return { access_token: d.access_token, refresh_token: d.refresh_token || null, expires_in: d.expires_in || null, scopes: (d.scope || '').split(' ').filter(Boolean), external_account: null, metadata: {} };
     },
   },
