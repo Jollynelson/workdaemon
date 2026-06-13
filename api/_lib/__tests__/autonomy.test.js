@@ -134,6 +134,43 @@ describe('observe.detectGoneQuiet (deals cold / threads quiet)', () => {
   });
 });
 
+describe('observe.goalRisk', () => {
+  const day = 86400000;
+  it('flags overdue, due-soon-behind, and off-pace goals', async () => {
+    const { goalRisk } = await import('../observe.js');
+    const now = Date.now();
+    expect(goalRisk({ progress: 40, due_at: new Date(now - 5 * day).toISOString(), horizon_days: 30 }, now).risk).toBe('overdue');
+    expect(goalRisk({ progress: 20, due_at: new Date(now + 3 * day).toISOString(), horizon_days: 30 }, now).risk).toBe('at_risk');
+    expect(goalRisk({ progress: 5, due_at: new Date(now + 20 * day).toISOString(), horizon_days: 30 }, now).risk).toBe('behind');
+  });
+  it('on_track when pace is fine; done at 100%', async () => {
+    const { goalRisk } = await import('../observe.js');
+    const now = Date.now();
+    expect(goalRisk({ progress: 80, due_at: new Date(now + 20 * day).toISOString(), horizon_days: 30 }, now).risk).toBe('on_track');
+    expect(goalRisk({ progress: 100 }, now).risk).toBe('done');
+  });
+});
+
+describe('observe.detectGoalsAtRisk', () => {
+  it('proposes a digest of off-track goals + records each', async () => {
+    const inserts = {};
+    const old = new Date(Date.now() - 10 * 86400000).toISOString();
+    const db = fakeDb({
+      brain_goals: [
+        { id: 'g1', title: 'Hit 100 signups', progress: 10, due_at: old, horizon_days: 30, status: 'active' },
+        { id: 'g2', title: 'Ship v2', progress: 100, due_at: old, horizon_days: 30, status: 'active' },
+      ],
+      workspace_members: [{ user_id: 'admin', role: 'admin' }],
+      inbox_items: [], learning_signals: [],
+    }, inserts);
+    const { detectGoalsAtRisk } = await import('../observe.js');
+    const r = await detectGoalsAtRisk(db, 'ws');
+    expect(r.at_risk).toBe(1);   // g1 overdue; g2 done
+    expect(inserts.inbox_items[0].title).toMatch(/1 goal trending to miss/);
+    expect((inserts.learning_signals || []).length).toBe(2);   // both goals recorded
+  });
+});
+
 describe('observe.postDailyDigest (auto-tier)', () => {
   it('auto-posts an internal digest (no approval) and dedupes', async () => {
     const inserts = {};

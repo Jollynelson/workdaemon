@@ -5,7 +5,30 @@
 // (safe/internal). Round-robin + interval-gated so it's cheap and never spammy.
 import { braveSearch, resolveLLM, callLLM, extractJson } from './research.js';
 import { signalsSince } from './learning.js';
-import { recordObservation } from './autonomy.js';
+import { recordObservation, tierFor } from './autonomy.js';
+
+// AUTO-equip: attach a self-taught skill to the daemons of everyone in that role —
+// additive + reversible, so it's safe to self-execute (gated by tierFor). Deduped.
+async function equipRoleDaemons(db, workspaceId, role, skillSlug) {
+  if (tierFor('equip_learned_skill') !== 'auto') return 0;
+  const { data: members } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const ids = (members || []).map(m => m.user_id);
+  if (!ids.length) return 0;
+  const { data: profs } = await db.from('profiles').select('id, role, title').in('id', ids);
+  const inRole = (profs || []).filter(p => (p.role || p.title || '').trim().toLowerCase() === role.trim().toLowerCase());
+  let equipped = 0;
+  for (const p of inRole) {
+    const { data: have } = await db.from('daemon_skills').select('id')
+      .eq('user_id', p.id).eq('skill_slug', skillSlug).limit(1).maybeSingle();
+    if (have) continue;
+    const { error } = await db.from('daemon_skills').insert({
+      workspace_id: workspaceId, user_id: p.id, skill_slug: skillSlug,
+      reason: 'self-taught by the brain for your role', assigned_by: 'brain',
+    });
+    if (!error) equipped++;
+  }
+  return equipped;
+}
 
 const slugify = (s) => String(s || '').toLowerCase().trim()
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
@@ -66,11 +89,15 @@ export async function learnForRole(db, workspaceId, role, opts = {}) {
     });
     if (!error) added.push({ slug, name: j.name });
   }
+  // AUTO-equip the role's daemons with what was just learned (the brain upgrading
+  // its own workforce — additive/reversible, gated by tierFor).
+  let equipped = 0;
+  for (const a of added) equipped += await equipRoleDaemons(db, workspaceId, role, a.slug);
   await recordObservation(db, workspaceId, {
     domain: 'role_learning', subjectType: 'role', subjectId: role,
-    signal: added.length ? 'learned' : 'none', value: added.length, meta: { skills: added.map(a => a.slug) },
+    signal: added.length ? 'learned' : 'none', value: added.length, meta: { skills: added.map(a => a.slug), equipped },
   });
-  return { role, learned: added.length, skills: added.map(a => a.name) };
+  return { role, learned: added.length, skills: added.map(a => a.name), equipped };
 }
 
 // Distinct roles in the workspace (from profiles.role/title).
