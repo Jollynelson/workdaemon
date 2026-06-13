@@ -135,14 +135,15 @@ def merge_examples(*example_lists: list[dict]) -> list[dict]:
 
 def _pair_turns(msgs: list[dict]) -> list[tuple[str, str]]:
     """Pair each user message with the assistant reply that immediately follows it.
-    Assistant content is cleaned from its stored envelope to prose."""
+    The live daemon_messages assistant role is "daemon" (not "assistant"); accept
+    both. Assistant content is cleaned from its stored envelope to prose."""
     pairs: list[tuple[str, str]] = []
     pending_user: str | None = None
     for m in msgs:
         role, content = m.get("role"), m.get("content") or ""
         if role == "user":
             pending_user = content
-        elif role == "assistant" and pending_user is not None:
+        elif role in ("assistant", "daemon") and pending_user is not None:
             pairs.append((pending_user, formatters.clean_assistant(content)))
             pending_user = None
     return pairs

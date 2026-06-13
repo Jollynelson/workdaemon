@@ -46,9 +46,10 @@ def test_format_skill_renders_trigger_and_body():
 
 # ── turn pairing ────────────────────────────────────────────────────────────────
 def test_pair_turns_pairs_user_then_assistant():
+    # Live daemon_messages use role="daemon" for the assistant; "assistant" also accepted.
     msgs = [
         {"role": "user", "content": "What's our refund policy?"},
-        {"role": "assistant", "content": json.dumps({"blocks": [{"md": "30 days, no questions asked."}]})},
+        {"role": "daemon", "content": json.dumps({"blocks": [{"md": "30 days, no questions asked."}]})},
         {"role": "user", "content": "and shipping?"},
         {"role": "assistant", "content": "Free over fifty dollars always."},
     ]
