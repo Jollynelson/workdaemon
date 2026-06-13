@@ -16,6 +16,7 @@ from pathlib import Path
 import src.db as db
 from src.config import settings
 from src.dataset.builder import build_from_brain, build_from_signals, merge_examples, write_jsonl
+from src.dataset.qa_synth import build_qa_from_corpus
 from src.evaluation.gate import run_gate
 from src.registry.hf_registry import pull_gguf, repo_name
 from src.serving.ollama_loader import (
@@ -52,12 +53,13 @@ def run_company(company_id: str) -> None:
     # daemon conversations + human-accepted actions + learned skills. Legacy
     # training_signals are merged in behind it (brain wins ties). ───────────────
     brain_examples = build_from_brain(company_id, company_name)
+    qa_examples = build_qa_from_corpus(company_id, company_name)  # Phase 2.5: corpus → Q&A
     signal_examples, consumed_signal_ids = build_from_signals(company_id, company_name)
-    examples = merge_examples(brain_examples, signal_examples)
+    examples = merge_examples(brain_examples, qa_examples, signal_examples)
     count = len(examples)
     logger.info(
-        "company=%s dataset: %d examples (%d brain + %d signal, deduped).",
-        company_id, count, len(brain_examples), len(signal_examples),
+        "company=%s dataset: %d examples (%d brain + %d corpus-Q&A + %d signal, deduped).",
+        company_id, count, len(brain_examples), len(qa_examples), len(signal_examples),
     )
 
     if count < settings.min_examples_to_train:
