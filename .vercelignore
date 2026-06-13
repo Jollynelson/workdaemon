@@ -1,0 +1,10 @@
+# The Vercel app is the JS serverless API (api/) + frontend (src/, dist/).
+# The Python backends are deployed to Modal, not Vercel — excluding them keeps the
+# CLI upload small (the repo's backend/ + finetuning/ are ~640M and otherwise blow
+# past the upload limit, forcing git-only deploys).
+backend
+finetuning
+.venv
+**/__pycache__
+**/*.pyc
+*.ipynb
