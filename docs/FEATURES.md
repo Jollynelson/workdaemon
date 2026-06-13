@@ -33,6 +33,8 @@ The brain ingests from every connected source into one company memory.
 - ✅ **Self-improving loop.** Every cycle it retrains on new data, and a **quality gate** only promotes a new model if it (a) clears an absolute quality floor, (b) beats the previous version, and (c) beats the shared brain — so it can only ever move forward.
   - *Scenario:* After a company accumulates real conversations, the brain trains a model that speaks in the company's voice and knows its workflows — and ships it only once it's measurably better than the generic brain.
 - ✅ **Onboarding fast-path.** A data-rich company that connects its tools can have a model trained within ~an hour instead of waiting for the weekly cycle.
+- ✅ **Continuous self-teaching.** Beyond the company's own data, the brain proactively researches each role's *current* best practices, new tools, and better ways to work — and distills them into the skill library on its own (recording knowledge is a safe, self-executing action). Round-robin across roles, interval-gated so it's never spammy.
+  - *Scenario:* The brain reads what top RevOps leaders are doing this quarter and adds a "signal-based outreach" skill to the Sales Lead's daemon — so the daemon keeps getting sharper at its craft without anyone teaching it.
 - ✅ **Learns only what matters.** Two gates keep the model sharp:
   - **Source-trust:** the brain confirms a source is genuinely company-wide before learning from it (e.g. a real company Slack — multiple members/channels — vs a personal one; a corporate email domain vs personal mail). Untrusted sources are still *remembered* for search, just not *learned* from.
   - **Relevance:** even within a trusted source, off-topic content (#random banter, spam, personal chatter) is ingested for memory but never becomes training data.
@@ -113,7 +115,6 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 
 ## 5. Roadmap (coming next)
 
-- 🔭 **Continuous self-teaching:** a learning loop that proactively researches each role's evolving best practices, new technologies, and better ways to work — and folds them into the brain's skills/knowledge — so the brain and daemons keep getting smarter about the *outside* world, not just the company's own data.
 - 🔭 **More autonomy signals & wider auto-execution:** goals at risk, more self-executing safe actions as each earns trust.
 - 🔭 **Live model routing:** route real daemon chats to the company's own model once it beats the shared brain per company.
 - 🔭 **Deeper ingestion:** richer connectors (more sources fully ingested) so the brain sees even more.
