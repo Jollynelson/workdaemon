@@ -87,8 +87,10 @@ def _lora_id(company_id: str, rev: str | None) -> tuple[str, int]:
 
     key = f"{company_id}:{rev or 'latest'}"
     name = f"wd-{company_id[:8]}-{(rev or 'latest')[:8]}"
-    # sha1[:8] hex → 1..0xffffffff: a stable positive int distinct per revision.
-    int_id = int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) or 1
+    # vLLM's V1 engine stores lora_int_id in an int32 array, so the id MUST fit a
+    # signed int32 (<= 0x7FFFFFFF) — a full sha1[:8] (up to 0xFFFFFFFF) overflows
+    # and kills EngineCore. Mask to 31 bits; `or 1` keeps it a positive id.
+    int_id = (int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) & 0x7FFFFFFF) or 1
     return name, int_id
 
 

@@ -127,3 +127,15 @@ def test_gate_failsafe_blocks_unservable_candidate(mock_gen, mock_score):
     r = run_serve_gate(COMPANY_ID, COMPANY_NAME, PAIRS, new_revision="newrev", old_revision=None)
     assert r["should_deploy"] is False
     assert r["new_answered"] == 0
+
+
+@patch("src.evaluation.gate._score_answer", return_value=0.8)
+def test_gate_inconclusive_when_incumbent_unservable(mock_score):
+    # Candidate answers fine, but the incumbent can't be served (engine/serve error
+    # on its revision) → mean_old is a phantom 0 → must NOT promote on that.
+    def gen(company_id, hf_revision, query, system_prompt):
+        return "candidate answer" if hf_revision == "newrev" else ""
+    with patch("src.evaluation.gate._serve_eval_generate", side_effect=gen):
+        r = run_serve_gate(COMPANY_ID, COMPANY_NAME, PAIRS, new_revision="newrev", old_revision="oldrev")
+    assert r["should_deploy"] is False
+    assert r["new_answered"] == 3
