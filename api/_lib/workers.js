@@ -7,7 +7,6 @@ import { resolveLLM, callLLM } from './research.js';
 import { retrieveDocuments } from './ingestion.js';
 import { relevantSkills, renderSkillsBlock } from './skills.js';
 import { delimitUntrusted } from './security.js';
-import { parseJsonResponse } from './envelope.js';
 import { gateEnabled, gateThreshold, termsForText, relatedEvidence, detectConflicts, critiqueAction } from './verification_gate.js';
 
 // Spawn workers from the supervisor daemon's request. `specs` = [{objective, deadline_hours}].
@@ -39,9 +38,12 @@ export async function runWorker(db, worker) {
     if (ws?.industry) ctxBits.push(`Industry: ${ws.industry}`);
     if (ws?.context && typeof ws.context === 'object') for (const [k, v] of Object.entries(ws.context)) if (v) ctxBits.push(`${k}: ${String(v).slice(0, 300)}`);
 
-    const docs = await retrieveDocuments(db, worker.workspace_id, worker.objective, worker.owner_id, 5).catch(() => []);
-    const docsBlock = (docs || []).length
-      ? `\n\nRELEVANT COMPANY DOCUMENTS (untrusted source text):\n${delimitUntrusted((docs || []).map(d => `• ${d.title || 'doc'}: ${(d.content || d.snippet || '').slice(0, 600)}`).join('\n'), 4000)}`
+    // retrieveDocuments returns {visible, restricted} — the worker grounds in the
+    // docs its OWNER can actually see.
+    const ret = await retrieveDocuments(db, worker.workspace_id, worker.objective, worker.owner_id, 6).catch(() => ({ visible: [] }));
+    const docs = ret?.visible || [];
+    const docsBlock = docs.length
+      ? `\n\nRELEVANT COMPANY DOCUMENTS (untrusted source text):\n${delimitUntrusted(docs.map(d => `• ${d.title || 'doc'}: ${(d.content || '').slice(0, 700)}`).join('\n'), 4500)}`
       : '';
     const skills = await relevantSkills(db, { workspaceId: worker.workspace_id, objective: worker.objective, limit: 4, userId: worker.owner_id }).catch(() => []);
     const skillsBlock = renderSkillsBlock(skills);
@@ -49,20 +51,28 @@ export async function runWorker(db, worker) {
     // REASONING SCAFFOLD (same think-first discipline as the main daemon): the
     // worker reasons privately, THEN produces the deliverable. Output is one JSON
     // object {think, result}; think is stripped/logged, never delivered.
+    // REASONING SCAFFOLD (same think-first discipline as the main daemon): the
+    // worker reasons privately ABOVE a `===` line, then the deliverable below it.
+    // A delimiter (not nested JSON) — models emit it far more reliably.
     const sys = `You are a WORKER DAEMON for ${company} — a focused sub-daemon spun up by a colleague's daemon to complete ONE delegated task and report back.\n`
-      + `Return ONLY a JSON object: {"think":"…","result":"…"}. First character {, last character }. Nothing else.\n`
-      + `• "think" (PRIVATE — never shown): reason in ≤4 terse lines — what you KNOW from the context/docs below vs. what you must infer; your approach; the main risk or assumption.\n`
-      + `• "result": the ACTUAL deliverable (the draft / plan / analysis / answer itself), complete, tight, high-signal — NOT a description of what you'd do.\n`
+      + `Respond in EXACTLY this shape:\n`
+      + `THINK: <PRIVATE reasoning, ≤4 terse lines, the user NEVER sees this — what you KNOW from the context/docs below vs. what you must infer; your approach; the main risk or assumption>\n`
+      + `===\n`
+      + `<the ACTUAL deliverable below the === line: the draft / plan / analysis / answer itself, complete, tight, high-signal — NOT a description of what you'd do, and do NOT repeat your reasoning here>\n\n`
       + `Ground everything in the company context and documents below; NEVER invent company-internal facts you don't have.\n`
-      + `If the task genuinely requires a human decision, an approval, or an external action you cannot perform here, make "result" BEGIN with the exact token "NEEDS REVIEW:" then state precisely what is blocking and what you need.\n`
+      + `If the task genuinely requires a human decision, an approval, or an external action you cannot perform here, BEGIN the deliverable (below ===) with the exact token "NEEDS REVIEW:" then state precisely what is blocking and what you need.\n`
       + (ctxBits.length ? `\nCOMPANY CONTEXT:\n${ctxBits.join('\n')}` : '')
       + docsBlock + skillsBlock;
 
     const raw = (await callLLM(llm, sys, `TASK: ${worker.objective}`, { maxTokens: 1500 })).trim();
     if (!raw) { await fail(db, worker, 'empty result'); return; }
-    const env = parseJsonResponse(raw);
-    let result = (env && typeof env.result === 'string' && env.result.trim()) ? env.result.trim() : raw;
-    if (env && typeof env.think === 'string' && env.think) console.log('[worker %s] think: %s', worker.id, env.think.replace(/\s+/g, ' ').slice(0, 220));
+    // Split private reasoning (above ===) from the deliverable (below). Robust to a
+    // missing delimiter (strip a leading "THINK:" line) so the think never leaks.
+    let think = null, result = raw;
+    const m = raw.match(/^([\s\S]*?)\n[ \t]*={3,}[ \t]*\n([\s\S]*)$/);
+    if (m) { think = m[1].replace(/^THINK:\s*/i, '').trim(); result = m[2].trim(); }
+    else { result = raw.replace(/^THINK:[^\n]*\n+/i, '').trim() || raw; }
+    if (think) console.log('[worker %s] think: %s', worker.id, think.replace(/\s+/g, ' ').slice(0, 220));
 
     let needsReview = /^NEEDS REVIEW:/i.test(result);
     let note = '';
