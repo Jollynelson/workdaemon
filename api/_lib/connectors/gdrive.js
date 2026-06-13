@@ -21,7 +21,7 @@ async function drive(db, workspaceId, token) {
       n++;
       try { const ex = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=text/plain`, { headers: { Authorization: `Bearer ${token}` } }); if (ex.ok) content = `${f.name}\n${await ex.text()}`; } catch {}
     }
-    docs.push({ external_id: `drive-${f.id}`, doc_type: 'file', title: f.name, content, url: f.webViewLink, author: f.owners?.[0]?.displayName || null, metadata: { mimeType: f.mimeType } });
+    docs.push({ external_id: `drive-${f.id}`, doc_type: 'file', title: f.name, content, url: f.webViewLink, author: f.owners?.[0]?.displayName || null, metadata: { mimeType: f.mimeType, modifiedTime: f.modifiedTime } });
   }
   return docs;
 }

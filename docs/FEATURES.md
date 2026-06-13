@@ -39,6 +39,7 @@ The brain ingests from every connected source into one company memory.
 - ✅ **Learns only what matters.** Two gates keep the model sharp:
   - **Source-trust:** the brain confirms a source is genuinely company-wide before learning from it (e.g. a real company Slack — multiple members/channels — vs a personal one; a corporate email domain vs personal mail). Untrusted sources are still *remembered* for search, just not *learned* from.
   - **Relevance:** even within a trusted source, off-topic content (#random banter, spam, personal chatter) is ingested for memory but never becomes training data.
+- ✅ **Re-promotion: skipped ≠ forgotten.** A file the relevance gate skipped isn't lost — the brain sees daemon conversations, so when the team *brings that file up later*, the brain notices, marks it referenced, and **re-learns it** next cycle (reference overrides the relevance and source-trust gates). Knowing is permanent; learning is earned — and earning can happen later.
 
 ### 1.4 Reasons & acts — autonomy
 - ✅ **Observe → act loop.** On a schedule the brain reads each workspace's signals, **auto-remembers** them, and **proposes** what needs a human — approve-first.
@@ -86,6 +87,8 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 - ✅ **Web browsing & research.** Daemons read real pages (guarded) and use live web search to ground answers.
 - 🟡 **Goal-driven role agents.** Autonomous agents that pursue a goal (e.g. a Growth Agent) with approve-first autonomy and pluggable channels (email live; social as roadmap).
 - ✅ **Autonomous knowledge daemons.** n8n-style daemons that run knowledge workflows on a schedule.
+- ✅ **File & document search.** Ask "do you have a doc about X?" and the daemon searches everything the brain ingested (Drive files, docs, pages, threads — not just what's trained on) and surfaces the actual matches as selectable options with names, dates, and links.
+  - *Scenario:* "I think there's a doc about the Q3 forecast" → "I found 3 that look relevant — this one's most likely; pick the right one:" with file names + dates as buttons. Picking it also tells the brain that file matters (so it re-learns it).
 
 ---
 

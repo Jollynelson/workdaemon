@@ -18,6 +18,7 @@ import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, prune
 import { scrubDaemonMessages } from './_lib/scrub.js';
 import { computeStaffSignals } from './_lib/staff_signals.js';
 import { observeWorkspace } from './_lib/observe.js';
+import { searchFiles, markFilesReferenced } from './_lib/file_search.js';
 import { provisionStaff } from './_lib/hermes_admin.js';
 import { extractTopicTags } from './_lib/topics.js';
 
@@ -1386,6 +1387,16 @@ export default async function handler(req, res) {
         .eq('id', id).eq('workspace_id', workspaceId);
       if (error) return res.status(500).json({ error: 'Could not update goal' });
       return res.status(200).json({ ok: true });
+    }
+
+    // ── File/document search — the daemon surfaces the company's actual files for
+    // the user to pick (name + date + link), across everything ingested (not just
+    // what's trained on). Surfacing a file marks it 'referenced' so the brain can
+    // re-promote a previously-skipped file for learning. ─────────────────────────
+    if (body.action === 'search_files') {
+      const files = await searchFiles(db, workspaceId, String(body.query || ''), { limit: Number(body.limit) || 5 });
+      await markFilesReferenced(db, workspaceId, files);   // the team brought it up → the brain notices
+      return res.status(200).json({ files: files.map(({ metadata, ...f }) => f) });
     }
 
     // ── Per-staff performance signal (admin only — it's people data). The brain's
