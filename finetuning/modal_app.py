@@ -96,7 +96,7 @@ def run_training(company_id: str, dataset_jsonl: str, version: int) -> dict:
     import tempfile
 
     from src.config import settings
-    from src.registry.hf_registry import push, push_gguf
+    from src.registry.hf_registry import push
     from src.training.hyperparams import HYPERPARAMS
     from src.training.train import train_adapter
 
@@ -107,17 +107,17 @@ def run_training(company_id: str, dataset_jsonl: str, version: int) -> dict:
 
     num_examples = sum(1 for line in dataset_jsonl.splitlines() if line.strip())
 
-    # 2. Fine-tune + export GGUF (train_adapter returns both paths)
-    adapter_dir, gguf_path = train_adapter(
+    # 2. Fine-tune → LoRA adapter (safetensors). No GGUF merge (Path B: vLLM serves
+    #    the un-merged adapter; avoids the brittle Qwen→GGUF converter).
+    adapter_dir = train_adapter(
         company_id=company_id,
         dataset_path=dataset_path,
         base_model=settings.base_model,
         hp=HYPERPARAMS,
     )
 
-    # 3. Push LoRA adapter (safetensors) and merged GGUF to HF
+    # 3. Push the LoRA adapter to the company's private HF repo.
     hf_revision = push(company_id, adapter_dir, version)
-    push_gguf(company_id, gguf_path, version)
 
     return {
         "version": version,

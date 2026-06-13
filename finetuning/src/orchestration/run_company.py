@@ -17,14 +17,7 @@ import src.db as db
 from src.config import settings
 from src.dataset.builder import build_from_brain, build_from_signals, merge_examples, write_jsonl
 from src.dataset.qa_synth import build_qa_from_corpus
-from src.evaluation.gate import run_gate
-from src.registry.hf_registry import pull_gguf, repo_name
-from src.serving.ollama_loader import (
-    eval_model_name,
-    load_into_ollama,
-    model_name,
-    remove_from_ollama,
-)
+from src.registry.hf_registry import repo_name
 
 logger = logging.getLogger(__name__)
 
@@ -90,58 +83,26 @@ def run_company(company_id: str) -> None:
         company_id, result["hf_revision"], result["num_examples"],
     )
 
-    # ── 6. Pull GGUF from HF ──────────────────────────────────────────────────
-    gguf_path = pull_gguf(company_id, version)
-
-    # ── 7. Identify current deployed model (for gate comparison) ──────────────
-    deployed_version = db.get_deployed_version(company_id)
-    old_ollama_model = model_name(company_id) if deployed_version else None
-
-    # ── 8. Load new model into Ollama temporarily for gate evaluation ──────────
-    new_eval_model = eval_model_name(company_id)
-    load_into_ollama(company_id, gguf_path, company_name, name=new_eval_model)
-
-    # ── 9. Run quality gate ────────────────────────────────────────────────────
-    try:
-        gate_result = run_gate(
-            company_id=company_id,
-            company_name=company_name,
-            new_ollama_model=new_eval_model,
-            old_ollama_model=old_ollama_model,
-        )
-    finally:
-        # Always clean up the temp eval model, gate pass or fail.
-        remove_from_ollama(new_eval_model)
-
-    # ── 10. Write model_versions row (audit trail — always written) ────────────
+    # ── 6. Deploy the adapter (Path B: vLLM serves base+adapter by company_id) ──
+    # No GGUF, no Ollama. The adapter is on HF; serving loads it per company_id.
+    # The beat-the-old quality gate runs against the vLLM serve endpoint once
+    # multi-LoRA serving lands (Layer 2); the FIRST model has nothing to beat, so
+    # it deploys, and until the serve-based gate exists a newer adapter (trained on
+    # more/newer data) deploys.
     mv_row = db.insert_model_version(
         company_id=company_id,
         version=version,
         hf_repo=repo_name(company_id),
         hf_revision=result["hf_revision"],
-        eval_score=gate_result["new_score"],
+        eval_score=None,
         deployed=False,
         num_examples=result["num_examples"],
     )
-
-    # ── 11. Deploy or hold ─────────────────────────────────────────────────────
-    if gate_result["should_deploy"]:
-        load_into_ollama(company_id, gguf_path, company_name)
-        db.mark_version_deployed(mv_row["id"])
-        # Stamp the consumed signals so they aren't retrained next cycle. We only
-        # mark on deploy: if the gate rejects, the signals stay unused and get
-        # retried next cycle with more data (spec §6.5).
-        db.mark_signals_used(company_id, consumed_signal_ids, version)
-        logger.info(
-            "company=%s v%d DEPLOYED. new_score=%.3f old_score=%.3f. Marked %d signals used.",
-            company_id, version,
-            gate_result["new_score"], gate_result["old_score"], len(consumed_signal_ids),
-        )
-    else:
-        logger.info(
-            "company=%s v%d NOT deployed — new_score=%.3f < old_score=%.3f - ε=%.3f. "
-            "Keeping current adapter. %d signals left unused for next cycle.",
-            company_id, version,
-            gate_result["new_score"], gate_result["old_score"], settings.gate_epsilon,
-            len(consumed_signal_ids),
-        )
+    db.mark_version_deployed(mv_row["id"])
+    # Stamp consumed signals so they aren't retrained next cycle.
+    db.mark_signals_used(company_id, consumed_signal_ids, version)
+    logger.info(
+        "company=%s v%d DEPLOYED — adapter revision=%s, served via vLLM by company_id. "
+        "Marked %d signals used.",
+        company_id, version, result["hf_revision"][:8], len(consumed_signal_ids),
+    )
