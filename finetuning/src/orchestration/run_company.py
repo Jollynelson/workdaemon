@@ -36,7 +36,17 @@ def run_company(company_id: str) -> None:
     """
     # ── 1. Resolve company ─────────────────────────────────────────────────────
     company_name = db.get_company_name(company_id)
-    logger.info("company=%s (%s) fine-tuning run started.", company_id, company_name)
+    # Log the EFFECTIVE base model loudly — a stale BASE_MODEL in the Modal secret
+    # silently downgraded the base once; never let that be invisible again.
+    logger.info(
+        "company=%s (%s) fine-tuning run started — base_model=%s",
+        company_id, company_name, settings.base_model,
+    )
+    if "Qwen3-32B" not in settings.base_model:
+        logger.warning(
+            "⚠️ base_model is %s, NOT the chosen Qwen3-32B — check BASE_MODEL in the "
+            "`workdaemon-secrets` Modal secret.", settings.base_model,
+        )
 
     # ── 2. Build dataset — the LIVE brain is the primary source (Phase 2): real
     # daemon conversations + human-accepted actions + learned skills. Legacy
