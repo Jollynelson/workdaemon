@@ -69,12 +69,19 @@ def _complete(prompt: str, max_tokens: int = 900) -> str:
 
 _QA_PROMPT = """You generate TRAINING question→answer pairs for {company}'s internal AI assistant, grounded ONLY in the company document below.
 
+RELEVANCE GATE — decide FIRST whether this document concerns {company}'s actual work:
+its business, product, customers, projects, operations, decisions, processes, or
+domain. The brain ingests everything, but the model must ONLY learn what concerns
+the company. If this document is off-topic — personal chit-chat, social/#random
+banter, automated bot/spam noise, or otherwise unrelated to {company}'s work —
+return an empty array [] and nothing else. Do NOT stretch to find relevance.
+
 DOCUMENT — {title}:
 \"\"\"
 {content}
 \"\"\"
 
-Write up to {n} diverse, specific Q&A pairs a teammate might ask, where every ANSWER is fully supported by the document above:
+ONLY IF the document concerns {company}, write up to {n} diverse, specific Q&A pairs a teammate might ask, where every ANSWER is fully supported by the document above:
 - Questions: natural and specific to {company} (use the real names, channels, and terms from the document).
 - Answers: concise and factual, drawn ONLY from the document — no outside knowledge, no speculation.
 - If the document has little usable content, return fewer pairs (or an empty array).
