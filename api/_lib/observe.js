@@ -5,8 +5,15 @@
 // the loop. This is the spine the north star's "sees → predicts → positions" grows on.
 import { observeStaffAndPropose } from './staff_signals.js';
 import { recordObservation, proposeToInbox, adminRecipients, tierFor } from './autonomy.js';
+import { runContinuousLearning } from './continuous_learning.js';
 
 const daysAgoISO = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+// Continuous self-teaching is web+LLM-backed, so cap how many workspaces actually
+// research per scan invocation (this module persists within one process/run). Roles
+// rotate across runs; cheap interval-gated no-ops don't count toward the cap.
+let _learnedThisRun = 0;
+const LEARN_PER_RUN = Number(process.env.LEARN_PER_RUN || 2);
 
 // Slipping deadlines — tasks past due by more than GRACE days and still not done.
 // AUTO-records the count (so the brain tracks whether things are getting better or
@@ -91,11 +98,19 @@ export async function observeWorkspace(db, workspaceId) {
   out.threads = await detectGoneQuiet(db, workspaceId,
     { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' }).catch((e) => ({ error: e.message }));
 
+  // AUTO self-teaching: research one role's current best practices into the skill
+  // library — bounded per run, round-robin across roles/runs.
+  if (_learnedThisRun < LEARN_PER_RUN) {
+    out.learning = await runContinuousLearning(db, workspaceId).catch((e) => ({ error: e.message }));
+    if (out.learning?.ran && out.learning?.learned) _learnedThisRun++;
+  }
+
   const lines = [];
   if (out.staff?.flagged) lines.push(`• ${out.staff.flagged} teammate(s) need attention`);
   if (out.deadlines?.slipped) lines.push(`• ${out.deadlines.slipped} deadline(s) slipping`);
   if (out.deals?.quiet) lines.push(`• ${out.deals.quiet} deal(s) gone cold`);
   if (out.threads?.quiet) lines.push(`• ${out.threads.quiet} thread(s) gone quiet`);
+  if (out.learning?.learned) lines.push(`• taught myself ${out.learning.learned} new ${out.learning.role} skill(s)`);
   out.digest = lines.length
     ? await postDailyDigest(db, workspaceId, ['What I noticed today:', ...lines]).catch((e) => ({ error: e.message }))
     : { posted: 0 };
