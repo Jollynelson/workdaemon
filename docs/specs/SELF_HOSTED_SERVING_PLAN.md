@@ -82,11 +82,24 @@ learns to ANSWER; the serving layer re-wraps the envelope (a Phase-3 detail).
 `workspace_documents` (raw corpus) is intentionally NOT direct SFT — it's RAG
 grounding; turning docs into Q→A pairs would need an LLM pass (later).
 
-## Phase 3 — Close the loop once, for real
+## Phase 3 — Close the loop once, for real (base model DECIDED: Qwen3-32B)
 
-Run `finetuning/scripts/run_one_company.py` on Beta Tenant end-to-end: live data →
-QLoRA → quality gate → deploy → `model_versions` row → Phase-1 serving picks it up.
-First real per-company model.
+Run training on Beta Tenant end-to-end (`modal run modal_app.py::run_company_remote
+--company-id <ws>`): live data → QLoRA → quality gate → deploy → `model_versions`
+row → Phase-1 serving picks it up. First real per-company model.
+
+**Base model = Qwen3-32B** (owner, 2026-06-13). Code default is already
+`unsloth/Qwen3-32B-unsloth-bnb-4bit`; GPU is `L40S` (48GB) / seq 4096 in
+`modal_app.py`. `.env.example` fixed (was a stale 8B template) + `run_company`
+now logs the effective base model loudly.
+
+**Gate before the real run (the one thing code can't fix):** the GPU function reads
+`BASE_MODEL` (and HF_TOKEN, SUPABASE…) from the Modal secret **`workdaemon-secrets`**.
+Confirm that secret's `BASE_MODEL` is `unsloth/Qwen3-32B-unsloth-bnb-4bit` (or unset
+→ code default wins) and that `HF_TOKEN` (write) is present — else the run trains 8B
+or fails to push. Then: first GPU spend (~$1–2/hr L40S, scale-to-zero). Beta Tenant
+≈132 messages → ~50–100 examples (borderline vs `MIN_EXAMPLES_TO_TRAIN=50`) — a
+proof-of-loop adapter, not a great model yet.
 
 ## Phase 4 — Automate
 
