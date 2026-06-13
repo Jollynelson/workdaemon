@@ -16,6 +16,7 @@ import { relevantSkills, renderSkillsBlock, bumpSkillUsage } from './_lib/skills
 import { activeGoals, goalsPromptBlock } from './_lib/goals.js';
 import { sweepOutbox } from './_lib/outbox.js';
 import { getUserToken } from './_lib/oauth.js';
+import { spawnWorkers, runQueuedWorkers, activeWorkersFor, renderWorkersBlock } from './_lib/workers.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -429,7 +430,7 @@ export default async function handler(req, res) {
   const [
     agentProfileRes, memoriesRes, huntFindingsRes, integRes, dbHistoryRes,
     patternsRes, slackRes, daemonEventsContext, graphCtxRes, docsRes,
-    learningContext, pickedSkills, goalBook, keyRowFromDb, webContext,
+    learningContext, pickedSkills, goalBook, keyRowFromDb, webContext, workersList,
   ] = await Promise.all([
     db.from('app_agent_profiles')
       .select('access_level, trust_score, interaction_count, permitted_tools')
@@ -477,6 +478,7 @@ export default async function handler(req, res) {
       : Promise.resolve({ company: [], staff: [] }),
     fetchKeyRow().catch(() => null),
     runWebWork().catch(e => { console.warn('[chat] web work failed:', e.message); return ''; }),
+    workspaceId ? activeWorkersFor(db, workspaceId, user.id).catch(() => []) : Promise.resolve([]),
   ]);
 
   const agentProfile = agentProfileRes.data;
@@ -558,6 +560,10 @@ export default async function handler(req, res) {
   const skillsContext = renderSkillsBlock(pickedSkills);
   if (pickedSkills?.length) bumpSkillUsage(db, pickedSkills.map(s => s.slug), workspaceId);
 
+  // WORKER DAEMONS this user's daemon is supervising — status + finished results,
+  // so the daemon can report progress, surface deliverables, and chase open ones.
+  const workersContext = renderWorkersBlock(workersList);
+
   // GOALS pillar: the live goal book — company goals + this daemon's own goals —
   // injected every turn so the whole fleet pulls toward the same targets.
   const goalsContext = goalsPromptBlock(goalBook || { company: [], staff: [] }, {
@@ -576,7 +582,7 @@ export default async function handler(req, res) {
     webContext,
     connectedTools,
     slackContext,
-    daemonEventsContext + patternsContext + goalsContext + graphContext + docsContext + learningContext + skillsContext,
+    daemonEventsContext + patternsContext + goalsContext + graphContext + docsContext + learningContext + skillsContext + workersContext,
   );
 
   // Resolve AI provider key (fetched concurrently in the batch above).
@@ -957,6 +963,20 @@ export default async function handler(req, res) {
               console.log('[chat] outbox: reminder booked for %s', clamped.toISOString());
             }
           } catch (e) { console.error('[chat] outbox schedule:', e.message); }
+        }
+
+        // 3a-ter. WORKER DAEMONS the daemon spun up this turn → create them and run
+        // in the BACKGROUND (the daemon already confirmed them in its reply). Their
+        // status + results surface in this daemon's context next turn, and the
+        // worker_tick cron supervises them to completion / escalates overdue ones.
+        if (workspaceId && Array.isArray(parsed.workers) && parsed.workers.length) {
+          try {
+            const spawned = await spawnWorkers(db, { workspaceId, ownerId: user.id, specs: parsed.workers });
+            if (spawned.length) {
+              console.log('[chat] spawned %d worker daemon(s)', spawned.length);
+              waitUntil(runQueuedWorkers(db, workspaceId, { budgetMs: 30000 }).catch(e => console.error('[chat] run workers:', e.message)));
+            }
+          } catch (e) { console.error('[chat] spawn workers:', e.message); }
         }
 
         // 3b. Compound web knowledge into the Company Brain: every page this

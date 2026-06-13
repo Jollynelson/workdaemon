@@ -11,6 +11,7 @@ import { shouldDeliver, engagement } from './_lib/calibration.js';
 import { CONNECTORS } from './_lib/connectors/index.js';
 import { runUserSlackTool } from './_lib/connectors/slack.js';
 import { startSlackBackfill, runBackfillSlice, kickBackfillWorker, backfillSweep } from './_lib/backfill.js';
+import { superviseWorkers, runQueuedWorkers } from './_lib/workers.js';
 import { waitUntil } from '@vercel/functions';
 import { reindexWorkspace } from './_lib/ingestion.js';
 import { auditBrain, runDaemonLearning, runCodebaseImprover, recordSignal, pruneOldSignals } from './_lib/learning.js';
@@ -934,6 +935,30 @@ export default async function handler(req, res) {
     if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
     const r = await backfillSweep(adminClient(), `https://${req.headers.host}`);
     return res.status(200).json({ ok: true, ...r });
+  }
+
+  // ── Cron: supervise worker daemons — re-run stuck/failed, escalate overdue, and
+  // drain the queue within a wall-clock budget (the kick-on-spawn handles the fast
+  // path; this guarantees completion). ──────────────────────────────────────────
+  if (req.method === 'GET' && req.query?.action === 'worker_tick') {
+    const secret = process.env.CRON_SECRET;
+    if (!secret || req.headers.authorization !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
+    const wdb = adminClient();
+    const startedAt = Date.now(); const BUDGET = 50000;
+    let sup = {}, ran = 0;
+    try { sup = await superviseWorkers(wdb); } catch (e) { console.error('[brain] supervise workers:', e.message); }
+    // Drain queued workers across workspaces (round-robin by least-recently-updated).
+    try {
+      while (Date.now() - startedAt < BUDGET) {
+        const { data } = await wdb.from('worker_daemons').select('workspace_id').eq('status', 'queued').order('updated_at', { ascending: true }).limit(1);
+        const ws = (data || [])[0]?.workspace_id;
+        if (!ws) break;
+        const r = await runQueuedWorkers(wdb, ws, { budgetMs: BUDGET - (Date.now() - startedAt) });
+        ran += r.ran || 0;
+        if (!r.ran) break;
+      }
+    } catch (e) { console.error('[brain] drain workers:', e.message); }
+    return res.status(200).json({ ok: true, ...sup, ran });
   }
 
   const user = await requireAuth(req, res);
