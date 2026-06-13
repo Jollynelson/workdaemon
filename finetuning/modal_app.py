@@ -187,19 +187,28 @@ def verify_config() -> dict:
     schedule=modal.Cron("0 3 */2 * *"),   # every 2 days at 03:00 — the learning loop
 )
 def training_cycle() -> dict:
-    """Scheduled 48h learning loop: find companies with enough new training_signals
-    and spawn a fine-tune for each. Lives in the finetuning app (which already has
-    Modal + the training code), so the web backend needs no Modal dependency.
+    """Scheduled 48h learning loop: find companies whose brain has grown enough to
+    be worth a new fine-tune and spawn one each. Lives in the finetuning app (which
+    already has Modal + the training code), so the web backend needs no Modal dep.
 
-    Selection = companies with >= MIN_EXAMPLES_TO_TRAIN unused signals. One spawn
-    per company (isolation); run_company self-guards on min-examples + the gate.
+    A company is READY when EITHER:
+      • it has >= MIN_EXAMPLES_TO_TRAIN unused training_signals (the legacy path), OR
+      • its brain has grown: >= NEW_MESSAGES_TO_RETRAIN daemon_messages since its
+        last deployed version (first-timers: any conversation at all).
+    The brain path is what actually fires today — the live app barely writes
+    training_signals, but daemon_messages + corpus are the real training corpus.
+    One spawn per company (isolation); run_company self-guards on MIN_EXAMPLES and
+    the quality gate, so an over-eager pick just no-ops cheaply.
     """
     import os
 
     import src.db as db
 
-    threshold = int(os.environ.get("MIN_EXAMPLES_TO_TRAIN", "50"))
+    signal_threshold = int(os.environ.get("MIN_EXAMPLES_TO_TRAIN", "50"))
+    new_msg_threshold = int(os.environ.get("NEW_MESSAGES_TO_RETRAIN", "20"))
     client = db.db()
+
+    # Path A — unused training_signals (legacy).
     resp = (
         client.table("training_signals")
         .select("company_id")
@@ -211,8 +220,20 @@ def training_cycle() -> dict:
         cid = r.get("company_id")
         if cid:
             counts[cid] = counts.get(cid, 0) + 1
-    ready = [cid for cid, n in counts.items() if n >= threshold]
+    ready: set[str] = {cid for cid, n in counts.items() if n >= signal_threshold}
 
-    for cid in ready:
+    # Path B — brain growth since the last deployed version.
+    for cid in db.get_active_companies():
+        if cid in ready:
+            continue
+        last = db.get_deployed_version(cid)
+        since = last.get("created_at") if last else None
+        new_msgs = db.count_daemon_messages_since(cid, since)
+        first_time = last is None
+        if (first_time and new_msgs >= 1) or (not first_time and new_msgs >= new_msg_threshold):
+            ready.add(cid)
+
+    ready_list = sorted(ready)
+    for cid in ready_list:
         run_company_remote.spawn(cid)   # fire-and-forget per company
-    return {"ready": len(ready), "company_ids": ready}
+    return {"ready": len(ready_list), "company_ids": ready_list}
