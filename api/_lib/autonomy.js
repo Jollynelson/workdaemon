@@ -13,8 +13,10 @@
 import { recordSignal } from './learning.js';
 
 const POLICY = (process.env.BRAIN_AUTONOMY || 'tiered').toLowerCase();
+// First safe action allowed to auto-execute: the internal daily digest (informational,
+// no outward effect). Widen by adding proven-safe kinds here (or via BRAIN_AUTO_KINDS).
 const AUTO_KINDS = new Set(
-  (process.env.BRAIN_AUTO_KINDS || '').split(',').map(s => s.trim()).filter(Boolean),
+  (process.env.BRAIN_AUTO_KINDS || 'daily_digest').split(',').map(s => s.trim()).filter(Boolean),
 );
 
 export function tierFor(kind) {

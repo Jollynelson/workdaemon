@@ -43,7 +43,9 @@ The brain ingests from every connected source into one company memory.
 - ✅ **Staff performance signals.** Per-person status — on track / quiet / overloaded / at-risk / away — from their open, overdue, and completed work plus availability.
   - *Scenario:* Alice has five items two days overdue and nothing completed. The brain flags her as at-risk and drafts a note to the admin: "Alice may be falling behind — consider a check-in or reprioritizing her overdue items." The admin decides.
 - ✅ **Slipping-deadline detector.** Spots work past due and not moving, and surfaces a digest of the worst.
-- 🔭 **More signals (same loop):** deals going cold, customer threads going quiet, goals at risk — each a small detector that plugs into the same observe→propose spine.
+- ✅ **Deal-going-cold & thread-going-quiet detectors.** Flags tracked deals/opportunities or important threads that were active but have gone silent — without nagging a dormant source.
+  - *Scenario:* The Acme renewal had weekly activity, then nothing for two weeks while other deals kept moving. The brain flags it: "Acme renewal has gone quiet."
+- ✅ **Auto-posted daily digest (first self-executing action).** Each cycle the brain posts an internal summary of what it noticed — "2 teammates need attention, 3 deadlines slipping, 1 deal cold" — *without* asking, because it's safe and informational. This is the first step up the autonomy dial; consequential actions stay approve-first.
 
 ### 1.5 Proactive intelligence
 - ✅ **External scanner.** A daily pass scans the outside world for what's relevant to each role and drafts findings to the inbox.
@@ -111,8 +113,8 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 
 ## 5. Roadmap (coming next)
 
-- 🔭 **More autonomy signals** in the observe loop: deals going cold, customer threads going quiet, goals at risk.
-- 🔭 **Widening autonomy:** let proven-safe internal actions auto-execute (e.g. an auto-posted daily brain digest) while consequential actions stay approve-first.
+- 🔭 **Continuous self-teaching:** a learning loop that proactively researches each role's evolving best practices, new technologies, and better ways to work — and folds them into the brain's skills/knowledge — so the brain and daemons keep getting smarter about the *outside* world, not just the company's own data.
+- 🔭 **More autonomy signals & wider auto-execution:** goals at risk, more self-executing safe actions as each earns trust.
 - 🔭 **Live model routing:** route real daemon chats to the company's own model once it beats the shared brain per company.
 - 🔭 **Deeper ingestion:** richer connectors (more sources fully ingested) so the brain sees even more.
 - 🔭 **Prediction & positioning:** the pattern-layer the first two pillars unlock — forecasting and recommendations from everything the brain remembers.
