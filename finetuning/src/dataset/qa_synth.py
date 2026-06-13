@@ -119,11 +119,17 @@ def build_qa_from_corpus(
     examples: list[dict] = []
     skipped_untrusted = 0
     for d in docs:
+        meta = d.get("metadata") or {}
+        # RE-PROMOTION: a file the team brought up later (metadata.referenced) is worth
+        # learning even if it was skipped before — the brain sees daemon conversations
+        # and chooses to learn referenced files further. Reference overrides BOTH the
+        # source-trust skip and the relevance gate.
+        referenced = meta.get("referenced") is True
         # SOURCE-trust gate: the brain ingests everything for RAG, but a source it
         # couldn't confirm as company-wide (metadata.train_eligible == False — e.g. a
         # Slack with too few members, a personal Gmail) must NOT feed the model.
         # Missing flag → eligible (legacy docs / sources without a trust signal).
-        if (d.get("metadata") or {}).get("train_eligible") is False:
+        if not referenced and meta.get("train_eligible") is False:
             skipped_untrusted += 1
             continue
         content = (d.get("content") or "")[:6000]
@@ -132,6 +138,11 @@ def build_qa_from_corpus(
         prompt = _QA_PROMPT.format(
             company=company_name, title=d.get("title") or "doc", content=content, n=per_doc,
         )
+        if referenced:
+            # Override the relevance gate: the team referenced it, so it IS relevant.
+            prompt = ("NOTE: The team REFERENCED this document in conversation, so it IS "
+                      "relevant to their work — generate the Q&A pairs; do NOT return an "
+                      "empty array on relevance grounds.\n\n") + prompt
         try:
             pairs = extract_json_array(_complete(prompt))
         except Exception as exc:  # one bad doc never blocks the rest

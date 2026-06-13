@@ -88,6 +88,22 @@ def test_trusted_source_still_learns(mock_docs, mock_complete):
     assert len(build_qa_from_corpus(COMPANY_ID, COMPANY)) == 1
 
 
+@patch("src.dataset.qa_synth._complete", return_value='[{"q":"Q","a":"A grounded answer from the referenced doc."}]')
+@patch("src.dataset.qa_synth.db.get_workspace_documents")
+def test_referenced_doc_relearned_despite_skip(mock_docs, mock_complete):
+    # A doc skipped before (train_eligible False) but later REFERENCED by the team is
+    # re-promoted — included for learning, with the relevance gate overridden.
+    mock_docs.return_value = [{
+        "title": "Old spec the team brought back up",
+        "content": "Some content the team referenced again later in conversation. " * 6,
+        "visibility": "public",
+        "metadata": {"train_eligible": False, "referenced": True},
+    }]
+    out = build_qa_from_corpus(COMPANY_ID, COMPANY)
+    assert len(out) == 1                                   # learned despite the earlier skip
+    assert "REFERENCED" in mock_complete.call_args[0][0]   # relevance gate overridden
+
+
 def test_qa_prompt_carries_relevance_gate():
     from src.dataset.qa_synth import _QA_PROMPT
     p = " ".join(_QA_PROMPT.lower().split())   # normalize line wraps
