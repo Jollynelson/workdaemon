@@ -115,7 +115,14 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 
 ## 5. Roadmap (coming next)
 
-- 🔭 **More autonomy signals & wider auto-execution:** goals at risk, more self-executing safe actions as each earns trust.
+**Recently shipped** (kept here as a record — see the live sections above for detail):
+- ✅ **Continuous self-teaching** — research each role's best practices into the skill library (§1.3).
+- ✅ **Deal-cold & thread-quiet detectors** — flag tracked work that's gone silent (§1.4).
+- ✅ **Auto-posted daily digest** — the first self-executing action (§1.4).
+
+**Coming next:**
+- 🔭 **Goals-at-risk signals:** tie staff/deadline signals to the goals engine — flag goals trending to miss.
+- 🔭 **Wider auto-execution:** more proven-safe actions self-execute as each earns trust (consequential stays approve-first).
 - 🔭 **Live model routing:** route real daemon chats to the company's own model once it beats the shared brain per company.
 - 🔭 **Deeper ingestion:** richer connectors (more sources fully ingested) so the brain sees even more.
 - 🔭 **Prediction & positioning:** the pattern-layer the first two pillars unlock — forecasting and recommendations from everything the brain remembers.
@@ -124,8 +131,11 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 
 ## Maintaining this file
 
-This catalog is the source of truth for "what can WorkDaemon do." When you ship a feature:
+This catalog is the source of truth for "what can WorkDaemon do." 
+
+**Golden rule: only ADD, polish, adjust, or improve — never delete.** This doc only grows. When you ship a feature:
 1. Add it under the right section (Brain / Daemons / Platform) with a one-line description **and a concrete example or scenario**.
-2. Tag its status (✅ / 🟡 / 🔭) and move it up as it matures.
-3. If it's user-visible and notable, add or update a scenario in §4.
+2. Tag its status (✅ / 🟡 / 🔭) and update the tag as it matures — don't remove the entry.
+3. When a roadmap item ships, **mark it ✅ and keep it** (move it to "Recently shipped" in §5 and add its live entry above) — never delete the roadmap line.
+4. If it's user-visible and notable, add or update a scenario in §4.
 Keep the language plain and concrete — this doc doubles as marketing copy.
