@@ -6,6 +6,27 @@
 // row as they progress so the Integrations page can poll a live status.
 import { ingest as slackIngest, daemonCatchUp as slackDaemonCatchUp } from './connectors/slack.js';
 import { getAccessToken } from './oauth.js';
+import { companyServeToken } from './company_model.js';
+
+// Onboarding fast-path: a fresh seed may have just pushed the company over the
+// training threshold, so nudge the trainer to "train now" instead of waiting up to
+// 48h for the cron. Best-effort + dormant until TRAIN_TRIGGER_URL + SERVE_MASTER_SECRET
+// are set; the Modal side cooldown-guards and the gate still decides what deploys.
+async function maybeTriggerTraining(workspaceId) {
+  const url = process.env.TRAIN_TRIGGER_URL;
+  if (!url || !process.env.SERVE_MASTER_SECRET || !workspaceId) return;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    await fetch(`${url.replace(/\/$/, '')}/train`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${companyServeToken(workspaceId)}` },
+      body: JSON.stringify({ company_id: workspaceId, source: 'onboarding_seed' }),
+    }).catch(() => {});
+    clearTimeout(timer);
+  } catch { /* never block seeding on the trainer nudge */ }
+}
 
 // Each seeder gets (db, {workspaceId, userId}, patch). `patch(fields)` merges into
 // the row. Run the brain track then the daemon track; each fails independently so
@@ -79,6 +100,9 @@ export async function seedIntegration(db, { workspaceId, userId, provider }) {
   }
   try { await seeder(db, { workspaceId, userId }, patch); }
   catch (e) { await patch({ brain_status: 'error', error: String(e?.message || e).slice(0, 300) }); }
+
+  // A real seeder just ingested company history → nudge the trainer (best-effort).
+  await maybeTriggerTraining(workspaceId);
 }
 
 export async function getSeed(db, { workspaceId, userId, provider }) {
