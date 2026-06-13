@@ -144,8 +144,21 @@ export default async function handler(req, res) {
       // This user's seed/readiness rows (brain + daemon tracks per provider).
       const seeds = await getSeeds(db, { workspaceId, userId: user.id });
       const seedByProvider = Object.fromEntries(seeds.map(s => [s.provider, s]));
+      // Umbrella coverage: a connected umbrella (e.g. Google Workspace) makes its
+      // covered sub-apps (Drive/Gmail/Calendar) show connected + share its seed.
+      const coveredBy = {};
+      for (const [umb, c] of Object.entries(PROVIDERS)) {
+        if (c.covers && byProvider[umb]?.status === 'connected') {
+          for (const sub of c.covers) coveredBy[sub] = umb;
+        }
+      }
       const providers = Object.entries(PROVIDERS).map(([id, cfg]) => {
-        const conn = byProvider[id] || null;
+        let conn = byProvider[id] || null;
+        // Covered by a connected umbrella → reflect as connected (via the umbrella).
+        if (!conn && coveredBy[id]) {
+          const u = byProvider[coveredBy[id]];
+          conn = { status: 'connected', external_account: u?.external_account || null, scopes: u?.scopes || [], via: coveredBy[id] };
+        }
         // Nudge a reconnect when this user connected BEFORE a userScope was added
         // (e.g. Slack DM read / send-as-you): their grant is missing scopes the
         // daemon now needs to act as them. Generic — covers any future scope bump.
@@ -155,8 +168,9 @@ export default async function handler(req, res) {
         }
         return {
           id, label: cfg.label, configured: providerConfigured(id),
-          connection: conn ? { ...conn, needsReconnect } : null, // {status, external_account, scopes, updated_at, needsReconnect} or null
-          seed: seedByProvider[id] || null,                       // {brain_*, daemon_*, doc_count, ...} or null
+          connection: conn ? { ...conn, needsReconnect } : null, // {status, external_account, scopes, updated_at, needsReconnect, via?} or null
+          // Own seed, else the umbrella's (covered sub-apps reflect Workspace ingestion).
+          seed: seedByProvider[id] || (coveredBy[id] ? seedByProvider[coveredBy[id]] : null) || null,
         };
       });
       return res.status(200).json({ providers });
