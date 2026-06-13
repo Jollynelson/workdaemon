@@ -99,6 +99,7 @@ Every staff member gets their own daemon — an AI that works *as them*, grounde
 - ✅ **Integrations** — per-user OAuth connect, with **live two-track seeding status** when a tool connects:
   - 🧠 **Brain ingest** (shared history → company knowledge) and 🤖 **Daemon catch-up** (the staffer's own slice), each filling to 100% with real progress.
   - Reconnect banners, real app icons.
+  - Google comes two ways: **Google Drive** as its own dedicated integration (its own OAuth app, Drive-scoped), and **Google Workspace** to connect all Google apps at once (Drive + Gmail + Calendar in one consent).
 - ✅ **Inbox** — the approve-first queue where the brain's and agents' proposals land for one-tap approval.
 - ✅ **Calendar** — unified across Google / Microsoft / Notion.
 - ✅ **Tasks** — assignments, due dates, status (the substrate for capacity + deadline signals).

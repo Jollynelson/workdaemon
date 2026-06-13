@@ -110,6 +110,21 @@ const SEEDERS = {
     await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
   },
 
+  gdrive: async (db, { workspaceId }, patch) => {
+    // 🧠 BRAIN — Google Drive files (its own integration / dedicated OAuth app).
+    await patch({ brain_status: 'seeding', brain_stage: 'reading Google Drive' });
+    try {
+      const token = (await getAccessToken(db, workspaceId, 'gdrive', 'user').catch(() => null))
+                 || (await getAccessToken(db, workspaceId, 'gdrive').catch(() => null));
+      if (!token) throw new Error('no Google Drive access token for this workspace');
+      const r = await gdriveIngest(db, workspaceId, token);
+      await patch({ brain_status: 'ready', brain_stage: 'indexed', doc_count: r?.upserted ?? 0 });
+    } catch (e) {
+      await patch({ brain_status: 'error', error: `brain: ${e.message}`.slice(0, 300) });
+    }
+    await patch({ daemon_status: 'ready', daemon_stage: 'tools ready' });
+  },
+
   gmail: async (db, { workspaceId }, patch) => {
     // 🧠 BRAIN — mail threads (interaction-rich). SOURCE-trust in the connector
     // (corporate domain) keeps personal mailboxes out of training; the qa_synth
