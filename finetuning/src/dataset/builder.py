@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,34 @@ from src.config import settings
 from src.dataset import formatters
 
 logger = logging.getLogger(__name__)
+
+
+# ── Train/eval split (Phase 4 quality gate) ──────────────────────────────────────
+
+
+def example_io(example: dict) -> tuple[str, str]:
+    """The (user prompt, reference answer) of a built SFT example — the last user
+    turn and the final assistant turn. Used to score gate candidates."""
+    msgs = example["messages"]
+    user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), "")
+    target = msgs[-1]["content"] if msgs else ""
+    return user, target
+
+
+def split_train_eval(
+    examples: list[dict], eval_frac: float = 0.1
+) -> tuple[list[dict], list[dict]]:
+    """Deterministic train/eval split keyed on a hash of the normalised prompt, so
+    a given example always lands on the same side across runs (the gate never
+    trains on what it evaluates). Returns (train, eval)."""
+    cutoff = max(0, min(100, int(round(eval_frac * 100))))
+    train: list[dict] = []
+    evalset: list[dict] = []
+    for ex in examples:
+        user, _ = example_io(ex)
+        bucket = int(hashlib.sha1(_norm(user).encode()).hexdigest(), 16) % 100
+        (evalset if bucket < cutoff else train).append(ex)
+    return train, evalset
 
 
 def build_from_signals(

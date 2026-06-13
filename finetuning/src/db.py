@@ -240,3 +240,35 @@ def insert_model_version(
 
 def mark_version_deployed(version_id: str) -> None:
     db().table("model_versions").update({"deployed": True}).eq("id", version_id).execute()
+
+
+def promote_version(version_id: str, company_id: str) -> None:
+    """Make `version_id` the single deployed adapter for the company: un-deploy every
+    other version first, then deploy this one. Keeps exactly one row deployed so the
+    serve's deployed=True lookup is unambiguous (and the previous model is the clean
+    rollback target if a later gate fails)."""
+    client = db()
+    client.table("model_versions").update({"deployed": False}).eq(
+        "company_id", company_id
+    ).neq("id", version_id).execute()
+    client.table("model_versions").update({"deployed": True}).eq("id", version_id).execute()
+
+
+def set_version_eval_score(version_id: str, score: float | None) -> None:
+    """Record the gate's score on a version row (deployed or not), for the registry."""
+    db().table("model_versions").update({"eval_score": score}).eq("id", version_id).execute()
+
+
+def count_daemon_messages_since(workspace_id: str, since_iso: str | None) -> int:
+    """How many daemon_messages a workspace has logged since `since_iso` (its last
+    train time). None → all-time. Drives the retrain cron: a company is worth a new
+    GPU cycle only once its brain has meaningfully grown."""
+    q = (
+        db()
+        .table("daemon_messages")
+        .select("id", count="exact")
+        .eq("workspace_id", workspace_id)
+    )
+    if since_iso:
+        q = q.gt("created_at", since_iso)
+    return q.execute().count or 0

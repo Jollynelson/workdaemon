@@ -46,26 +46,13 @@ image = (
 app = modal.App("workdaemon-serving")
 
 
-def _adapter_for_company(company_id: str, model_version: int | None = None) -> str | None:
-    """Resolve + cache the deployed LoRA adapter directory for a company. Returns
-    the local path, or None when there's no deployed model (caller falls back)."""
+def _ensure_adapter(company_id: str, rev: str | None) -> str:
+    """Pull + cache the adapter at a SPECIFIC revision for a company. Returns the
+    local path. Keyed by revision so different versions live in distinct dirs."""
     import shutil
 
-    from supabase import create_client
-
-    from src.config import settings
     from src.registry.hf_registry import pull
 
-    client = create_client(settings.supabase_url, settings.supabase_service_key)
-    q = (
-        client.table("model_versions")
-        .select("version, hf_revision")
-        .eq("company_id", company_id).eq("deployed", True)
-        .order("version", desc=True).limit(1).execute()
-    )
-    if not q.data:
-        return None
-    rev = q.data[0]["hf_revision"]
     cache_dir = f"/adapters/{company_id}-{(rev or 'latest')[:12]}"
     if os.path.exists(os.path.join(cache_dir, "adapter_config.json")):
         return cache_dir
@@ -76,10 +63,33 @@ def _adapter_for_company(company_id: str, model_version: int | None = None) -> s
     return cache_dir
 
 
-def _lora_int_id(company_id: str) -> int:
-    """Stable positive int id vLLM needs per adapter."""
+def _deployed_revision(company_id: str, model_version: int | None = None) -> str | None:
+    """The hf_revision of the company's currently-deployed adapter, or None."""
+    from supabase import create_client
+
+    from src.config import settings
+
+    client = create_client(settings.supabase_url, settings.supabase_service_key)
+    q = (
+        client.table("model_versions")
+        .select("version, hf_revision")
+        .eq("company_id", company_id).eq("deployed", True)
+        .order("version", desc=True).limit(1).execute()
+    )
+    return q.data[0]["hf_revision"] if q.data else None
+
+
+def _lora_id(company_id: str, rev: str | None) -> tuple[str, int]:
+    """vLLM LoRA (name, int_id) keyed on company + REVISION. Crucial: vLLM caches
+    adapters by int_id, so a retrain (new revision, same company) MUST get a new
+    id or the GPU keeps serving the previous version's weights from cache."""
     import hashlib
-    return int(hashlib.sha1(company_id.encode()).hexdigest()[:8], 16)
+
+    key = f"{company_id}:{rev or 'latest'}"
+    name = f"wd-{company_id[:8]}-{(rev or 'latest')[:8]}"
+    # sha1[:8] hex → 1..0xffffffff: a stable positive int distinct per revision.
+    int_id = int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) or 1
+    return name, int_id
 
 
 @app.cls(
@@ -122,7 +132,9 @@ class HermesServer:
         """Pre-pull the company's adapter + record the readiness heartbeat. The base
         is already resident from @enter, so this just primes the adapter cache."""
         from src.serving.warm_state import mark_warm
-        _adapter_for_company(company_id, model_version)
+        rev = _deployed_revision(company_id, model_version)
+        if rev:
+            _ensure_adapter(company_id, rev)
         mark_warm(company_id)
         return {"warmed": True, "company_id": company_id}
 
@@ -141,13 +153,15 @@ class HermesServer:
         from vllm import SamplingParams
         from vllm.lora.request import LoRARequest
 
-        adapter_dir = _adapter_for_company(company_id, model_version)
-        if not adapter_dir:
+        rev = _deployed_revision(company_id, model_version)
+        if not rev:
             raise RuntimeError(f"no deployed adapter for company {company_id}")
+        adapter_dir = _ensure_adapter(company_id, rev)
+        name, int_id = _lora_id(company_id, rev)
 
         conversation = [{"role": "system", "content": system_prompt}, *messages]
         sampling = SamplingParams(temperature=temperature, max_tokens=max_tokens)
-        lora = LoRARequest(company_id, _lora_int_id(company_id), adapter_dir)
+        lora = LoRARequest(name, int_id, adapter_dir)
         outputs = self.llm.chat(conversation, sampling, lora_request=lora)
         content = outputs[0].outputs[0].text if outputs and outputs[0].outputs else ""
 
@@ -158,6 +172,33 @@ class HermesServer:
             "tool_calls": _parse_tool_calls(content),
             "model": f"wd-{company_id}",
         }
+
+    @modal.method()
+    def eval_generate(
+        self,
+        company_id: str,
+        hf_revision: str,
+        query: str,
+        system_prompt: str,
+        max_tokens: int = 512,
+    ) -> str:
+        """Generate ONE answer from a SPECIFIC adapter revision — used by the
+        quality gate to score a not-yet-deployed candidate against the current
+        one WITHOUT touching what's live. Greedy (temp 0) for a stable comparison.
+        Distinct revisions get distinct LoRA ids, so both load side-by-side."""
+        from vllm import SamplingParams
+        from vllm.lora.request import LoRARequest
+
+        adapter_dir = _ensure_adapter(company_id, hf_revision)
+        name, int_id = _lora_id(company_id, hf_revision)
+        conversation = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
+        sampling = SamplingParams(temperature=0.0, max_tokens=max_tokens)
+        lora = LoRARequest(name, int_id, adapter_dir)
+        outputs = self.llm.chat(conversation, sampling, lora_request=lora)
+        return outputs[0].outputs[0].text if outputs and outputs[0].outputs else ""
 
 
 def _parse_tool_calls(content: str) -> list[dict]:

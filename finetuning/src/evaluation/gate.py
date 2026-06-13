@@ -260,3 +260,106 @@ def run_gate(
         should_deploy=should_deploy,
         num_eval_examples=len(eval_pairs),
     )
+
+
+# ── Serve-based gate (Phase 4) ───────────────────────────────────────────────────
+# The production gate. Generation runs through the REAL vLLM serve (the deployed
+# HermesServer GPU class, reached via Modal RPC — no HTTP/token), scoring a candidate
+# adapter revision against the current deployed one on a held-out eval set. The
+# decision is made BEFORE anything goes live, so a failed gate never changes what's
+# served. Scoring reuses the same LLM judge as run_gate.
+
+SERVE_APP_NAME = os.environ.get("SERVE_APP_NAME", "workdaemon-serving")
+
+
+def _serve_eval_generate(company_id: str, hf_revision: str, query: str, system_prompt: str) -> str:
+    """Generate one answer from a SPECIFIC adapter revision on the deployed serve.
+    Returns "" on any failure (→ scored 0.0, the fail-safe handles a dead model)."""
+    try:
+        import modal
+
+        server = modal.Cls.from_name(SERVE_APP_NAME, "HermesServer")()
+        return (server.eval_generate.remote(
+            company_id=company_id,
+            hf_revision=hf_revision,
+            query=query,
+            system_prompt=system_prompt,
+        ) or "").strip()
+    except Exception as exc:
+        logger.warning("serve eval-generate failed (rev=%s): %s", (hf_revision or "")[:8], exc)
+        return ""
+
+
+def run_serve_gate(
+    company_id: str,
+    company_name: str,
+    eval_pairs: list[tuple[str, str]],
+    new_revision: str,
+    old_revision: str | None,
+) -> GateResult:
+    """Beat-the-old gate over the live serving path.
+
+    Args:
+        eval_pairs:   [(prompt, reference_answer), ...] held out from training.
+        new_revision: hf_revision of the freshly-trained candidate adapter.
+        old_revision: hf_revision of the current deployed adapter, or None on the
+                      first-ever model (candidate auto-passes if it answers).
+
+    Returns GateResult; should_deploy is True only when the candidate answers at
+    least one prompt AND scores >= old - gate_epsilon.
+    """
+    if not eval_pairs:
+        logger.warning(
+            "company=%s no eval pairs — auto-passing serve gate (insufficient data).",
+            company_id,
+        )
+        return GateResult(
+            new_score=1.0, old_score=0.0, should_deploy=True,
+            num_eval_examples=0, new_answered=0,
+        )
+
+    system_prompt = SYSTEM_PROMPT(company_name)
+    logger.info(
+        "company=%s serve-gate: %d eval examples, new=%s old=%s",
+        company_id, len(eval_pairs), (new_revision or "")[:8],
+        (old_revision or "none")[:8],
+    )
+
+    new_scores: list[float] = []
+    old_scores: list[float] = []
+    new_answered = 0
+
+    for query, reference in eval_pairs:
+        new_answer = _serve_eval_generate(company_id, new_revision, query, system_prompt)
+        if new_answer:
+            new_answered += 1
+        new_scores.append(_score_answer(query, new_answer, reference))
+
+        if old_revision:
+            old_answer = _serve_eval_generate(company_id, old_revision, query, system_prompt)
+            old_scores.append(_score_answer(query, old_answer, reference))
+
+    mean_new = _mean(new_scores)
+    mean_old = _mean(old_scores) if old_scores else 0.0
+
+    if new_answered == 0:
+        logger.warning(
+            "company=%s serve-gate FAIL-SAFE: candidate answered 0/%d — NOT deploying.",
+            company_id, len(eval_pairs),
+        )
+        should_deploy = False
+    else:
+        should_deploy = mean_new >= mean_old - settings.gate_epsilon
+
+    logger.info(
+        "company=%s serve-gate: new=%.3f old=%.3f answered=%d/%d epsilon=%.3f → deploy=%s",
+        company_id, mean_new, mean_old, new_answered, len(eval_pairs),
+        settings.gate_epsilon, should_deploy,
+    )
+    return GateResult(
+        new_score=mean_new,
+        old_score=mean_old,
+        new_answered=new_answered,
+        should_deploy=should_deploy,
+        num_eval_examples=len(eval_pairs),
+    )
