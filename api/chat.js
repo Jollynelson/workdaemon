@@ -17,6 +17,7 @@ import { activeGoals, goalsPromptBlock } from './_lib/goals.js';
 import { sweepOutbox } from './_lib/outbox.js';
 import { getUserToken } from './_lib/oauth.js';
 import { spawnWorkers, runQueuedWorkers, activeWorkersFor, renderWorkersBlock } from './_lib/workers.js';
+import { resolveCompanyModel } from './_lib/company_model.js';
 import { waitUntil } from '@vercel/functions';
 
 // ── Live web search (retrieval augmentation for the daemon chat) ──────────────
@@ -588,6 +589,15 @@ export default async function handler(req, res) {
   // Resolve AI provider key (fetched concurrently in the batch above).
   let keyRow = keyRowFromDb;
 
+  // SELF-HOSTED BRAIN (Phase 1): if this workspace has a DEPLOYED per-company model
+  // and no explicit BYO key, the daemon runs on the company's OWN model instead of
+  // the shared gateway. Dormant until self-hosted serving is configured + a model
+  // is deployed (model_versions), so it's a no-op for everyone today.
+  if (!keyRow && workspaceId) {
+    try { const cm = await resolveCompanyModel(db, workspaceId); if (cm) keyRow = cm; }
+    catch (e) { console.warn('[chat] company-model resolve skipped:', e.message); }
+  }
+
   // Env fallback when a workspace has no key of its own — mirrors resolveLLM:
   // DeepSeek first (the intended brain + already set in prod), then Anthropic,
   // then OpenAI. This is what makes a brand-new workspace's daemon work
@@ -699,9 +709,9 @@ export default async function handler(req, res) {
         // rethrow → the caller routes THIS turn to the cloud fallback, and we fire
         // a prewarm so the NEXT turn is warm. Non-Hermes stream hiccups keep the
         // safe non-stream retry (no behavior change for cloud providers).
-        if (cfg.provider === 'hermes') {
-          console.warn('[chat] hermes stream cold/failed (%s) → cloud fallback + prewarm', e.message);
-          prewarmGateway(cfg.endpoint);
+        if (cfg.provider === 'hermes' || cfg.provider === 'company_model') {
+          console.warn('[chat] %s stream cold/failed (%s) → cloud fallback', cfg.provider, e.message);
+          if (cfg.provider === 'hermes') prewarmGateway(cfg.endpoint); // company_model warms via its own /warm route, not a GET
           throw e;
         }
         console.warn('[chat] stream path failed (%s) → non-stream retry', e.message);
@@ -771,11 +781,11 @@ export default async function handler(req, res) {
         } catch { /* keep the fast result */ }
       }
     } catch (e) {
-      // Routed model failed → fall back. For Hermes the "configured model" is the
-      // SAME (cold/down) gateway, so retrying it just re-pays the wait — go straight
-      // to the cloud fallback. For cloud providers, retry the configured model once
-      // (a transient tier/model error), then the cloud provider.
-      if (resolvedKey.provider === 'hermes') {
+      // Routed model failed → fall back. For Hermes/company_model the "configured
+      // model" is the SAME (cold/down) self-hosted endpoint, so retrying it just
+      // re-pays the wait — go straight to the cloud fallback. For cloud providers,
+      // retry the configured model once (a transient tier/model error), then cloud.
+      if (resolvedKey.provider === 'hermes' || resolvedKey.provider === 'company_model') {
         parsed = await cloudFallback(e); usedModel = 'cloud-fallback';
       } else if (usedModel !== resolvedKey.model) {
         try {
