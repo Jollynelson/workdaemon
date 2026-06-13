@@ -50,6 +50,18 @@ def chat(
         # failure / cold-start error so the caller always gets a response.
         gpu_serving = get_gpu_serving()
         if gpu_serving is not None:
+            # COLD-START GUARD: a scaled-to-zero GPU takes minutes to load the 32B
+            # base. NEVER block the request on that (it overran the web fn timeout →
+            # 500). Check the heartbeat (Supabase only, no GPU touch): if cold, warm
+            # in the background and answer with Claude NOW; only call the GPU warm.
+            from src.serving.warm_state import is_warm
+
+            if not is_warm(company_id):
+                logger.info("company=%s GPU cold; warming in bg, Claude fallback this turn.", company_id)
+                _warm_company_model_async(company_id, model_version)
+                result = _call_claude(messages, system_prompt, max_tokens)
+                result["source"] = "claude_fallback"
+                return result
             try:
                 result = gpu_serving.remote(
                     company_id=company_id,
@@ -128,6 +140,12 @@ def _call_claude(
     system_prompt: str,
     max_tokens: int,
 ) -> dict:
+    # No key → raise FAST (a clean error the serve route returns as 5xx) so the
+    # WorkDaemon app's own cloud fallback takes over immediately, instead of a
+    # crash deep in the SDK. Set ANTHROPIC_API_KEY in the serve secret to enable
+    # serve-side fallback.
+    if not settings.anthropic_api_key:
+        raise RuntimeError("no ANTHROPIC_API_KEY for serve-side fallback")
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     response = client.messages.create(
         model=settings.fallback_model,
@@ -146,17 +164,15 @@ def _call_claude(
 # ── Warm Modal model asynchronously ──────────────────────────────────────────
 
 def _warm_company_model_async(company_id: str, model_version: int | None) -> None:
-    """Trigger Modal cold-start in background so the next request is warm."""
+    """Fire-and-forget GPU warm so the NEXT request is hot. Uses the warm Function
+    bound via modal_bridge (set_gpu_warm) — NOT a module-level import of the local
+    `modal/` package, which doesn't exist and shadows the real SDK."""
     try:
-        from modal.serve_app import chat_completion
-        # Fire-and-forget: send a short warm-up prompt
-        chat_completion.spawn(
-            company_id=company_id,
-            messages=[{"role": "user", "content": "ping"}],
-            system_prompt="You are warming up. Reply with 'ok'.",
-            model_version=model_version,
-        )
-        logger.info("company=%s Modal warm-up spawned.", company_id)
+        from src.serving.modal_bridge import get_gpu_warm
+        warm_fn = get_gpu_warm()
+        if warm_fn is not None:
+            warm_fn.spawn(company_id=company_id, model_version=model_version)
+            logger.info("company=%s Modal warm-up spawned.", company_id)
     except Exception as exc:
         logger.warning("company=%s warm-up spawn failed: %s", company_id, exc)
 
