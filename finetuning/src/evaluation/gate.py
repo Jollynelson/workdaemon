@@ -41,7 +41,8 @@ _JUDGE_PROVIDERS = {
 class GateResult(TypedDict):
     new_score: float
     old_score: float
-    should_deploy: bool
+    base_score: float          # the SHARED brain (base model) on the same eval — the routing bar
+    should_deploy: bool        # = deployable AND beats the shared brain → safe to route live
     num_eval_examples: int
     new_answered: int          # how many eval prompts the NEW model actually answered
 
@@ -203,7 +204,7 @@ def run_gate(
             company_id,
         )
         return GateResult(
-            new_score=1.0, old_score=0.0, should_deploy=True,
+            new_score=1.0, old_score=0.0, base_score=0.0, should_deploy=True,
             num_eval_examples=0, new_answered=0,
         )
 
@@ -256,6 +257,7 @@ def run_gate(
     return GateResult(
         new_score=mean_new,
         old_score=mean_old,
+        base_score=0.0,          # the legacy Ollama gate predates the shared-brain baseline
         new_answered=new_answered,
         should_deploy=should_deploy,
         num_eval_examples=len(eval_pairs),
@@ -290,6 +292,34 @@ def _serve_eval_generate(company_id: str, hf_revision: str, query: str, system_p
         return ""
 
 
+def _baseline_generate(query: str, system_prompt: str) -> str:
+    """Answer from the SHARED brain — the base model (DeepSeek) a company uses when
+    it has no model of its own — on the SAME prompt the company model gets. No
+    retrieval, same inputs: a clean test of whether fine-tuning internalised company
+    knowledge the generic base lacks. This is the bar to earn live routing. "" on
+    failure (→ baseline treated as unmeasurable, doesn't block the deploy)."""
+    try:
+        resp = httpx.post(
+            f"{settings.deepseek_base_url}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+            json={
+                "model": settings.baseline_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 512,
+            },
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    except Exception as exc:
+        logger.warning("baseline (shared-brain) generate failed: %s", exc)
+        return ""
+
+
 def run_serve_gate(
     company_id: str,
     company_name: str,
@@ -314,7 +344,7 @@ def run_serve_gate(
             company_id,
         )
         return GateResult(
-            new_score=1.0, old_score=0.0, should_deploy=True,
+            new_score=1.0, old_score=0.0, base_score=0.0, should_deploy=True,
             num_eval_examples=0, new_answered=0,
         )
 
@@ -327,8 +357,10 @@ def run_serve_gate(
 
     new_scores: list[float] = []
     old_scores: list[float] = []
+    base_scores: list[float] = []
     new_answered = 0
     old_answered = 0
+    base_answered = 0
 
     for query, reference in eval_pairs:
         new_answer = _serve_eval_generate(company_id, new_revision, query, system_prompt)
@@ -342,8 +374,16 @@ def run_serve_gate(
                 old_answered += 1
             old_scores.append(_score_answer(query, old_answer, reference))
 
+        # The shared brain (base model) on the same prompt — the bar to earn routing.
+        base_answer = _baseline_generate(query, system_prompt)
+        if base_answer:
+            base_answered += 1
+        base_scores.append(_score_answer(query, base_answer, reference))
+
     mean_new = _mean(new_scores)
     mean_old = _mean(old_scores) if old_scores else 0.0
+    mean_base = _mean(base_scores)
+    margin = settings.gate_baseline_margin
 
     if new_answered == 0:
         logger.warning(
@@ -372,18 +412,31 @@ def run_serve_gate(
             company_id, mean_new, settings.gate_min_score,
         )
         should_deploy = False
+    elif base_answered > 0 and mean_new < mean_base + margin:
+        # Doesn't beat the SHARED BRAIN on the company's own eval — routing to it would
+        # be a downgrade. Keep the shared brain; this model stays deployed=False (it's
+        # still recorded, with its score, so we can see it converging toward the bar).
+        # If the baseline itself couldn't be measured (base_answered==0) we don't block
+        # on it — the floor + beat-prior still apply.
+        logger.warning(
+            "company=%s serve-gate BELOW BASELINE: new=%.3f < shared-brain %.3f + margin %.2f "
+            "— NOT routing (shared brain is still better); staying on it.",
+            company_id, mean_new, mean_base, margin,
+        )
+        should_deploy = False
     else:
         should_deploy = mean_new >= mean_old - settings.gate_epsilon
 
     logger.info(
-        "company=%s serve-gate: new=%.3f old=%.3f new_answered=%d old_answered=%d /%d "
-        "epsilon=%.3f → deploy=%s",
-        company_id, mean_new, mean_old, new_answered, old_answered, len(eval_pairs),
-        settings.gate_epsilon, should_deploy,
+        "company=%s serve-gate: new=%.3f old=%.3f base=%.3f answered new=%d old=%d base=%d /%d "
+        "epsilon=%.3f margin=%.2f floor=%.2f → deploy=%s",
+        company_id, mean_new, mean_old, mean_base, new_answered, old_answered, base_answered,
+        len(eval_pairs), settings.gate_epsilon, margin, settings.gate_min_score, should_deploy,
     )
     return GateResult(
         new_score=mean_new,
         old_score=mean_old,
+        base_score=mean_base,
         new_answered=new_answered,
         should_deploy=should_deploy,
         num_eval_examples=len(eval_pairs),

@@ -259,6 +259,12 @@ def set_version_eval_score(version_id: str, score: float | None) -> None:
     db().table("model_versions").update({"eval_score": score}).eq("id", version_id).execute()
 
 
+def set_version_base_score(version_id: str, score: float | None) -> None:
+    """Record the shared-brain baseline score the candidate was measured against —
+    so the registry shows, per version, how the fine-tune compared to the base model."""
+    db().table("model_versions").update({"base_score": score}).eq("id", version_id).execute()
+
+
 def count_daemon_messages_since(workspace_id: str, since_iso: str | None) -> int:
     """How many daemon_messages a workspace has logged since `since_iso` (its last
     train time). None → all-time. Drives the retrain cron: a company is worth a new
