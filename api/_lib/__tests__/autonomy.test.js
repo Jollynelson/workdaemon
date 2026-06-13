@@ -21,6 +21,10 @@ describe('autonomy.tierFor', () => {
     expect(tierFor('staff_signal')).toBe('propose');
     expect(tierFor('deadlines_slipping')).toBe('propose');
   });
+  it('daily_digest is the first safe auto-executing action', async () => {
+    const { tierFor } = await import('../autonomy.js');
+    expect(tierFor('daily_digest')).toBe('auto');
+  });
 });
 
 describe('autonomy.proposeToInbox', () => {
@@ -89,5 +93,55 @@ describe('observe.detectSlippingDeadlines', () => {
     expect(r.slipped).toBe(0);
     expect((inserts.inbox_items || []).length).toBe(0);
     expect((inserts.learning_signals || []).length).toBe(1);     // still recorded "clear"
+  });
+});
+
+describe('observe.detectGoneQuiet (deals cold / threads quiet)', () => {
+  const old = new Date(Date.now() - 30 * 86400000).toISOString();
+  const fresh = new Date().toISOString();
+
+  it('flags stale items WHEN the source is still active', async () => {
+    const inserts = {};
+    const db = fakeDb({
+      workspace_documents: [
+        { title: 'Acme renewal', doc_type: 'deal', updated_at: old },     // gone cold
+        { title: 'Live deal', doc_type: 'deal', updated_at: fresh },      // keeps source active
+      ],
+      workspace_members: [{ user_id: 'admin', role: 'admin' }],
+      inbox_items: [], learning_signals: [],
+    }, inserts);
+    const { detectGoneQuiet } = await import('../observe.js');
+    const r = await detectGoneQuiet(db, 'ws', { docTypes: ['deal', 'opportunity'], kind: 'deal_cold', noun: 'deal' });
+    expect(r.quiet).toBe(1);
+    expect(r.proposed).toBe(1);
+    expect(inserts.inbox_items[0].title).toMatch(/1 deal gone quiet/);
+  });
+
+  it('does NOT nag a dormant source (everything stale, nothing recent)', async () => {
+    const inserts = {};
+    const db = fakeDb({
+      workspace_documents: [
+        { title: 'Old thread A', doc_type: 'email_thread', updated_at: old },
+        { title: 'Old thread B', doc_type: 'email_thread', updated_at: old },
+      ],
+      workspace_members: [{ user_id: 'admin', role: 'admin' }],
+      inbox_items: [], learning_signals: [],
+    }, inserts);
+    const { detectGoneQuiet } = await import('../observe.js');
+    const r = await detectGoneQuiet(db, 'ws', { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' });
+    expect(r.quiet).toBe(0);
+    expect((inserts.inbox_items || []).length).toBe(0);
+  });
+});
+
+describe('observe.postDailyDigest (auto-tier)', () => {
+  it('auto-posts an internal digest (no approval) and dedupes', async () => {
+    const inserts = {};
+    const db = fakeDb({ workspace_members: [{ user_id: 'admin', role: 'admin' }], inbox_items: [] }, inserts);
+    const { postDailyDigest } = await import('../observe.js');
+    const r = await postDailyDigest(db, 'ws', ['What I noticed today:', '• 1 deadline slipping']);
+    expect(r.posted).toBe(1);
+    expect(inserts.inbox_items[0]).toMatchObject({ type: 'alert' });
+    expect(inserts.inbox_items[0].metadata).toMatchObject({ kind: 'daily_digest', auto: true });
   });
 });
