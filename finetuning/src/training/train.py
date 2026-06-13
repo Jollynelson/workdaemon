@@ -129,62 +129,12 @@ def train_adapter(
     tokenizer.save_pretrained(out_dir)
     logger.info("LoRA adapter saved to %s", out_dir)
 
-    # ── 7. Export merged GGUF for Ollama serving ──────────────────────────────
-    # Unsloth merges the adapter into the base model and quantizes to GGUF in
-    # one step. q4_k_m on a 32B is ~19GB — quantization runs on CPU (llama.cpp),
-    # so it doesn't need to fit VRAM; serves fine on Ollama.
-    # Ollama's ADAPTER directive requires GGUF format; exporting here avoids
-    # a separate conversion step outside the GPU container.
-    gguf_dir = f"/tmp/{company_id}-gguf"
-    os.makedirs(gguf_dir, exist_ok=True)
-
-    # Mistral ships chat_template as a single string, so the coercion below is a
-    # no-op for it. It's retained as a safety net: some Unsloth repos (e.g. the old
-    # Hermes-3 base) ship chat_template as a DICT/LIST of named templates, and
-    # Unsloth's GGUF exporter (fix_tokenizer_bos_token) calls `.replace(" ", "")`
-    # on it and crashes on a non-string. Coerce to the single 'default' string —
-    # the same one apply_chat_template used during training.
-    _ct = getattr(tokenizer, "chat_template", None)
-    if isinstance(_ct, dict):
-        tokenizer.chat_template = _ct.get("default") or next(iter(_ct.values()))
-        logger.info("Coerced dict chat_template → 'default' string for GGUF export.")
-    elif isinstance(_ct, list):
-        # transformers multi-template format: [{"name": ..., "template": ...}, ...]
-        _default = next((t.get("template") for t in _ct if t.get("name") == "default"), None)
-        tokenizer.chat_template = _default or _ct[0].get("template")
-        logger.info("Coerced list chat_template → 'default' string for GGUF export.")
-
-    logger.info("Exporting merged GGUF (q4_k_m) for Ollama...")
-    model.save_pretrained_gguf(gguf_dir, tokenizer, quantization_method="q4_k_m")
-
-    # Unsloth may save the GGUF inside gguf_dir, alongside it, or in /tmp.
-    # Search all plausible locations and log what we find.
-    import glob as _glob
-
-    def _find_gguf() -> str | None:
-        candidates = (
-            _glob.glob(os.path.join(gguf_dir, "*.gguf"))                         # inside dir
-            + _glob.glob(os.path.join(gguf_dir, "**", "*.gguf"), recursive=True) # subdirs
-            + _glob.glob(os.path.join(f"{gguf_dir}_gguf", "*.gguf"))             # Unsloth appends _gguf
-            + _glob.glob(f"{gguf_dir}*.gguf")                                     # dir-as-prefix
-            + _glob.glob("/tmp/*.gguf")                                            # /tmp root
-        )
-        return candidates[0] if candidates else None
-
-    gguf_path = _find_gguf()
-    if not gguf_path:
-        # Log directory state to diagnose on next run
-        contents = os.listdir(gguf_dir) if os.path.exists(gguf_dir) else []
-        tmp_gguf = _glob.glob("/tmp/**/*.gguf", recursive=True)
-        raise RuntimeError(
-            f"GGUF export produced no .gguf file.\n"
-            f"  gguf_dir contents: {contents}\n"
-            f"  /tmp .gguf files:  {tmp_gguf}"
-        )
-
-    logger.info("GGUF exported to %s", gguf_path)
-
-    return out_dir, gguf_path
+    # ── 7. Done — return the LoRA adapter dir ──────────────────────────────────
+    # Path B (MULTI_LORA_PLAN): we do NOT merge to GGUF. The un-merged LoRA adapter
+    # (safetensors) is what we push to HF and serve via vLLM multi-LoRA (one base +
+    # per-company adapters). This also sidesteps Unsloth's brittle Qwen→GGUF
+    # converter (the `target_model_dir` crash on a 32B base).
+    return out_dir
 
 
 def _is_bfloat16_supported() -> bool:
