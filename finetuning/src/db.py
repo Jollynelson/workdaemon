@@ -195,6 +195,22 @@ def get_deployed_version(company_id: str) -> dict | None:
     return resp.data[0] if resp.data else None
 
 
+def get_latest_version(company_id: str) -> dict | None:
+    """Most recent model_versions row for a company REGARDLESS of deployed — used by
+    the fast-path cooldown (a just-trained candidate, even one the gate rejected,
+    means we trained recently and shouldn't immediately retrain)."""
+    resp = (
+        db()
+        .table("model_versions")
+        .select("*")
+        .eq("company_id", company_id)
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return resp.data[0] if resp.data else None
+
+
 def get_next_version_number(company_id: str) -> int:
     """Next monotonically increasing version number for this company."""
     resp = (

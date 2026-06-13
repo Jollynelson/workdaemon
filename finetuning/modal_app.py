@@ -240,3 +240,80 @@ def training_cycle() -> dict:
     for cid in ready_list:
         run_company_remote.spawn(cid)   # fire-and-forget per company
     return {"ready": len(ready_list), "company_ids": ready_list}
+
+
+# ── Onboarding fast-path ──────────────────────────────────────────────────────────
+# The 48h cron is the steady-state loop; this endpoint is the "train now" path the
+# web app hits the moment a company finishes seeding (Slack/docs) at onboarding, so a
+# data-rich company doesn't wait up to 2 days for its first model. It only SPAWNS the
+# normal run_company_remote — which still self-guards on MIN_EXAMPLES and the quality
+# gate — so the worst case is a cheap no-op. Auth = HMAC(SERVE_MASTER_SECRET, company_id),
+# the same per-company token the JS serving wire already mints. A cooldown stops
+# repeat seeds from spinning back-to-back GPU runs.
+
+web_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "fastapi[standard]>=0.111.0",
+        "supabase>=2.4.0",
+        "pydantic-settings>=2.2.0",
+        "python-dotenv>=1.0.0",
+        "httpx>=0.27.0",
+    )
+    .add_local_python_source("src")
+)
+
+
+@app.function(
+    image=web_image,
+    secrets=[
+        modal.Secret.from_name("workdaemon-secrets"),        # Supabase, etc.
+        modal.Secret.from_name("workdaemon-serve-secret"),   # SERVE_MASTER_SECRET
+    ],
+    timeout=60,
+)
+@modal.asgi_app()
+def train_api():
+    # Starlette (not FastAPI route-injection): the handler gets `request` positionally,
+    # so it works under `from __future__ import annotations` (which would otherwise turn
+    # type hints into strings FastAPI can't resolve from a locally-imported name).
+    import hashlib
+    import hmac
+    import os
+    from datetime import datetime, timezone
+
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    import src.db as db
+
+    async def train(request):
+        body = await request.json()
+        company_id = (body or {}).get("company_id")
+        secret = os.environ.get("SERVE_MASTER_SECRET", "")
+        token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not company_id or not secret:
+            return JSONResponse({"error": "missing company_id or server secret"}, status_code=400)
+        expected = hmac.new(secret.encode(), str(company_id).encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(token, expected):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+        # Cooldown: skip if we trained (any version, deployed or not) within the window.
+        cooldown_h = int(os.environ.get("FAST_PATH_COOLDOWN_HOURS", "6"))
+        last = db.get_latest_version(company_id)
+        trained_at = (last or {}).get("trained_at")
+        if trained_at:
+            try:
+                ts = datetime.fromisoformat(str(trained_at).replace("Z", "+00:00"))
+                age_h = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                if age_h < cooldown_h:
+                    return JSONResponse({"triggered": False, "reason": "cooldown",
+                                         "company_id": company_id, "hours_since_last": round(age_h, 1)})
+            except Exception:
+                pass
+
+        run_company_remote.spawn(company_id)   # the gate + MIN_EXAMPLES still decide
+        return JSONResponse({"triggered": True, "company_id": company_id})
+
+    return Starlette(routes=[Route("/train", train, methods=["POST"])])
