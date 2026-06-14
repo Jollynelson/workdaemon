@@ -180,8 +180,12 @@ export function InboxPage() {
                       {!expanded && (
                         <div style={{ fontFamily: 'var(--dmsans)', fontSize: 13, color: c.text3, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{recommendation}</div>
                       )}
-                      <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text4, letterSpacing: '0.07em' }}>{item.source} · {item.time}</span>
+                        {/* Source citation — the company document this alert is grounded in. */}
+                        {item.metadata?.source && (
+                          <span title="Source the Brain grounded this in" style={{ fontFamily: 'var(--mono)', fontSize: 9, color: c.text3, background: c.subtle, border: `1px solid ${c.subtleBorder}`, borderRadius: 5, padding: '2px 7px', letterSpacing: '0.06em' }}># {item.metadata.source}</span>
+                        )}
                         {item.draft && !expanded && (
                           <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#3b6ef7', background: 'rgba(59,110,247,0.09)', border: '1px solid rgba(59,110,247,0.22)', borderRadius: 6, padding: '2px 7px' }}>✎ DRAFT</span>
                         )}
