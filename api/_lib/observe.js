@@ -9,8 +9,22 @@ import { runContinuousLearning } from './continuous_learning.js';
 import { getFreshAccessToken } from './oauth.js';
 import { googleRecentEvents } from './calendar.js';
 import { queueFindingDelivery } from './outbox.js';
+import { retrieveDocuments } from './ingestion.js';
 
 const daysAgoISO = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+// Ground a proposal in a real company document: retrieve the most relevant doc
+// for `query` and return its title as a short source citation the UI shows as a
+// "# Source" chip — i.e. the brain "found a document about it". null if nothing
+// matches (the alert simply ships ungrounded). Workspace-public docs only (no
+// user scope), so an admin-facing alert never cites a restricted document.
+async function groundCitation(db, workspaceId, query) {
+  try {
+    const { visible } = await retrieveDocuments(db, workspaceId, query || '', null, 1);
+    const title = visible?.[0]?.title;
+    return title ? String(title).slice(0, 60) : null;
+  } catch { return null; }
+}
 
 // Continuous self-teaching is web+LLM-backed, so cap how many workspaces actually
 // research per scan invocation (this module persists within one process/run). Roles
@@ -36,11 +50,12 @@ export async function detectSlippingDeadlines(db, workspaceId) {
 
   const recipients = await adminRecipients(db, workspaceId);
   const worst = slipped.slice(0, 5).map(t => `• ${t.title || 'untitled'} (due ${t.due_date})`).join('\n');
+  const source = await groundCitation(db, workspaceId, slipped.map(t => t.title).filter(Boolean).join(' '));
   const proposed = await proposeToInbox(db, workspaceId, recipients, {
     kind: 'deadlines_slipping', subjectId: workspaceId,
     title: `${slipped.length} deadline${slipped.length === 1 ? '' : 's'} slipping`,
     body: `Past due by more than ${GRACE} day(s), not done:\n${worst}`,
-    metadata: { count: slipped.length },
+    metadata: { count: slipped.length }, source,
   });
   return { slipped: slipped.length, proposed };
 }
@@ -68,11 +83,12 @@ export async function detectGoneQuiet(db, workspaceId, { docTypes, days = 14, ki
 
   const recipients = await adminRecipients(db, workspaceId);
   const list = stale.map(d => `• ${d.title || 'untitled'} (quiet since ${String(d.updated_at).slice(0, 10)})`).join('\n');
+  const source = await groundCitation(db, workspaceId, stale.map(d => d.title).filter(Boolean).join(' '));
   const proposed = await proposeToInbox(db, workspaceId, recipients, {
     kind, subjectId: workspaceId,
     title: `${stale.length} ${noun}${stale.length === 1 ? '' : 's'} gone quiet`,
     body: `No activity in ${days}+ days:\n${list}`,
-    metadata: { count: stale.length },
+    metadata: { count: stale.length }, source,
   });
   return { quiet: stale.length, proposed };
 }
@@ -109,10 +125,11 @@ export async function detectGoalsAtRisk(db, workspaceId) {
   if (!flagged.length) return { at_risk: 0, proposed: 0 };
   const recipients = await adminRecipients(db, workspaceId);
   const list = flagged.slice(0, 6).map(g => `• ${g.title} — ${g.reason}`).join('\n');
+  const source = await groundCitation(db, workspaceId, flagged.map(g => g.title).filter(Boolean).join(' '));
   const proposed = await proposeToInbox(db, workspaceId, recipients, {
     kind: 'goals_at_risk', subjectId: workspaceId,
     title: `${flagged.length} goal${flagged.length === 1 ? '' : 's'} trending to miss`,
-    body: `Off track:\n${list}`, metadata: { count: flagged.length },
+    body: `Off track:\n${list}`, metadata: { count: flagged.length }, source,
   });
   return { at_risk: flagged.length, proposed };
 }
@@ -179,6 +196,8 @@ export async function detectMissedSessions(db, workspaceId) {
   const hrOwners = await hrRecipients(db, workspaceId);
   let missed = 0, proposed = 0;
   for (const ev of sessions) {
+    // Ground in a company doc once per session (e.g. the onboarding SOP/policy).
+    const source = await groundCitation(db, workspaceId, `${ev.title} onboarding policy`);
     for (const a of (ev.attendees || []).filter(isNoShow)) {
       missed++;
       const who = a.displayName || a.email;
@@ -191,7 +210,7 @@ export async function detectMissedSessions(db, workspaceId) {
         kind: 'missed_onboarding', subjectId: `hr:${subj}`,
         title: `${who} missed onboarding: ${ev.title}`,
         body: `${who} did not attend "${ev.title}" (${when}) — RSVP was "${a.responseStatus}". Reschedule and confirm their onboarding is back on track.`,
-        metadata: { event_id: ev.id, attendee: a.email, staff_id: staffId, response: a.responseStatus, audience: 'hr' },
+        metadata: { event_id: ev.id, attendee: a.email, staff_id: staffId, response: a.responseStatus, audience: 'hr' }, source,
       });
 
       // → the staff member directly (only when they're a resolvable platform user).
@@ -200,7 +219,7 @@ export async function detectMissedSessions(db, workspaceId) {
           kind: 'missed_onboarding_self', subjectId: `self:${subj}`,
           title: 'You missed an onboarding session',
           body: `"${ev.title}" (${when}) went ahead without you. I've flagged HR to help you reschedule — reply here if you'd like me to find a new slot.`,
-          metadata: { event_id: ev.id, audience: 'staff' },
+          metadata: { event_id: ev.id, audience: 'staff' }, source,
         });
         await queueFindingDelivery(db, {
           workspaceId, userIds: [staffId],

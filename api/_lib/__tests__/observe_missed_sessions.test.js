@@ -4,9 +4,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // test is pure (no network), and drive the calendar fixture per case.
 vi.mock('../oauth.js', () => ({ getFreshAccessToken: vi.fn() }));
 vi.mock('../calendar.js', () => ({ googleRecentEvents: vi.fn() }));
+// retrieveDocuments would otherwise hit the live embeddings endpoint — mock it so
+// grounding is deterministic and the tests stay pure.
+vi.mock('../ingestion.js', () => ({ retrieveDocuments: vi.fn() }));
 
 import { getFreshAccessToken } from '../oauth.js';
 import { googleRecentEvents } from '../calendar.js';
+import { retrieveDocuments } from '../ingestion.js';
 import { detectMissedSessions } from '../observe.js';
 
 const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
@@ -43,7 +47,11 @@ const onboardingEvent = (attendees) => ({
 });
 
 describe('detectMissedSessions', () => {
-  beforeEach(() => { vi.clearAllMocks(); getFreshAccessToken.mockResolvedValue('tok'); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getFreshAccessToken.mockResolvedValue('tok');
+    retrieveDocuments.mockResolvedValue({ visible: [{ title: 'Onboarding SOP' }], restricted: [] });
+  });
 
   it('notifies BOTH HR and the staff member when a required attendee no-shows', async () => {
     googleRecentEvents.mockResolvedValue([onboardingEvent([
@@ -59,6 +67,8 @@ describe('detectMissedSessions', () => {
     // HR gets the "who missed what" alert; the staffer gets a direct nudge.
     expect(inbox.find(i => i.user_id === 'u-hr')?.metadata.kind).toBe('missed_onboarding');
     expect(inbox.find(i => i.user_id === 'u-angela')?.metadata.kind).toBe('missed_onboarding_self');
+    // …grounded in the company doc the brain found (rendered as a "# Source" chip).
+    expect(inbox.every(i => i.metadata.source === 'Onboarding SOP')).toBe(true);
     // …and the staffer also gets a chat ping so it can't be missed.
     expect((inserts.daemon_outbox || []).length).toBe(1);
   });

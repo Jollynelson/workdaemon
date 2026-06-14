@@ -43,7 +43,7 @@ export async function adminRecipients(db, workspaceId) {
 // PROPOSE (approve-first): draft an inbox alert to recipients, deduped against an
 // existing UNREAD alert of the same kind+subject so the brain never nags. Returns
 // how many were inserted (0 = deduped).
-export async function proposeToInbox(db, workspaceId, recipients, { kind, subjectId = null, title, body, metadata = {} }) {
+export async function proposeToInbox(db, workspaceId, recipients, { kind, subjectId = null, title, body, metadata = {}, source = null }) {
   const { data: existing } = await db.from('inbox_items')
     .select('id').eq('workspace_id', workspaceId).eq('read', false)
     .contains('metadata', { kind, subject_id: subjectId }).limit(1);
@@ -52,7 +52,9 @@ export async function proposeToInbox(db, workspaceId, recipients, { kind, subjec
   for (const rid of recipients || []) {
     await db.from('inbox_items').insert({
       workspace_id: workspaceId, user_id: rid, type: 'alert', source: 'daemon',
-      title, body, metadata: { ...metadata, kind, subject_id: subjectId }, read: false,
+      // `source` is the company document this alert is grounded in (rendered as a
+      // "# Source" chip) — the brain shows WHERE it found the basis for the alert.
+      title, body, metadata: { ...metadata, kind, subject_id: subjectId, ...(source ? { source } : {}) }, read: false,
     });
     n++;
   }
