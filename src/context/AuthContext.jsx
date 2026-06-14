@@ -162,7 +162,7 @@ export function AuthProvider({ children }) {
       if (url) window.location.href = url;
     } catch (err) {
       console.error('Google sign-in initiation failed:', err);
-      throw new Error('Could not initiate Google sign-in');
+      throw new Error('Could not initiate Google sign-in', { cause: err });
     }
   }, []);
 
