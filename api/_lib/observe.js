@@ -206,11 +206,15 @@ export async function detectMissedSessions(db, workspaceId) {
       const subj = `${ev.id}:${(a.email || '').toLowerCase()}`;
 
       // → HR (exclude the missing staffer if they happen to be the HR owner).
+      // Carries a confirm-first action: one tap creates the reschedule task.
       proposed += await proposeToInbox(db, workspaceId, hrOwners.filter(id => id !== staffId), {
         kind: 'missed_onboarding', subjectId: `hr:${subj}`,
         title: `${who} missed onboarding: ${ev.title}`,
         body: `${who} did not attend "${ev.title}" (${when}) — RSVP was "${a.responseStatus}". Reschedule and confirm their onboarding is back on track.`,
-        metadata: { event_id: ev.id, attendee: a.email, staff_id: staffId, response: a.responseStatus, audience: 'hr' }, source,
+        metadata: {
+          event_id: ev.id, attendee: a.email, staff_id: staffId, response: a.responseStatus, audience: 'hr',
+          action: { kind: 'reschedule_onboarding', label: 'Reschedule onboarding', who, when, session: ev.title },
+        }, source,
       });
 
       // → the staff member directly (only when they're a resolvable platform user).
@@ -231,6 +235,37 @@ export async function detectMissedSessions(db, workspaceId) {
   }
   await recordObservation(db, workspaceId, { domain: 'onboarding', subjectType: 'workspace', subjectId: workspaceId, signal: missed ? 'missed' : 'clear', value: missed });
   return { checked: sessions.length, missed, proposed };
+}
+
+// Stalled approvals — daemon actions awaiting a human decision for too long.
+// Same "scheduled-commitment" shape as the missed-session detector: a thing that
+// should have been decided wasn't. Cheap to add precisely because the shape is
+// reusable (query the overdue set → record → propose one grounded digest).
+export async function detectStalledApprovals(db, workspaceId) {
+  const STALE_DAYS = Number(process.env.APPROVAL_STALE_DAYS || 3);
+  const cutoff = new Date(Date.now() - STALE_DAYS * 86400000).toISOString();
+  const { data: acts } = await db.from('daemon_actions')
+    .select('id, title, type, created_at')
+    .eq('workspace_id', workspaceId).eq('status', 'pending')
+    .lte('created_at', cutoff).order('created_at', { ascending: true }).limit(20);
+  const stalled = acts || [];
+
+  await recordObservation(db, workspaceId, {
+    domain: 'approval', subjectType: 'workspace', subjectId: workspaceId,
+    signal: stalled.length ? 'stalled' : 'clear', value: stalled.length,
+  });
+  if (!stalled.length) return { stalled: 0, proposed: 0 };
+
+  const recipients = await adminRecipients(db, workspaceId);
+  const list = stalled.slice(0, 5).map(a => `• ${a.title || a.type || 'Action'} (waiting since ${String(a.created_at).slice(0, 10)})`).join('\n');
+  const source = await groundCitation(db, workspaceId, stalled.map(a => a.title).filter(Boolean).join(' '));
+  const proposed = await proposeToInbox(db, workspaceId, recipients, {
+    kind: 'approvals_stalled', subjectId: workspaceId,
+    title: `${stalled.length} approval${stalled.length === 1 ? '' : 's'} waiting ${STALE_DAYS}+ days`,
+    body: `Pending your decision:\n${list}`,
+    metadata: { count: stalled.length }, source,
+  });
+  return { stalled: stalled.length, proposed };
 }
 
 // AUTO-tier action (the first the brain runs WITHOUT approval): an internal digest of
@@ -258,6 +293,7 @@ export async function observeWorkspace(db, workspaceId) {
     { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' }).catch((e) => ({ error: e.message }));
   out.goals = await detectGoalsAtRisk(db, workspaceId).catch((e) => ({ error: e.message }));
   out.onboarding = await detectMissedSessions(db, workspaceId).catch((e) => ({ error: e.message }));
+  out.approvals = await detectStalledApprovals(db, workspaceId).catch((e) => ({ error: e.message }));
 
   // AUTO self-teaching: research one role's current best practices into the skill
   // library — bounded per run, round-robin across roles/runs.
@@ -273,6 +309,7 @@ export async function observeWorkspace(db, workspaceId) {
   if (out.threads?.quiet) lines.push(`• ${out.threads.quiet} thread(s) gone quiet`);
   if (out.goals?.at_risk) lines.push(`• ${out.goals.at_risk} goal(s) trending to miss`);
   if (out.onboarding?.missed) lines.push(`• ${out.onboarding.missed} missed onboarding session(s) — HR + staff notified`);
+  if (out.approvals?.stalled) lines.push(`• ${out.approvals.stalled} approval(s) waiting too long`);
   if (out.learning?.learned) lines.push(`• taught myself ${out.learning.learned} new ${out.learning.role} skill(s)`);
   out.digest = lines.length
     ? await postDailyDigest(db, workspaceId, ['What I noticed today:', ...lines]).catch((e) => ({ error: e.message }))

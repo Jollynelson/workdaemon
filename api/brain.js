@@ -1486,6 +1486,43 @@ export default async function handler(req, res) {
       } catch (e) { return fail(res, 502, 'Could not file GitHub issue', e, 'brain'); }
     }
 
+    // ── Confirm-first inbox actions ────────────────────────────────────────────
+    // A Brain alert can attach a one-tap action (metadata.action). Approving
+    // EXECUTES it; dismissing files it away. Actions are REVERSIBLE by default —
+    // they create internal tasks, never an irreversible external mutation (a real
+    // calendar/HRIS write is a separate, explicitly-scoped executor). Marks the
+    // alert handled so it doesn't re-surface.
+    if (body.action === 'run_inbox_action' || body.action === 'dismiss_inbox_action') {
+      const itemId = body.itemId || body.id;
+      if (!itemId) return res.status(400).json({ error: 'itemId required' });
+      const { data: item } = await db.from('inbox_items')
+        .select('id, metadata').eq('id', itemId).eq('workspace_id', workspaceId).maybeSingle();
+      const act = item?.metadata?.action;
+      if (!item || !act?.kind) return res.status(404).json({ error: 'Action not found' });
+
+      if (body.action === 'dismiss_inbox_action') {
+        await db.from('inbox_items').update({ read: true, metadata: { ...item.metadata, action: { ...act, dismissed: true } } }).eq('id', itemId);
+        return res.status(200).json({ ok: true, dismissed: true });
+      }
+
+      let result = {};
+      if (act.kind === 'reschedule_onboarding') {
+        const { data: task } = await db.from('tasks').insert({
+          workspace_id: workspaceId,
+          title: `Reschedule onboarding for ${act.who || 'new starter'}`,
+          description: `${act.who || 'A new starter'} missed "${act.session || 'onboarding'}"${act.when ? ` (${act.when})` : ''}. Set up a new session and confirm attendance.`,
+          brief: 'Auto-created from a Company Brain alert: missed onboarding session.',
+          status: 'todo', priority: 'P1', assignee_id: user.id, from_user_id: null, routed_by_brain: true,
+        }).select('id').single();
+        result = { task_id: task?.id || null };
+      } else {
+        return res.status(400).json({ error: `Unknown action: ${act.kind}` });
+      }
+
+      await db.from('inbox_items').update({ read: true, metadata: { ...item.metadata, action: { ...act, done: true } } }).eq('id', itemId);
+      return res.status(200).json({ ok: true, ...result });
+    }
+
     // ── Update agent profile ──────────────────────────────────────────────────
     // access_level and permitted_tools are the daemon's authorization surface, so
     // they are ADMIN-ONLY. A user must never be able to raise their own level

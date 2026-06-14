@@ -11,7 +11,7 @@ vi.mock('../ingestion.js', () => ({ retrieveDocuments: vi.fn() }));
 import { getFreshAccessToken } from '../oauth.js';
 import { googleRecentEvents } from '../calendar.js';
 import { retrieveDocuments } from '../ingestion.js';
-import { detectMissedSessions } from '../observe.js';
+import { detectMissedSessions, detectStalledApprovals } from '../observe.js';
 
 const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 
@@ -19,7 +19,7 @@ const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 function fakeDb(tables, inserts = {}) {
   const make = (table) => {
     const b = {
-      select: () => b, eq: () => b, in: () => b, contains: () => b, order: () => b, limit: () => b,
+      select: () => b, eq: () => b, in: () => b, contains: () => b, order: () => b, limit: () => b, lte: () => b, gte: () => b,
       single: async () => ({ data: (tables[table] || [])[0] || null }),
       maybeSingle: async () => ({ data: (tables[table] || [])[0] || null }),
       insert: async (row) => { (inserts[table] ||= []).push(row); return { data: row, error: null }; },
@@ -69,6 +69,9 @@ describe('detectMissedSessions', () => {
     expect(inbox.find(i => i.user_id === 'u-angela')?.metadata.kind).toBe('missed_onboarding_self');
     // …grounded in the company doc the brain found (rendered as a "# Source" chip).
     expect(inbox.every(i => i.metadata.source === 'Onboarding SOP')).toBe(true);
+    // …HR's alert carries a confirm-first action; the staffer's nudge does not.
+    expect(inbox.find(i => i.user_id === 'u-hr')?.metadata.action?.kind).toBe('reschedule_onboarding');
+    expect(inbox.find(i => i.user_id === 'u-angela')?.metadata.action).toBeUndefined();
     // …and the staffer also gets a chat ping so it can't be missed.
     expect((inserts.daemon_outbox || []).length).toBe(1);
   });
@@ -110,5 +113,33 @@ describe('detectMissedSessions', () => {
     const r = await detectMissedSessions(fakeDb(baseTables, {}), WS);
     expect(r).toMatchObject({ checked: 0, missed: 0, proposed: 0 });
     expect(googleRecentEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe('detectStalledApprovals (reusable scheduled-commitment shape)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    retrieveDocuments.mockResolvedValue({ visible: [{ title: 'Approval Policy' }], restricted: [] });
+  });
+
+  it('proposes one grounded alert to the admin for approvals waiting too long', async () => {
+    const old = new Date(Date.now() - 9 * 86400e3).toISOString();
+    const inserts = {};
+    const db = fakeDb({
+      daemon_actions: [
+        { id: 'a1', title: 'Approve refund', type: 'refund', created_at: old },
+        { id: 'a2', title: 'Approve access', type: 'access', created_at: old },
+      ],
+      workspace_members: [{ user_id: 'u-admin', role: 'admin' }],
+      inbox_items: [],
+    }, inserts);
+    const r = await detectStalledApprovals(db, WS);
+    expect(r).toMatchObject({ stalled: 2, proposed: 1 });
+    expect((inserts.inbox_items || [])[0]?.metadata).toMatchObject({ kind: 'approvals_stalled', source: 'Approval Policy' });
+  });
+
+  it('no-op when nothing is stalled', async () => {
+    const r = await detectStalledApprovals(fakeDb({ daemon_actions: [], workspace_members: [{ user_id: 'u-admin', role: 'admin' }], inbox_items: [] }), WS);
+    expect(r).toEqual({ stalled: 0, proposed: 0 });
   });
 });

@@ -99,6 +99,23 @@ export function InboxPage() {
     } catch { setProposalState(s => ({ ...s, [item.id]: 'err:network' })); }
   }, [token, markRead]);
 
+  // Confirm-first inbox actions: a Brain alert can attach a one-tap action
+  // (item.metadata.action). Approving executes it server-side; dismissing files it.
+  const inboxActionAct = useCallback(async (item, confirm) => {
+    setProposalState(s => ({ ...s, [item.id]: confirm ? 'running' : 'dismissing' }));
+    try {
+      const r = await fetch('/api/brain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: confirm ? 'run_inbox_action' : 'dismiss_inbox_action', itemId: item.id }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setProposalState(s => ({ ...s, [item.id]: 'err:' + (d.error || r.status) })); return; }
+      setProposalState(s => ({ ...s, [item.id]: confirm ? 'done' : 'dismissed' }));
+      markRead(item.id);
+    } catch { setProposalState(s => ({ ...s, [item.id]: 'err:network' })); }
+  }, [token, markRead]);
+
   // Tabs per IA §5.6: All · Approvals · Messages · Broadcasts · Alerts.
   const FILTERS = [
     { key: 'all',        label: 'ALL',        fn: () => true },
@@ -208,6 +225,32 @@ export function InboxPage() {
                           ))}
                         </div>
                       )}
+                      {/* Confirm-first action the Brain attached (e.g. reschedule). */}
+                      {item.metadata?.action && (() => {
+                        const act = item.metadata.action;
+                        const done = ps === 'done' || act.done;
+                        const dismissed = ps === 'dismissed' || act.dismissed;
+                        return (
+                          <div style={{ border: '1px solid rgba(59,110,247,0.22)', background: 'rgba(59,110,247,0.05)', borderRadius: 9, padding: '12px 13px' }}>
+                            <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#3b6ef7', marginBottom: 9 }}>⚡ ACTION — CONFIRM TO EXECUTE</div>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              {done ? <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#22c55e' }}>✓ DONE — TASK CREATED</span>
+                              : dismissed ? <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text4 }}>DISMISSED</span>
+                              : (<>
+                                  <button type="button" disabled={ps === 'running'} onClick={(e) => { e.stopPropagation(); inboxActionAct(item, true); }}
+                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: '#fff', background: '#3b6ef7', border: 'none', borderRadius: 6, padding: '6px 11px', cursor: ps === 'running' ? 'default' : 'pointer', opacity: ps === 'running' ? 0.6 : 1 }}>
+                                    {ps === 'running' ? 'WORKING…' : `✓ ${(act.label || 'Confirm').toUpperCase()}`}
+                                  </button>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); inboxActionAct(item, false); }}
+                                    style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.08em', color: c.text3, background: 'none', border: `1px solid ${c.cardBorder}`, borderRadius: 6, padding: '6px 11px', cursor: 'pointer' }}>
+                                    DISMISS
+                                  </button>
+                                  {typeof ps === 'string' && ps.startsWith('err:') && <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: '#ef4444' }}>{ps.slice(4)}</span>}
+                                </>)}
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {item.draft && (
                         <div style={{ border: '1px solid rgba(59,110,247,0.22)', background: 'rgba(59,110,247,0.05)', borderRadius: 9, padding: '12px 13px' }}>
                           <div style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', color: '#3b6ef7', marginBottom: 7 }}>{isCodeProposal ? '⚙ CODE PROPOSAL — REVIEW' : '✎ DRAFT — READY TO POST'}</div>
