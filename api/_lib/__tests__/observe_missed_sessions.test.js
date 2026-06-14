@@ -11,7 +11,7 @@ vi.mock('../ingestion.js', () => ({ retrieveDocuments: vi.fn() }));
 import { getFreshAccessToken } from '../oauth.js';
 import { googleRecentEvents } from '../calendar.js';
 import { retrieveDocuments } from '../ingestion.js';
-import { detectMissedSessions, detectStalledApprovals } from '../observe.js';
+import { detectMissedSessions, detectStalledApprovals, detectMissedSessionsFromConversation, noShowQuotes } from '../observe.js';
 
 const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 
@@ -141,5 +141,50 @@ describe('detectStalledApprovals (reusable scheduled-commitment shape)', () => {
   it('no-op when nothing is stalled', async () => {
     const r = await detectStalledApprovals(fakeDb({ daemon_actions: [], workspace_members: [{ user_id: 'u-admin', role: 'admin' }], inbox_items: [] }), WS);
     expect(r).toEqual({ stalled: 0, proposed: 0 });
+  });
+});
+
+describe('noShowQuotes (conversational signal)', () => {
+  it('matches a sentence with both a session noun and absence language', () => {
+    expect(noShowQuotes('We ran onboarding today but two new hires did not show')).toHaveLength(1);
+    expect(noShowQuotes('Heads up: Priya was absent from the induction session')).toHaveLength(1);
+  });
+  it('ignores sentences missing one half', () => {
+    expect(noShowQuotes('Onboarding went great, everyone attended')).toHaveLength(0); // session, no absence
+    expect(noShowQuotes('Marcus did not show to the standup')).toHaveLength(0);        // absence, no session noun
+  });
+});
+
+describe('detectMissedSessionsFromConversation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    retrieveDocuments.mockResolvedValue({ visible: [{ title: 'Onboarding SOP' }], restricted: [] });
+  });
+
+  it('raises a grounded, confirm-first HR alert from a no-show mentioned in chat', async () => {
+    const inserts = {};
+    const db = fakeDb({
+      brain_interactions: [{ user_message: 'We ran onboarding today but two new hires did not show', created_at: new Date().toISOString() }],
+      slack_messages: [],
+      workspace_documents: [],
+      workspace_members: [{ user_id: 'u-hr', role: 'admin' }],
+      profiles: [{ id: 'u-hr', role: 'HR Manager' }],
+      inbox_items: [],
+    }, inserts);
+    const r = await detectMissedSessionsFromConversation(db, WS);
+    expect(r).toMatchObject({ mentioned: 1, proposed: 1 });
+    const item = (inserts.inbox_items || [])[0];
+    expect(item.user_id).toBe('u-hr');
+    expect(item.metadata).toMatchObject({ kind: 'missed_session_mentioned', source: 'Onboarding SOP' });
+    expect(item.metadata.action?.kind).toBe('reschedule_onboarding');
+  });
+
+  it('no-op when no no-show language is present', async () => {
+    const db = fakeDb({
+      brain_interactions: [{ user_message: 'Onboarding went great, everyone attended', created_at: new Date().toISOString() }],
+      slack_messages: [], workspace_documents: [],
+      workspace_members: [{ user_id: 'u-hr', role: 'admin' }], profiles: [{ id: 'u-hr', role: 'HR Manager' }], inbox_items: [],
+    });
+    expect(await detectMissedSessionsFromConversation(db, WS)).toEqual({ mentioned: 0, proposed: 0 });
   });
 });
