@@ -314,25 +314,28 @@ input, textarea { font-family: inherit; }
 .wd-chip {
   display: inline-flex;
   align-items: center;
-  padding: 7px 13px;
-  border-radius: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
   font-family: var(--inter);
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 450;
   color: var(--ink-muted);
   background: var(--surface-2);
   border: 1px solid var(--hairline-strong);
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, scale 0.12s;
+  transition: background 0.14s, border-color 0.14s, color 0.14s, transform 0.14s, box-shadow 0.14s;
   white-space: nowrap;
   letter-spacing: -0.01em;
 }
-.wd-chip:hover {
+.wd-chip:not(:disabled):hover {
   background: var(--electric-dim);
   border-color: var(--electric-border);
   color: var(--ink);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(59,110,247,0.14);
 }
-.wd-chip:active { scale: 0.96; }
+.wd-chip:not(:disabled):active { transform: translateY(0); box-shadow: none; }
+.wd-chip:disabled { cursor: default; }
 
 /* ── Notion-style pill tabs ──────────────────────────────────────────────── */
 .wd-pill-tab {
