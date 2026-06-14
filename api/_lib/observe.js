@@ -268,6 +268,76 @@ export async function detectStalledApprovals(db, workspaceId) {
   return { stalled: stalled.length, proposed };
 }
 
+// Absence language + a session noun co-occurring in ONE sentence = a no-show
+// mentioned in conversation. Same sentence keeps it precise (a long transcript
+// that says "onboarding" in one place and "didn't show" elsewhere won't trip).
+const ABSENCE_RE = /\b(no[\s-]?shows?|didn'?t\s+show|did\s+not\s+show|didn'?t\s+attend|did\s+not\s+attend|failed\s+to\s+attend|didn'?t\s+make\s+it|missing\s+from|absent\s+from|weren'?t\s+there|wasn'?t\s+there|skipped|missed)\b/i;
+const CONV_SESSION_RE = /\b(onboard(ing)?|orientation|induction|new[\s-]?(hire|starter|joiner)|training|first[\s-]?day|welcome\s+session)\b/i;
+const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+export function noShowQuotes(text) {
+  if (!text) return [];
+  const out = [];
+  for (const raw of String(text).split(/[\n.!?]+/)) {
+    const line = raw.trim().replace(/\s+/g, ' ');
+    if (line.length < 8 || line.length > 240) continue;
+    if (CONV_SESSION_RE.test(line) && ABSENCE_RE.test(line)) out.push(line);
+  }
+  return out;
+}
+
+// MISSED SESSIONS FROM CONVERSATION — the brain noticing a no-show the way a
+// person would: from what's SAID, not just calendar RSVP. Scans recent daemon
+// chats, Slack, and ingested docs (meeting transcripts / notes) for "someone
+// missed onboarding/training" language, then raises the SAME grounded, confirm-
+// first HR alert as the calendar detector. Best-effort on WHO (keyword); LLM
+// extraction is the next enhancement. Complements detectMissedSessions.
+export async function detectMissedSessionsFromConversation(db, workspaceId) {
+  const sinceDays = Number(process.env.CONV_MISSED_WINDOW_DAYS || 3);
+  const cutoff = new Date(Date.now() - sinceDays * 86400000).toISOString();
+  const [biRes, slackRes, docRes] = await Promise.all([
+    db.from('brain_interactions').select('user_message, created_at').eq('workspace_id', workspaceId).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(200),
+    db.from('slack_messages').select('text, created_at').eq('workspace_id', workspaceId).gte('created_at', cutoff).order('created_at', { ascending: false }).limit(200),
+    db.from('workspace_documents').select('content, doc_type, updated_at').eq('workspace_id', workspaceId).in('doc_type', ['conversation', 'channel', 'page', 'transcript', 'meeting']).order('updated_at', { ascending: false }).limit(40),
+  ]);
+  const texts = [
+    ...(biRes.data || []).map(r => r.user_message),
+    ...(slackRes.data || []).map(r => r.text),
+    ...(docRes.data || []).map(r => r.content),
+  ];
+  const quotes = [];
+  const seen = new Set();
+  for (const t of texts) {
+    for (const q of noShowQuotes(t)) {
+      const key = hashStr(q.toLowerCase());
+      if (seen.has(key)) continue;
+      seen.add(key);
+      quotes.push({ quote: q, key });
+    }
+  }
+
+  await recordObservation(db, workspaceId, {
+    domain: 'onboarding_conv', subjectType: 'workspace', subjectId: workspaceId,
+    signal: quotes.length ? 'mentioned' : 'clear', value: quotes.length,
+  });
+  if (!quotes.length) return { mentioned: 0, proposed: 0 };
+
+  const hrOwners = await hrRecipients(db, workspaceId);
+  let proposed = 0;
+  for (const { quote, key } of quotes.slice(0, 5)) {
+    const source = await groundCitation(db, workspaceId, quote);
+    proposed += await proposeToInbox(db, workspaceId, hrOwners, {
+      kind: 'missed_session_mentioned', subjectId: `conv:${key}`,
+      title: 'Possible missed session mentioned',
+      body: `Heard in conversation: "${quote}"\n\nSomeone may have missed a session — confirm who and reschedule if needed.`,
+      metadata: {
+        audience: 'hr', quote,
+        action: { kind: 'reschedule_onboarding', label: 'Reschedule onboarding', session: 'onboarding', who: 'the attendee(s)' },
+      }, source,
+    });
+  }
+  return { mentioned: quotes.length, proposed };
+}
+
 // AUTO-tier action (the first the brain runs WITHOUT approval): an internal digest of
 // what it observed this cycle. Informational, no outward effect. Gated by tierFor so
 // the kill-switch (BRAIN_AUTONOMY=propose_only) silences it; deduped to one at a time.
@@ -293,6 +363,7 @@ export async function observeWorkspace(db, workspaceId) {
     { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' }).catch((e) => ({ error: e.message }));
   out.goals = await detectGoalsAtRisk(db, workspaceId).catch((e) => ({ error: e.message }));
   out.onboarding = await detectMissedSessions(db, workspaceId).catch((e) => ({ error: e.message }));
+  out.onboardingConv = await detectMissedSessionsFromConversation(db, workspaceId).catch((e) => ({ error: e.message }));
   out.approvals = await detectStalledApprovals(db, workspaceId).catch((e) => ({ error: e.message }));
 
   // AUTO self-teaching: research one role's current best practices into the skill
@@ -309,6 +380,7 @@ export async function observeWorkspace(db, workspaceId) {
   if (out.threads?.quiet) lines.push(`• ${out.threads.quiet} thread(s) gone quiet`);
   if (out.goals?.at_risk) lines.push(`• ${out.goals.at_risk} goal(s) trending to miss`);
   if (out.onboarding?.missed) lines.push(`• ${out.onboarding.missed} missed onboarding session(s) — HR + staff notified`);
+  if (out.onboardingConv?.mentioned) lines.push(`• ${out.onboardingConv.mentioned} possible missed session(s) heard in conversation`);
   if (out.approvals?.stalled) lines.push(`• ${out.approvals.stalled} approval(s) waiting too long`);
   if (out.learning?.learned) lines.push(`• taught myself ${out.learning.learned} new ${out.learning.role} skill(s)`);
   out.digest = lines.length
