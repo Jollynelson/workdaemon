@@ -7,6 +7,7 @@ import { dbMsgToDisplay, callDaemonAPI } from '../../lib/daemonApi.js';
 import { Spinner, Md } from '../../components/ui.jsx';
 import { renderBlock, BlockAlert } from '../../components/blocks.jsx';
 import DaemonMark from '../../components/brand/DaemonMark.jsx';
+import MorningDigest from '../../components/MorningDigest.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTEXT PRESETS  (role categories — not demo data)
@@ -61,11 +62,6 @@ export function ChatView({ context, onBack, onMenu }) {
   const inputRef  = useRef(null);
   const startedRef = useRef(false);
   const hadHistoryRef = useRef(false);
-  // Session continuity (owner directive): someone using their daemon at 1am
-  // shouldn't get a cold re-boot at 8am. <4h since last activity → pick up
-  // instantly with NO LLM ping; 4–24h → brief [SESSION_RESUME]; >24h or first
-  // ever → full [SESSION_START] boot.
-  const sessionModeRef = useRef('start'); // 'none' | 'resume' | 'start'
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -111,8 +107,10 @@ export function ChatView({ context, onBack, onMenu }) {
     }
   }, []);
 
-  // Restore the persisted transcript before firing the session greeting, so a
-  // fresh login resumes the conversation instead of starting blank.
+  // Restore the persisted transcript so a returning login resumes the
+  // conversation instead of starting blank. No LLM ping fires here or after —
+  // opening your daemon should never "start spinning" (owner feedback). The
+  // once-daily MorningDigest covers the "what's new" moment deterministically.
   useEffect(() => {
     if (!authToken) { setHistoryLoaded(true); return; }
     const brainUrl = (import.meta.env.VITE_BRAIN_API_URL || '').replace(/\/$/, '');
@@ -120,19 +118,14 @@ export function ChatView({ context, onBack, onMenu }) {
     fetch(url, { headers: { Authorization: `Bearer ${authToken}` } })
       .then(r => r.ok ? r.json() : { messages: [] })
       .then(({ messages }) => {
-        // Filter out any session-ping sentinels that older builds persisted, so
-        // a stray "[SESSION_RESUME]"/"[SESSION_START]" never renders as a bubble.
+        // Filter out any session-ping sentinels older builds persisted, so a
+        // stray "[SESSION_RESUME]"/"[SESSION_START]" never renders as a bubble.
         const real = (messages || []).filter(
           m => !(m.role === 'user' && /^\[SESSION_(START|RESUME)\]$/.test((m.content || '').trim()))
         );
         if (real.length) {
           setMsgs(real.map(dbMsgToDisplay));
           hadHistoryRef.current = true;
-          const lastAt = new Date(real[real.length - 1].created_at || 0).getTime();
-          const hours = (Date.now() - lastAt) / 3600e3;
-          sessionModeRef.current = hours < 4 ? 'none' : hours < 24 ? 'resume' : 'start';
-        } else {
-          sessionModeRef.current = 'start';
         }
       })
       .catch(() => {})
@@ -213,21 +206,21 @@ export function ChatView({ context, onBack, onMenu }) {
     } catch { /* non-blocking — feedback is best-effort */ }
   }, [serverBacked, feedback, authToken]);
 
-  // Session startup: fires after history is loaded. Fresh session → [SESSION_START]
-  // (full boot greeting); returning session with restored history → [SESSION_RESUME]
-  // (brief "welcome back" delta, prior transcript passed as conversation context).
+  // Session startup: fires once after history is loaded. A RETURNING user (any
+  // restored history) gets NO automatic LLM ping — the conversation is simply
+  // THERE, like a real chat app, and opening the daemon never spins. Only a
+  // brand-new user with an empty transcript gets one warm [SESSION_START] boot
+  // greeting (a once-ever event). This kills the every-open spinner and the
+  // stray "No response." bubble the old [SESSION_RESUME] ping produced.
   useEffect(() => {
     if (startedRef.current || !authToken || !historyLoaded) return;
     startedRef.current = true;
-    // Continuity: recent activity → pick up the thread instantly, zero LLM cost,
-    // zero wait. The conversation is simply THERE, like a real chat app.
-    if (sessionModeRef.current === 'none') {
+    if (hadHistoryRef.current) {
       setTimeout(() => inputRef.current?.focus(), 50);
       return;
     }
     setThinking(true);
-    const sentinel = (hadHistoryRef.current && sessionModeRef.current === 'resume') ? '[SESSION_RESUME]' : '[SESSION_START]';
-    const params = { messages: [...msgs, { role: 'user', text: sentinel }], authToken, onEvent: applyStreamEvent };
+    const params = { messages: [{ role: 'user', text: '[SESSION_START]' }], authToken, onEvent: applyStreamEvent };
     callDaemonAPI(params)
       .then(({ blocks, suggestions: sugs }) => {
         settleLive(blocks || []);
@@ -235,9 +228,6 @@ export function ChatView({ context, onBack, onMenu }) {
       })
       .catch(() => {
         settleLive(null);
-        // SESSION_RESUME failures are silent — history is already visible and the
-        // error would confuse users who haven't done anything wrong.
-        if (sentinel === '[SESSION_RESUME]') return;
         setError('Failed to load Daemon. Try refreshing.');
       })
       .finally(() => { setThinking(false); setStreamStatus(''); });
@@ -397,6 +387,9 @@ export function ChatView({ context, onBack, onMenu }) {
           {!isMobile && <span style={{ fontFamily: 'var(--inter)', fontSize: 11, fontWeight: 500, color: '#10b981', letterSpacing: '0.01em' }}>Online</span>}
         </div>
       </div>
+
+      {/* Once-a-day morning briefing (cards, deterministic, no LLM) */}
+      <MorningDigest onAsk={send} />
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 14px 0' : '28px 28px 0' }}>

@@ -2,6 +2,7 @@ import { requireAuth, adminClient } from './_lib/supabase.js';
 import { enforceRateLimit } from './_lib/security.js';
 import { waitUntil } from '@vercel/functions';
 import { readRawBody, verifySlackSignature, processSlackEvent } from './_lib/connectors/slack_events.js';
+import { activeGoals } from './_lib/goals.js';
 
 // Raw body needed to verify Slack's signature — disable Vercel's parser. This
 // route is otherwise GET-only (no parsed body needed), so this is safe.
@@ -52,6 +53,115 @@ export default async function handler(req, res) {
   const dayAgoISO = new Date(Date.now() - 86400000).toISOString();
   const monthStart = new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
   const monthISO = monthStart.toISOString();
+
+  // ── Daily digest — the once-a-day "morning briefing" cards on first login.
+  // DETERMINISTIC: pure aggregation of real state, NO LLM call (so opening the
+  // daemon never "starts spinning"). Returns only non-empty cards; the client
+  // gates display to once/day after 6am local. Open to all members. ───────────
+  if (req.query.view === 'digest') {
+    const [profRes, findRes, taskRes, inboxRes, integ2Res, actRes, goals] = await Promise.all([
+      db.from('profiles').select('name, title').eq('id', user.id).maybeSingle(),
+      db.from('hunt_findings').select('id, pattern, severity, recommendation, hunt_mode')
+        .eq('workspace_id', ws).eq('resolved', false).order('severity', { ascending: false }).limit(4),
+      db.from('tasks').select('id, title, status, assignee_id, created_at')
+        .eq('workspace_id', ws).neq('status', 'done').order('created_at', { ascending: false }).limit(60),
+      db.from('inbox_items').select('id, title, type, created_at')
+        .eq('user_id', user.id).eq('read', false).order('created_at', { ascending: false }).limit(6),
+      db.from('workspace_integrations').select('provider, status').eq('workspace_id', ws),
+      db.from('daemon_actions').select('id, title, type, created_at, status')
+        .eq('workspace_id', ws).eq('status', 'pending').order('created_at', { ascending: false }).limit(25),
+      activeGoals(db, { workspaceId: ws, userId: user.id }).catch(() => ({ company: [], staff: [] })),
+    ]);
+
+    const firstName = (profRes.data?.name || '').trim().split(/\s+/)[0] || null;
+    const findings = findRes.data || [];
+    const openTasks = taskRes.data || [];
+    const unread = inboxRes.data || [];
+    const integrations2 = integ2Res.data || [];
+    const pendingActs = actRes.data || [];
+    const cards = [];
+
+    // 1. Brain findings — what the company brain noticed (risks, patterns).
+    if (findings.length) {
+      cards.push({
+        id: 'findings', kind: 'findings', icon: '◈', title: 'Brain findings', count: findings.length,
+        items: findings.map(f => ({
+          text: (f.pattern || f.recommendation || 'Pattern detected').slice(0, 140),
+          sub: (f.pattern && f.recommendation) ? f.recommendation.slice(0, 120) : (f.hunt_mode || null),
+          severity: f.severity || null,
+        })),
+        cta: { label: 'Walk me through these', ask: 'Walk me through the top brain finding and what I should do about it.' },
+      });
+    }
+
+    // 2. Pending tasks — open work, yours first.
+    if (openTasks.length) {
+      const mine = openTasks.filter(t => t.assignee_id === user.id);
+      const ordered = [...mine, ...openTasks.filter(t => t.assignee_id !== user.id)];
+      cards.push({
+        id: 'tasks', kind: 'tasks', icon: '✓', title: 'Pending tasks', count: openTasks.length,
+        items: ordered.slice(0, 4).map(t => ({
+          text: (t.title || 'Untitled task').slice(0, 140),
+          sub: t.assignee_id === user.id ? 'Assigned to you' : (t.status === 'in_progress' ? 'In progress' : null),
+        })),
+        cta: { label: 'Open Tasks', to: '/app/tasks' },
+      });
+    }
+
+    // 3. Issues — things that are off: integrations down, approvals waiting.
+    const issueItems = [];
+    for (const i of integrations2) {
+      if (i.status && i.status !== 'connected') issueItems.push({ text: `${i.provider} integration: ${i.status}`, severity: 'warning', to: '/app/integrations' });
+    }
+    const staleActs = pendingActs.filter(a => a.created_at && a.created_at < dayAgoISO).length;
+    if (pendingActs.length) {
+      issueItems.push({
+        text: `${pendingActs.length} action${pendingActs.length > 1 ? 's' : ''} waiting for your approval${staleActs ? ` (${staleActs} over 24h)` : ''}`,
+        severity: staleActs ? 'critical' : 'warning', to: '/app/activity',
+      });
+    }
+    if (issueItems.length) {
+      cards.push({
+        id: 'issues', kind: 'issues', icon: '⚠', title: 'Needs attention', count: issueItems.length,
+        items: issueItems.slice(0, 4),
+        cta: { label: 'Review', to: issueItems[0]?.to || '/app/activity' },
+      });
+    }
+
+    // 4. Inbox — unread daemon/Slack items.
+    if (unread.length) {
+      cards.push({
+        id: 'inbox', kind: 'inbox', icon: '✉', title: 'Unread inbox', count: unread.length,
+        items: unread.slice(0, 4).map(it => ({ text: (it.title || 'New item').slice(0, 140), sub: it.type || null })),
+        cta: { label: 'Open Inbox', to: '/app/inbox' },
+      });
+    }
+
+    // Quiet morning → a friendly "all clear" card so the briefing still greets
+    // you once a day instead of showing nothing.
+    const hadSubstance = cards.length > 0;
+    if (!hadSubstance) {
+      cards.push({
+        id: 'allclear', kind: 'allclear', icon: '✓', title: 'All clear',
+        items: [{ text: 'Nothing needs you right now — no findings, tasks, or issues waiting.' }],
+      });
+    }
+
+    // 5. Suggestions — concrete next steps you can tap to ask the daemon.
+    const suggestions = [];
+    const goal = goals?.staff?.[0] || goals?.company?.[0];
+    if (goal?.title) suggestions.push(`What's the fastest next step on "${String(goal.title).slice(0, 70)}"?`);
+    if (pendingActs.length) suggestions.push(`Summarize the ${pendingActs.length} approvals waiting on me`);
+    const connected = integrations2.filter(i => i.status === 'connected').length;
+    if (connected < 2) suggestions.push('What can you do for me once I connect a tool?');
+    suggestions.push('What needs my attention today?');
+    cards.push({
+      id: 'suggestions', kind: 'suggestions', icon: '✦', title: 'Suggestions',
+      items: [...new Set(suggestions)].slice(0, 3).map(s => ({ text: s, ask: s })),
+    });
+
+    return res.status(200).json({ name: firstName, cards });
+  }
 
   // ── Crew directory (§4) — teammates + their Daemons. Open to all members. ────
   if (req.query.view === 'crew') {
