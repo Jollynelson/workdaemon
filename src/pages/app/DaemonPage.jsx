@@ -309,8 +309,6 @@ export function ChatView({ context, onBack, onMenu }) {
     } catch { return false; }
   }, [authToken]);
 
-  const isLong = suggestions.some(s => s.length > 36);
-
   const clearChat = useCallback(() => {
     if (thinking) return;
     startedRef.current = false;
@@ -492,12 +490,14 @@ export function ChatView({ context, onBack, onMenu }) {
         </div>
       </div>
 
-      {/* Suggestions */}
+      {/* Suggestions — compact content-width chips in a wrapping row (no more
+          full-width stacked bars); each sized to its text, like the demo. */}
       {suggestions.length > 0 && (
-        <div style={{ padding: isMobile ? '12px 14px 4px' : '16px 28px 4px', maxWidth: 780 + 56, margin: '0 auto', width: '100%' }}>
-          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : (isLong ? 'column' : 'row'), flexWrap: isLong ? undefined : 'wrap', gap: 6 }}>
+        <div style={{ padding: isMobile ? '12px 14px 4px' : '16px 28px 4px', maxWidth: 780, margin: '0 auto', width: '100%' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {suggestions.map(s => (
-              <button key={s} className="wd-chip" onClick={() => send(s)} disabled={thinking} style={{ opacity: thinking ? 0.5 : 1, fontSize: isMobile ? 12 : undefined, textAlign: 'left' }}>
+              <button key={s} className="wd-chip" onClick={() => send(s)} disabled={thinking}
+                style={{ opacity: thinking ? 0.5 : 1, fontSize: isMobile ? 12 : 13, maxWidth: '100%' }}>
                 {s}
               </button>
             ))}
