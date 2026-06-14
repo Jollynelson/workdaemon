@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// The detector reads Google Calendar via these two modules — mock them so the
-// test is pure (no network), and drive the calendar fixture per case.
+// The detector reads calendars via these modules — mock them so the test is pure
+// (no network), and drive the calendar fixture per case.
 vi.mock('../oauth.js', () => ({ getFreshAccessToken: vi.fn() }));
-vi.mock('../calendar.js', () => ({ googleRecentEvents: vi.fn() }));
+vi.mock('../calendar.js', () => ({ googleRecentEvents: vi.fn(), microsoftRecentEvents: vi.fn(), createCalendarEvent: vi.fn() }));
 // retrieveDocuments would otherwise hit the live embeddings endpoint — mock it so
 // grounding is deterministic and the tests stay pure.
 vi.mock('../ingestion.js', () => ({ retrieveDocuments: vi.fn() }));
 
 import { getFreshAccessToken } from '../oauth.js';
-import { googleRecentEvents } from '../calendar.js';
+import { googleRecentEvents, microsoftRecentEvents } from '../calendar.js';
 import { retrieveDocuments } from '../ingestion.js';
 import { detectMissedSessions, detectStalledApprovals, detectMissedSessionsFromConversation, noShowQuotes } from '../observe.js';
 
@@ -50,6 +50,7 @@ describe('detectMissedSessions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getFreshAccessToken.mockResolvedValue('tok');
+    microsoftRecentEvents.mockResolvedValue([]); // only Google fixture drives these cases
     retrieveDocuments.mockResolvedValue({ visible: [{ title: 'Onboarding SOP' }], restricted: [] });
   });
 
@@ -74,6 +75,15 @@ describe('detectMissedSessions', () => {
     expect(inbox.find(i => i.user_id === 'u-angela')?.metadata.action).toBeUndefined();
     // …and the staffer also gets a chat ping so it can't be missed.
     expect((inserts.daemon_outbox || []).length).toBe(1);
+  });
+
+  it('detects a no-show from Microsoft 365 too (provider-agnostic)', async () => {
+    googleRecentEvents.mockResolvedValue([]);
+    microsoftRecentEvents.mockResolvedValue([onboardingEvent([
+      { email: 'angela@clearview.test', displayName: 'Angela Reed', responseStatus: 'needsAction' },
+    ])]);
+    const r = await detectMissedSessions(fakeDb(baseTables, {}), WS);
+    expect(r).toMatchObject({ missed: 1 });
   });
 
   it('does nothing when the attendee accepted (showed/intended)', async () => {

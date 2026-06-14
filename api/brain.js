@@ -3,8 +3,8 @@ import { requireAuth, adminClient } from './_lib/supabase.js';
 import { researchRole, researchCompany, prefetchCompanyIntel, scanOneWorkspace, backfillInboxPush, SCAN_COLUMNS } from './_lib/research_actions.js';
 import { fail, enforceRateLimit, decryptSecret, delimitUntrusted, verifyServiceToken, timingSafeEqualStr } from './_lib/security.js';
 import { pickTierModels } from './_lib/brain_router.js';
-import { getAccessToken, getUserTokens } from './_lib/oauth.js';
-import { unifiedCalendar } from './_lib/calendar.js';
+import { getAccessToken, getUserTokens, getFreshAccessToken } from './_lib/oauth.js';
+import { unifiedCalendar, createCalendarEvent } from './_lib/calendar.js';
 import { listSkills, getSkill, growSkills, anticipateForEvent, importSkillFromUrl, importSkillFromText, searchSkillsOnline, assignRoleSkills } from './_lib/skills.js';
 import { ensureGoals, reviewGoals, generateCompanyGoals, generateStaffGoals } from './_lib/goals.js';
 import { shouldDeliver, engagement } from './_lib/calibration.js';
@@ -1507,14 +1507,34 @@ export default async function handler(req, res) {
 
       let result = {};
       if (act.kind === 'reschedule_onboarding') {
+        // REAL executor: book a follow-up session on the connected calendar
+        // (write scope granted) and invite the attendee. Falls back to task-only
+        // if no calendar write is available. Always creates the HR task for
+        // tracking. Confirm-gated, and the booked event is editable/deletable.
+        let scheduled = null;
+        const attendeeEmail = item.metadata.attendee || null;
+        const calToken = await getFreshAccessToken(db, workspaceId, 'google').catch(() => null);
+        if (calToken) {
+          try {
+            // Next weekday at 10:00 UTC — a sane default the organizer can adjust.
+            const when = new Date(); when.setUTCHours(10, 0, 0, 0); when.setUTCDate(when.getUTCDate() + 1);
+            while (when.getUTCDay() === 0 || when.getUTCDay() === 6) when.setUTCDate(when.getUTCDate() + 1);
+            scheduled = await createCalendarEvent(calToken, {
+              summary: `Onboarding (rescheduled) — ${act.who || 'new starter'}`,
+              description: `Auto-rescheduled by the Company Brain after a missed session${act.when ? ` (original ${act.when})` : ''}. Adjust the time as needed.`,
+              startISO: when.toISOString(), durationMin: 30,
+              attendees: attendeeEmail ? [attendeeEmail] : [],
+            });
+          } catch (e) { console.warn('[brain] reschedule calendar write:', e.message); }
+        }
         const { data: task } = await db.from('tasks').insert({
           workspace_id: workspaceId,
           title: `Reschedule onboarding for ${act.who || 'new starter'}`,
-          description: `${act.who || 'A new starter'} missed "${act.session || 'onboarding'}"${act.when ? ` (${act.when})` : ''}. Set up a new session and confirm attendance.`,
+          description: `${act.who || 'A new starter'} missed "${act.session || 'onboarding'}"${act.when ? ` (${act.when})` : ''}.${scheduled ? ' A new session was booked — confirm the time works.' : ' Set up a new session and confirm attendance.'}`,
           brief: 'Auto-created from a Company Brain alert: missed onboarding session.',
           status: 'todo', priority: 'P1', assignee_id: user.id, from_user_id: null, routed_by_brain: true,
         }).select('id').single();
-        result = { task_id: task?.id || null };
+        result = { task_id: task?.id || null, event_url: scheduled?.htmlLink || null, scheduled: !!scheduled };
       } else {
         return res.status(400).json({ error: `Unknown action: ${act.kind}` });
       }

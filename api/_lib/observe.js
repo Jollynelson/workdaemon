@@ -7,7 +7,7 @@ import { observeStaffAndPropose } from './staff_signals.js';
 import { recordObservation, proposeToInbox, adminRecipients, tierFor } from './autonomy.js';
 import { runContinuousLearning } from './continuous_learning.js';
 import { getFreshAccessToken } from './oauth.js';
-import { googleRecentEvents } from './calendar.js';
+import { googleRecentEvents, microsoftRecentEvents } from './calendar.js';
 import { queueFindingDelivery } from './outbox.js';
 import { retrieveDocuments } from './ingestion.js';
 
@@ -158,21 +158,36 @@ const SESSION_RE = /\b(onboard(ing)?|orientation|induction|new[\s-]?(hire|starte
 const isNoShow = (a) => a.email && !a.self && !a.organizer && !a.optional && !a.resource
   && (a.responseStatus === 'declined' || a.responseStatus === 'needsAction');
 
-// MISSED ONBOARDING SESSIONS — reads the connected Google Calendar's recently-
-// ENDED events, finds onboarding-type sessions whose required attendees didn't
-// show, and notifies BOTH the HR owner AND the staff member who missed it
-// (inbox for both, plus a chat ping for the staff so it can't be missed).
-// Deduped per event+attendee via proposeToInbox. Silent no-op without a Google
-// token. This is the first "scheduled-commitment" detector — the generalizable
+// Calendar providers that expose per-attendee RSVP (so "missed = didn't show" is
+// detectable structurally). Tools without RSVP (Notion, a native calendar, etc.)
+// are covered by detectMissedSessionsFromConversation instead — together they
+// mean a missed session is caught no matter where the calendar lives.
+const RSVP_PROVIDERS = [
+  { provider: 'google', read: googleRecentEvents },
+  { provider: 'microsoft', read: microsoftRecentEvents },
+];
+
+// MISSED ONBOARDING SESSIONS — reads recently-ENDED events WITH RSVP from EVERY
+// connected calendar provider (Google, Microsoft 365, …), finds onboarding-type
+// sessions whose required attendees didn't show, and notifies BOTH the HR owner
+// AND the staff member who missed it (inbox for both, plus a chat ping for the
+// staff). Deduped per event+attendee. Silent no-op when no RSVP-capable calendar
+// is connected. The first "scheduled-commitment" detector — the generalizable
 // shape behind "the brain notices when something that should've happened didn't".
 export async function detectMissedSessions(db, workspaceId) {
-  const token = await getFreshAccessToken(db, workspaceId, 'google').catch(() => null);
-  if (!token) return { checked: 0, missed: 0, proposed: 0 };
-
   const sinceDays = Number(process.env.MISSED_SESSION_WINDOW_DAYS || 2);
-  let events;
-  try { events = await googleRecentEvents(token, { sinceDays }); }
-  catch (e) { return { checked: 0, missed: 0, proposed: 0, error: e.message }; }
+  // Union recent RSVP events across every connected provider; one provider
+  // erroring (or not connected) never blocks the others.
+  let events = [];
+  let anyProvider = false;
+  for (const { provider, read } of RSVP_PROVIDERS) {
+    const token = await getFreshAccessToken(db, workspaceId, provider).catch(() => null);
+    if (!token) continue;
+    anyProvider = true;
+    try { events = events.concat(await read(token, { sinceDays })); }
+    catch (e) { console.warn('[observe] %s recent events:', provider, e.message); }
+  }
+  if (!anyProvider) return { checked: 0, missed: 0, proposed: 0 };
 
   const now = Date.now();
   const sessions = (events || []).filter(e => SESSION_RE.test(e.title) && e.end && Date.parse(e.end) < now);

@@ -56,6 +56,58 @@ export async function googleRecentEvents(token, { sinceDays = 2 } = {}) {
   }));
 }
 
+// Recently-ENDED Microsoft 365 events with per-attendee RSVP — the Graph twin of
+// googleRecentEvents, normalized to the SAME shape so the detector treats any
+// connected calendar the same way. Graph response → google-style responseStatus.
+const MS_RESPONSE = { accepted: 'accepted', declined: 'declined', tentativelyAccepted: 'tentative', notResponded: 'needsAction', none: 'needsAction', organizer: 'accepted' };
+export async function microsoftRecentEvents(token, { sinceDays = 2 } = {}) {
+  const start = iso(Date.now() - sinceDays * 864e5), end = iso(Date.now());
+  const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start}&endDateTime=${end}`
+    + `&$orderby=start/dateTime&$top=100&$select=id,subject,start,end,webLink,organizer,attendees`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="UTC"' } });
+  if (!r.ok) throw new Error(`microsoft ${r.status}`);
+  const d = await r.json();
+  return (d.value || []).map(e => ({
+    id: e.id,
+    title: e.subject || '(untitled)',
+    start: e.start?.dateTime ? iso(e.start.dateTime + 'Z') : null,
+    end: e.end?.dateTime ? iso(e.end.dateTime + 'Z') : null,
+    url: e.webLink || null,
+    organizerEmail: e.organizer?.emailAddress?.address || null,
+    attendees: (e.attendees || []).map(a => ({
+      email: a.emailAddress?.address || null,
+      displayName: a.emailAddress?.name || null,
+      responseStatus: MS_RESPONSE[a.status?.response] || 'needsAction',
+      organizer: a.type === 'organizer',
+      self: false,
+      optional: a.type === 'optional',
+      resource: a.type === 'resource',
+    })),
+  })).filter(e => e.end);
+}
+
+// Create a real calendar event (Google) — the WRITE side of the loop. Used by the
+// reschedule executor to book a follow-up session and invite the attendee.
+// Requires the calendar.events scope (granted). Returns { id, htmlLink }.
+export async function createCalendarEvent(token, { summary, description = '', startISO, durationMin = 30, attendees = [] }) {
+  const startDt = new Date(startISO);
+  const endDt = new Date(startDt.getTime() + durationMin * 60000);
+  const body = {
+    summary, description,
+    start: { dateTime: startDt.toISOString() },
+    end: { dateTime: endDt.toISOString() },
+    attendees: (attendees || []).filter(Boolean).map(email => ({ email })),
+  };
+  const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`google create ${r.status}`);
+  const d = await r.json();
+  return { id: d.id, htmlLink: d.htmlLink || null };
+}
+
 // ── Microsoft 365 (Graph) ────────────────────────────────────────────────────
 async function microsoftEvents(token) {
   const start = iso(Date.now()), end = iso(Date.now() + WINDOW_DAYS * 864e5);
