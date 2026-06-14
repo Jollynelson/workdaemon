@@ -6,6 +6,9 @@
 import { observeStaffAndPropose } from './staff_signals.js';
 import { recordObservation, proposeToInbox, adminRecipients, tierFor } from './autonomy.js';
 import { runContinuousLearning } from './continuous_learning.js';
+import { getFreshAccessToken } from './oauth.js';
+import { googleRecentEvents } from './calendar.js';
+import { queueFindingDelivery } from './outbox.js';
 
 const daysAgoISO = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
@@ -114,6 +117,103 @@ export async function detectGoalsAtRisk(db, workspaceId) {
   return { at_risk: flagged.length, proposed };
 }
 
+// HR owner(s) for a workspace — the member(s) whose role/title reads as HR/People,
+// else the workspace admins (a local resolver so this module stays independent of
+// brain.js's role router — no circular import).
+const HR_RE = /\b(hr|human\s*resources|people|talent|chief\s*people|recruit)\b/i;
+async function hrRecipients(db, workspaceId) {
+  const { data: members } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const ids = (members || []).map(m => m.user_id);
+  if (ids.length) {
+    const { data: profs } = await db.from('profiles').select('id, role, title').in('id', ids);
+    const hr = (profs || []).filter(p => HR_RE.test(`${p.role || ''} ${p.title || ''}`)).map(p => p.id);
+    if (hr.length) return hr;
+  }
+  return adminRecipients(db, workspaceId);
+}
+
+// Onboarding/induction-type sessions (broadenable; this is the seam where the
+// brain could later self-author the patterns it watches for).
+const SESSION_RE = /\b(onboard(ing)?|orientation|induction|new[\s-]?(hire|starter|joiner)|first[\s-]?day|welcome\s+session)\b/i;
+// A required attendee who did NOT accept once the event has ended = no-show signal.
+// 'accepted'/'tentative' read as showed/intended; 'declined' or 'needsAction'
+// (never responded) read as missed. Self/organizer/optional/resource excluded.
+const isNoShow = (a) => a.email && !a.self && !a.organizer && !a.optional && !a.resource
+  && (a.responseStatus === 'declined' || a.responseStatus === 'needsAction');
+
+// MISSED ONBOARDING SESSIONS — reads the connected Google Calendar's recently-
+// ENDED events, finds onboarding-type sessions whose required attendees didn't
+// show, and notifies BOTH the HR owner AND the staff member who missed it
+// (inbox for both, plus a chat ping for the staff so it can't be missed).
+// Deduped per event+attendee via proposeToInbox. Silent no-op without a Google
+// token. This is the first "scheduled-commitment" detector — the generalizable
+// shape behind "the brain notices when something that should've happened didn't".
+export async function detectMissedSessions(db, workspaceId) {
+  const token = await getFreshAccessToken(db, workspaceId, 'google').catch(() => null);
+  if (!token) return { checked: 0, missed: 0, proposed: 0 };
+
+  const sinceDays = Number(process.env.MISSED_SESSION_WINDOW_DAYS || 2);
+  let events;
+  try { events = await googleRecentEvents(token, { sinceDays }); }
+  catch (e) { return { checked: 0, missed: 0, proposed: 0, error: e.message }; }
+
+  const now = Date.now();
+  const sessions = (events || []).filter(e => SESSION_RE.test(e.title) && e.end && Date.parse(e.end) < now);
+  if (!sessions.length) {
+    await recordObservation(db, workspaceId, { domain: 'onboarding', subjectType: 'workspace', subjectId: workspaceId, signal: 'clear', value: 0 });
+    return { checked: events?.length || 0, missed: 0, proposed: 0 };
+  }
+
+  // Map workspace member emails → user_id (auth.users is the only email source;
+  // profiles has none). Mirrors the Slack member resolver.
+  const { data: members } = await db.from('workspace_members').select('user_id').eq('workspace_id', workspaceId);
+  const memberIds = new Set((members || []).map(m => m.user_id));
+  const emailToId = {};
+  if (memberIds.size) {
+    const { data: au } = await db.auth.admin.listUsers({ page: 1, perPage: 200 }).catch(() => ({ data: null }));
+    for (const u of (au?.users || [])) {
+      if (u.email && memberIds.has(u.id)) emailToId[u.email.toLowerCase()] = u.id;
+    }
+  }
+
+  const hrOwners = await hrRecipients(db, workspaceId);
+  let missed = 0, proposed = 0;
+  for (const ev of sessions) {
+    for (const a of (ev.attendees || []).filter(isNoShow)) {
+      missed++;
+      const who = a.displayName || a.email;
+      const when = String(ev.start || ev.end).slice(0, 10);
+      const staffId = emailToId[(a.email || '').toLowerCase()] || null;
+      const subj = `${ev.id}:${(a.email || '').toLowerCase()}`;
+
+      // → HR (exclude the missing staffer if they happen to be the HR owner).
+      proposed += await proposeToInbox(db, workspaceId, hrOwners.filter(id => id !== staffId), {
+        kind: 'missed_onboarding', subjectId: `hr:${subj}`,
+        title: `${who} missed onboarding: ${ev.title}`,
+        body: `${who} did not attend "${ev.title}" (${when}) — RSVP was "${a.responseStatus}". Reschedule and confirm their onboarding is back on track.`,
+        metadata: { event_id: ev.id, attendee: a.email, staff_id: staffId, response: a.responseStatus, audience: 'hr' },
+      });
+
+      // → the staff member directly (only when they're a resolvable platform user).
+      if (staffId) {
+        proposed += await proposeToInbox(db, workspaceId, [staffId], {
+          kind: 'missed_onboarding_self', subjectId: `self:${subj}`,
+          title: 'You missed an onboarding session',
+          body: `"${ev.title}" (${when}) went ahead without you. I've flagged HR to help you reschedule — reply here if you'd like me to find a new slot.`,
+          metadata: { event_id: ev.id, audience: 'staff' },
+        });
+        await queueFindingDelivery(db, {
+          workspaceId, userIds: [staffId],
+          headline: `You missed "${ev.title}" (${when})`,
+          recommendation: 'I flagged HR to help reschedule. Want me to find a new slot?',
+        }).catch(() => {});
+      }
+    }
+  }
+  await recordObservation(db, workspaceId, { domain: 'onboarding', subjectType: 'workspace', subjectId: workspaceId, signal: missed ? 'missed' : 'clear', value: missed });
+  return { checked: sessions.length, missed, proposed };
+}
+
 // AUTO-tier action (the first the brain runs WITHOUT approval): an internal digest of
 // what it observed this cycle. Informational, no outward effect. Gated by tierFor so
 // the kill-switch (BRAIN_AUTONOMY=propose_only) silences it; deduped to one at a time.
@@ -138,6 +238,7 @@ export async function observeWorkspace(db, workspaceId) {
   out.threads = await detectGoneQuiet(db, workspaceId,
     { docTypes: ['email_thread', 'channel'], kind: 'thread_quiet', noun: 'thread' }).catch((e) => ({ error: e.message }));
   out.goals = await detectGoalsAtRisk(db, workspaceId).catch((e) => ({ error: e.message }));
+  out.onboarding = await detectMissedSessions(db, workspaceId).catch((e) => ({ error: e.message }));
 
   // AUTO self-teaching: research one role's current best practices into the skill
   // library — bounded per run, round-robin across roles/runs.
@@ -152,6 +253,7 @@ export async function observeWorkspace(db, workspaceId) {
   if (out.deals?.quiet) lines.push(`• ${out.deals.quiet} deal(s) gone cold`);
   if (out.threads?.quiet) lines.push(`• ${out.threads.quiet} thread(s) gone quiet`);
   if (out.goals?.at_risk) lines.push(`• ${out.goals.at_risk} goal(s) trending to miss`);
+  if (out.onboarding?.missed) lines.push(`• ${out.onboarding.missed} missed onboarding session(s) — HR + staff notified`);
   if (out.learning?.learned) lines.push(`• taught myself ${out.learning.learned} new ${out.learning.role} skill(s)`);
   out.digest = lines.length
     ? await postDailyDigest(db, workspaceId, ['What I noticed today:', ...lines]).catch((e) => ({ error: e.message }))

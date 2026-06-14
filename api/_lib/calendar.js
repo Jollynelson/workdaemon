@@ -26,6 +26,36 @@ async function googleEvents(token) {
   }));
 }
 
+// Recently-ENDED Google Calendar events with per-attendee RSVP — the substrate
+// for the brain's missed-session detector. Unlike googleEvents (future-only),
+// this reads a short PAST window and keeps each attendee's responseStatus so we
+// can tell who didn't show. Reads the connected account's primary calendar.
+export async function googleRecentEvents(token, { sinceDays = 2 } = {}) {
+  const timeMin = iso(Date.now() - sinceDays * 864e5);
+  const timeMax = iso(Date.now());
+  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=100&timeMin=${timeMin}&timeMax=${timeMax}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`google ${r.status}`);
+  const d = await r.json();
+  return (d.items || []).map(e => ({
+    id: e.id,
+    title: e.summary || '(untitled)',
+    start: e.start?.dateTime || e.start?.date || null,
+    end: e.end?.dateTime || e.end?.date || null,
+    url: e.htmlLink || null,
+    organizerEmail: e.organizer?.email || null,
+    attendees: (e.attendees || []).map(a => ({
+      email: a.email || null,
+      displayName: a.displayName || null,
+      responseStatus: a.responseStatus || 'needsAction', // accepted|declined|tentative|needsAction
+      organizer: !!a.organizer,
+      self: !!a.self,
+      optional: !!a.optional,
+      resource: !!a.resource,
+    })),
+  }));
+}
+
 // ── Microsoft 365 (Graph) ────────────────────────────────────────────────────
 async function microsoftEvents(token) {
   const start = iso(Date.now()), end = iso(Date.now() + WINDOW_DAYS * 864e5);
